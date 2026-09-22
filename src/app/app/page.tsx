@@ -4,6 +4,8 @@ import * as React from 'react';
 import { Drawer, TabBar, TopBar } from '@/components/shell';
 import { NewEntrySheet } from '@/components/entries';
 import { Panel } from '@/components/ui';
+import { AssinaturasView } from '@/features/assinaturas';
+import { CartoesView } from '@/features/cartoes';
 import { MercadoView } from '@/features/mercado';
 import {
   DespesasView,
@@ -28,6 +30,9 @@ import {
 import type { MonthKey } from '@/lib/types';
 
 const THEME_KEY = 'norte-theme';
+
+/** ferramentas que já têm tela própria; o resto ainda cai no aviso de obra */
+const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas']);
 
 export default function AppPage() {
   const { spaceId, ready, error } = useBootstrap();
@@ -126,7 +131,13 @@ export default function AppPage() {
           {view === 'despesas' && <DespesasView {...ctx} />}
           {view === 'investimentos' && <InvestimentosView {...ctx} />}
           {view === 'news' && <MercadoView />}
-          {!isTab(view) && view !== 'news' && <ToolScreen view={view} />}
+          {view === 'cartoes' && (
+            <CartoesView spaceId={spaceId} month={month} categories={categories} hidden={hidden} />
+          )}
+          {view === 'assinaturas' && (
+            <AssinaturasView spaceId={spaceId} month={month} categories={categories} hidden={hidden} />
+          )}
+          {!isTab(view) && !BUILT.has(view) && <ToolScreen view={view} />}
         </div>
       </main>
 

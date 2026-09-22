@@ -256,6 +256,137 @@ export async function toggleSettled(entry: Entry, occurrenceKey: string, amount?
   return putRecord('entries', { ...entry, settled });
 }
 
+/* ---------------------------------------------------------------- cartoes */
+
+export interface NewCardInput {
+  spaceId: string;
+  name: string;
+  institution: string;
+  brand: Card['brand'];
+  last4: string;
+  color: string;
+  limit: Cents;
+  closingDay: number;
+  dueDay: number;
+}
+
+export async function createCard(input: NewCardInput): Promise<Card> {
+  const at = nowInstant();
+  const card: Card = {
+    id: uid(),
+    spaceId: input.spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: input.name.trim(),
+    institution: input.institution.trim(),
+    brand: input.brand,
+    last4: input.last4.replace(/\D/g, '').slice(-4),
+    color: input.color,
+    limit: Math.max(0, Math.round(input.limit)),
+    closingDay: clampDay(input.closingDay),
+    dueDay: clampDay(input.dueDay),
+    accountId: null,
+    archived: false,
+  };
+  return putRecord('cards', card);
+}
+
+export const updateCard = (card: Card, patch: Partial<Card>): Promise<Card> =>
+  putRecord('cards', { ...card, ...patch });
+
+export const removeCard = (id: string): Promise<void> => deleteRecord('cards', id);
+
+/** dia fora de 1..31 não existe em cartão nenhum */
+const clampDay = (day: number): number => Math.min(31, Math.max(1, Math.trunc(day) || 1));
+
+/**
+ * Tudo que a tela de cartões precisa numa consulta só.
+ *
+ * A fatura depende de lançamentos que começaram meses atrás — uma compra em
+ * doze vezes de janeiro ainda pesa em novembro —, então não dá para filtrar
+ * por mês no banco: o corte é feito pelo ciclo de cada cartão.
+ */
+export function useCardsData(spaceId: string | null, month: MonthKey) {
+  const cards = useCards(spaceId);
+  const subscriptions = useSubscriptions(spaceId);
+  const entries =
+    useLiveQuery(
+      async () => (spaceId ? entriesUpTo(spaceId, month) : []),
+      [spaceId, month],
+      [] as Entry[],
+    ) ?? [];
+
+  return { cards, subscriptions, entries };
+}
+
+/* ------------------------------------------------------------ assinaturas */
+
+export interface NewSubscriptionInput {
+  spaceId: string;
+  name: string;
+  domain: string;
+  amount: Cents;
+  billingDay: number;
+  cycle: 'monthly' | 'yearly';
+  color: string;
+  cardId: string | null;
+  accountId: string | null;
+  categoryId: string | null;
+  startedAt?: IsoDate;
+  remindDaysBefore?: number;
+}
+
+export async function createSubscription(input: NewSubscriptionInput): Promise<Subscription> {
+  const at = nowInstant();
+  const sub: Subscription = {
+    id: uid(),
+    spaceId: input.spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: input.name.trim(),
+    domain: input.domain,
+    amount: Math.max(0, Math.round(input.amount)),
+    billingDay: clampDay(input.billingDay),
+    cycle: input.cycle,
+    categoryId: input.categoryId,
+    cardId: input.cardId,
+    accountId: input.accountId,
+    color: input.color,
+    startedAt: input.startedAt ?? todayIso(),
+    canceledAt: null,
+    remindDaysBefore: input.remindDaysBefore ?? 2,
+  };
+  return putRecord('subscriptions', sub);
+}
+
+export const updateSubscription = (sub: Subscription, patch: Partial<Subscription>): Promise<Subscription> =>
+  putRecord('subscriptions', { ...sub, ...patch });
+
+/**
+ * Cancelar não é apagar.
+ *
+ * A assinatura cancelada some das cobranças futuras mas continua nos meses em
+ * que realmente pesou — senão o histórico do ano passado muda sozinho toda vez
+ * que alguém cancela alguma coisa hoje.
+ */
+export const cancelSubscription = (sub: Subscription, on: IsoDate = todayIso()): Promise<Subscription> =>
+  putRecord('subscriptions', { ...sub, canceledAt: on });
+
+export const removeSubscription = (id: string): Promise<void> => deleteRecord('subscriptions', id);
+
+/** assinaturas ativas e canceladas, para a tela mostrar as duas listas */
+export function useAllSubscriptions(spaceId: string | null): Subscription[] {
+  return (
+    useLiveQuery(
+      async () => (spaceId ? liveRows<Subscription>('subscriptions', spaceId) : []),
+      [spaceId],
+      [] as Subscription[],
+    ) ?? []
+  );
+}
+
 /* ------------------------------------------------------- categorizacao */
 
 async function readLearned(): Promise<LearnedRule[]> {
