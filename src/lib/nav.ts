@@ -6,6 +6,8 @@
  * virar uma lista de dezesseis ícones que ninguém lê.
  */
 
+import { BRAND } from './brand';
+
 export type TabId = 'inicio' | 'receitas' | 'despesas' | 'investimentos';
 
 export type ToolId =
@@ -56,7 +58,7 @@ export const isTab = (view: ViewId): view is TabId =>
 export function viewTitle(view: ViewId): string {
   const tool = TOOL_TITLES.get(view as ToolId);
   if (tool) return tool.title ?? tool.label;
-  if (view === 'ia') return 'Norte IA';
+  if (view === 'ia') return `${BRAND.name} IA`;
   if (view === 'perfil') return 'Meu perfil';
   return TABS.find((t) => t.id === view)?.label ?? '';
 }

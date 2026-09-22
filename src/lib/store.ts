@@ -12,8 +12,11 @@ import type {
   Card,
   Category,
   Cents,
+  Debt,
   Entry,
   FlowKind,
+  Goal,
+  GoalSource,
   IsoDate,
   MonthKey,
   Repeat,
@@ -383,6 +386,121 @@ export function useAllSubscriptions(spaceId: string | null): Subscription[] {
       async () => (spaceId ? liveRows<Subscription>('subscriptions', spaceId) : []),
       [spaceId],
       [] as Subscription[],
+    ) ?? []
+  );
+}
+
+/* ------------------------------------------------------------------ metas */
+
+export function useGoals(spaceId: string | null): Goal[] {
+  return (
+    useLiveQuery(
+      async () => (spaceId ? (await liveRows<Goal>('goals', spaceId)).filter((g) => !g.archivedAt) : []),
+      [spaceId],
+      [] as Goal[],
+    ) ?? []
+  );
+}
+
+export interface NewGoalInput {
+  spaceId: string;
+  name: string;
+  icon: string;
+  target: Cents;
+  source: GoalSource;
+  categoryId: string | null;
+  saved: Cents;
+  deadline: IsoDate | null;
+  color?: string;
+}
+
+export async function createGoal(input: NewGoalInput): Promise<Goal> {
+  const at = nowInstant();
+  const goal: Goal = {
+    id: uid(),
+    spaceId: input.spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: input.name.trim(),
+    icon: input.icon,
+    target: Math.max(0, Math.round(input.target)),
+    source: input.source,
+    categoryId: input.source === 'category' ? input.categoryId : null,
+    saved: input.source === 'manual' ? Math.max(0, Math.round(input.saved)) : 0,
+    deadline: input.deadline,
+    color: input.color ?? '#c9a36b',
+    archivedAt: null,
+  };
+  return putRecord('goals', goal);
+}
+
+export const updateGoal = (goal: Goal, patch: Partial<Goal>): Promise<Goal> =>
+  putRecord('goals', { ...goal, ...patch });
+
+export const removeGoal = (id: string): Promise<void> => deleteRecord('goals', id);
+
+/** guarda mais um tanto numa meta manual */
+export const depositIntoGoal = (goal: Goal, amount: Cents): Promise<Goal> =>
+  putRecord('goals', { ...goal, saved: Math.max(0, goal.saved + amount) });
+
+/* ---------------------------------------------------------------- dividas */
+
+export function useDebts(spaceId: string | null): Debt[] {
+  return (
+    useLiveQuery(
+      async () => (spaceId ? (await liveRows<Debt>('debts', spaceId)).filter((d) => !d.settledAt) : []),
+      [spaceId],
+      [] as Debt[],
+    ) ?? []
+  );
+}
+
+export interface NewDebtInput {
+  spaceId: string;
+  name: string;
+  kind: Debt['kind'];
+  icon: string;
+  installment: Cents;
+  installments: number;
+  startMonth: MonthKey;
+  monthlyRate: number;
+  inFlow: boolean;
+}
+
+export async function createDebt(input: NewDebtInput): Promise<Debt> {
+  const at = nowInstant();
+  const debt: Debt = {
+    id: uid(),
+    spaceId: input.spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: input.name.trim(),
+    kind: input.kind,
+    icon: input.icon,
+    installment: Math.max(0, Math.round(input.installment)),
+    installments: Math.max(1, Math.trunc(input.installments)),
+    startMonth: input.startMonth,
+    monthlyRate: Math.max(0, input.monthlyRate),
+    inFlow: input.inFlow,
+    settledAt: null,
+  };
+  return putRecord('debts', debt);
+}
+
+export const updateDebt = (debt: Debt, patch: Partial<Debt>): Promise<Debt> =>
+  putRecord('debts', { ...debt, ...patch });
+
+export const removeDebt = (id: string): Promise<void> => deleteRecord('debts', id);
+
+/** todos os lançamentos do espaço até a competência, para metas e dívidas */
+export function useEntriesUpTo(spaceId: string | null, month: MonthKey): Entry[] {
+  return (
+    useLiveQuery(
+      async () => (spaceId ? entriesUpTo(spaceId, month) : []),
+      [spaceId, month],
+      [] as Entry[],
     ) ?? []
   );
 }

@@ -6,6 +6,8 @@ import { NewEntrySheet } from '@/components/entries';
 import { Panel } from '@/components/ui';
 import { AssinaturasView } from '@/features/assinaturas';
 import { CartoesView } from '@/features/cartoes';
+import { DividasView } from '@/features/dividas';
+import { MetasView } from '@/features/metas';
 import { MercadoView } from '@/features/mercado';
 import {
   DespesasView,
@@ -15,6 +17,7 @@ import {
   ReceitasView,
   type ViewContext,
 } from '@/features/views';
+import { BRAND } from '@/lib/brand';
 import { db, putRecord } from '@/lib/db';
 import { currentMonthKey } from '@/lib/dates';
 import { ADD_KIND_BY_TAB, TOOLS, isTab, type TabId, type ViewId } from '@/lib/nav';
@@ -32,7 +35,7 @@ import type { MonthKey } from '@/lib/types';
 const THEME_KEY = 'norte-theme';
 
 /** ferramentas que já têm tela própria; o resto ainda cai no aviso de obra */
-const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas']);
+const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas']);
 
 export default function AppPage() {
   const { spaceId, ready, error } = useBootstrap();
@@ -89,7 +92,7 @@ export default function AppPage() {
     return (
       <BootScreen
         message="Não consegui abrir a base local"
-        detail="O Norte guarda os dados no seu aparelho. Em janela anônima, ou com o armazenamento do navegador bloqueado, ele não tem onde começar."
+        detail={`O ${BRAND.name} guarda os dados no seu aparelho. Em janela anônima, ou com o armazenamento do navegador bloqueado, ele não tem onde começar.`}
       />
     );
   }
@@ -137,6 +140,10 @@ export default function AppPage() {
           {view === 'assinaturas' && (
             <AssinaturasView spaceId={spaceId} month={month} categories={categories} hidden={hidden} />
           )}
+          {view === 'metas' && (
+            <MetasView spaceId={spaceId} month={month} categories={categories} hidden={hidden} />
+          )}
+          {view === 'dividas' && <DividasView spaceId={spaceId} month={month} hidden={hidden} />}
           {!isTab(view) && !BUILT.has(view) && <ToolScreen view={view} />}
         </div>
       </main>

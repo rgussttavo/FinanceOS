@@ -1,5 +1,5 @@
 /**
- * Modelo de domínio do Norte.
+ * Modelo de domínio do FinanceCS.
  *
  * Duas decisões valem para tudo o que está aqui:
  *
@@ -170,6 +170,54 @@ export interface Subscription extends SyncFields {
   remindDaysBefore: number;
 }
 
+/* ------------------------------------------------------------------- meta */
+
+/**
+ * De onde o progresso de uma meta vem.
+ *
+ * `manual` é a pessoa atualizando o quanto já juntou. As demais amarram a meta
+ * a uma classe de investimento: cada aporte naquela categoria empurra a barra
+ * sozinho, e é isso que faz a meta continuar viva depois da primeira semana.
+ */
+export type GoalSource = 'manual' | 'invested' | 'category';
+
+export interface Goal extends SyncFields {
+  name: string;
+  icon: string;
+  /** quanto se quer juntar, em centavos */
+  target: Cents;
+  source: GoalSource;
+  /** com source 'category', a categoria de investimento que alimenta a meta */
+  categoryId: string | null;
+  /** com source 'manual', o quanto já foi guardado */
+  saved: Cents;
+  /** prazo opcional; define quanto guardar por mês */
+  deadline: IsoDate | null;
+  color: string;
+  archivedAt: IsoInstant | null;
+}
+
+/* ------------------------------------------------------------------ dívida */
+
+export type DebtKind = 'loan' | 'financing' | 'payroll' | 'card' | 'other';
+
+export interface Debt extends SyncFields {
+  name: string;
+  kind: DebtKind;
+  icon: string;
+  /** valor de cada parcela, em centavos */
+  installment: Cents;
+  /** número total de parcelas */
+  installments: number;
+  /** mês da primeira parcela */
+  startMonth: MonthKey;
+  /** juros ao mês, em porcentagem (2.5 = 2,5% a.m.); 0 quando não se sabe */
+  monthlyRate: number;
+  /** lança a parcela nas despesas do mês automaticamente */
+  inFlow: boolean;
+  settledAt: IsoInstant | null;
+}
+
 /* ------------------------------------------------------------- comprovante */
 
 export interface Attachment extends SyncFields {
@@ -213,6 +261,8 @@ export type SyncTable =
   | 'cards'
   | 'entries'
   | 'subscriptions'
+  | 'goals'
+  | 'debts'
   | 'attachments'
   | 'folders'
   | 'settings';

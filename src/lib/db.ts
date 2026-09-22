@@ -5,8 +5,10 @@ import type {
   Attachment,
   Card,
   Category,
+  Debt,
   Entry,
   Folder,
+  Goal,
   Mutation,
   Settings,
   Space,
@@ -18,7 +20,7 @@ import type {
 import type { LearnedRule } from './categories';
 
 /**
- * Base local do Norte.
+ * Base local do FinanceCS.
  *
  * A UI le e escreve SEMPRE aqui, nunca direto na rede. Cada escrita deixa uma
  * mutacao na fila `mutations`, e o sync drena essa fila quando houver conexao.
@@ -44,6 +46,8 @@ export class NorteDB extends Dexie {
   cards!: Table<Card, string>;
   entries!: Table<Entry, string>;
   subscriptions!: Table<Subscription, string>;
+  goals!: Table<Goal, string>;
+  debts!: Table<Debt, string>;
   attachments!: Table<Attachment, string>;
   folders!: Table<Folder, string>;
   settings!: Table<Settings, string>;
@@ -72,6 +76,13 @@ export class NorteDB extends Dexie {
       mutations: '++seq, table, recordId, queuedAt',
       syncState: 'id',
     });
+
+    // metas e dívidas chegaram depois da versão 1; Dexie migra sozinho quem já
+    // tinha a base aberta, sem tocar no que já estava gravado
+    this.version(2).stores({
+      goals: 'id, spaceId, archivedAt, updatedAt, deletedAt',
+      debts: 'id, spaceId, startMonth, settledAt, updatedAt, deletedAt',
+    });
   }
 }
 
@@ -83,7 +94,7 @@ let _db: NorteDB | null = null;
  */
 export function db(): NorteDB {
   if (typeof window === 'undefined') {
-    throw new Error('A base local do Norte só existe no navegador.');
+    throw new Error('A base local do FinanceCS só existe no navegador.');
   }
   if (!_db) _db = new NorteDB();
   return _db;
@@ -98,6 +109,8 @@ const SYNC_TABLES: Record<SyncTable, keyof NorteDB> = {
   cards: 'cards',
   entries: 'entries',
   subscriptions: 'subscriptions',
+  goals: 'goals',
+  debts: 'debts',
   attachments: 'attachments',
   folders: 'folders',
   settings: 'settings',
