@@ -9,6 +9,7 @@ import { occurrencesInMonth, projectMonth, summarizeMonth, type Occurrence } fro
 import { ensureSpace, uid } from './provision';
 import type {
   Account,
+  Budget,
   Card,
   Category,
   Cents,
@@ -21,6 +22,7 @@ import type {
   MonthKey,
   Repeat,
   Settings,
+  Split,
   Subscription,
 } from './types';
 
@@ -504,6 +506,84 @@ export function useEntriesUpTo(spaceId: string | null, month: MonthKey): Entry[]
     ) ?? []
   );
 }
+
+/* ----------------------------------------------------------------- rateio */
+
+export function useSplits(spaceId: string | null): Split[] {
+  return (
+    useLiveQuery(
+      async () =>
+        spaceId
+          ? (await liveRows<Split>('splits', spaceId)).sort((a, b) => (a.date < b.date ? 1 : -1))
+          : [],
+      [spaceId],
+      [] as Split[],
+    ) ?? []
+  );
+}
+
+export async function createSplit(spaceId: string, name: string, icon: string): Promise<Split> {
+  const at = nowInstant();
+  const split: Split = {
+    id: uid(),
+    spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: name.trim() || 'Novo rateio',
+    icon,
+    date: todayIso(),
+    participants: [{ id: uid(), name: 'Você', me: true }],
+    items: [],
+    closedAt: null,
+  };
+  return putRecord('splits', split);
+}
+
+export const updateSplit = (split: Split, patch: Partial<Split>): Promise<Split> =>
+  putRecord('splits', { ...split, ...patch });
+
+export const removeSplit = (id: string): Promise<void> => deleteRecord('splits', id);
+
+/* -------------------------------------------------------------- orçamento */
+
+export function useBudgets(spaceId: string | null): Budget[] {
+  return (
+    useLiveQuery(
+      async () =>
+        spaceId
+          ? (await liveRows<Budget>('budgets', spaceId)).sort((a, b) =>
+              a.createdAt < b.createdAt ? 1 : -1,
+            )
+          : [],
+      [spaceId],
+      [] as Budget[],
+    ) ?? []
+  );
+}
+
+export async function createBudget(spaceId: string, name: string, icon: string): Promise<Budget> {
+  const at = nowInstant();
+  const budget: Budget = {
+    id: uid(),
+    spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: name.trim() || 'Novo orçamento',
+    icon,
+    people: 1,
+    items: [],
+    bufferPercent: 10,
+    notes: '',
+  };
+  return putRecord('budgets', budget);
+}
+
+export const updateBudget = (budget: Budget, patch: Partial<Budget>): Promise<Budget> =>
+  putRecord('budgets', { ...budget, ...patch });
+
+export const removeBudget = (id: string): Promise<void> => deleteRecord('budgets', id);
 
 /* ------------------------------------------------------- categorizacao */
 

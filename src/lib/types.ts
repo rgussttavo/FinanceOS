@@ -218,6 +218,57 @@ export interface Debt extends SyncFields {
   settledAt: IsoInstant | null;
 }
 
+/* ------------------------------------------------------------------ rateio */
+
+export interface Participant {
+  id: string;
+  name: string;
+  /** o participante é o dono da conta */
+  me: boolean;
+}
+
+export interface SplitItem {
+  id: string;
+  description: string;
+  amount: Cents;
+  /** quem pagou */
+  paidBy: string;
+  /** entre quem divide; vazio significa todos */
+  sharedWith: string[];
+}
+
+export interface Split extends SyncFields {
+  name: string;
+  icon: string;
+  date: IsoDate;
+  participants: Participant[];
+  items: SplitItem[];
+  closedAt: IsoInstant | null;
+}
+
+/* --------------------------------------------------------------- orçamento */
+
+export interface BudgetItem {
+  id: string;
+  description: string;
+  icon: string;
+  /** quantidade; 4 passagens, 6 diárias */
+  quantity: number;
+  /** preço unitário, em centavos */
+  unitPrice: Cents;
+}
+
+export interface Budget extends SyncFields {
+  name: string;
+  icon: string;
+  /** por quantas pessoas o total é dividido; 1 quando é só seu */
+  people: number;
+  items: BudgetItem[];
+  /** folga sobre o total, em porcentagem (10 = 10%) */
+  bufferPercent: number;
+  notes: string;
+}
+
 /* ------------------------------------------------------------- comprovante */
 
 export interface Attachment extends SyncFields {
@@ -263,6 +314,8 @@ export type SyncTable =
   | 'subscriptions'
   | 'goals'
   | 'debts'
+  | 'splits'
+  | 'budgets'
   | 'attachments'
   | 'folders'
   | 'settings';

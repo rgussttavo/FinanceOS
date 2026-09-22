@@ -5,12 +5,14 @@ import type {
   Attachment,
   Card,
   Category,
+  Budget,
   Debt,
   Entry,
   Folder,
   Goal,
   Mutation,
   Settings,
+  Split,
   Space,
   SpaceMember,
   Subscription,
@@ -48,6 +50,8 @@ export class NorteDB extends Dexie {
   subscriptions!: Table<Subscription, string>;
   goals!: Table<Goal, string>;
   debts!: Table<Debt, string>;
+  splits!: Table<Split, string>;
+  budgets!: Table<Budget, string>;
   attachments!: Table<Attachment, string>;
   folders!: Table<Folder, string>;
   settings!: Table<Settings, string>;
@@ -83,6 +87,11 @@ export class NorteDB extends Dexie {
       goals: 'id, spaceId, archivedAt, updatedAt, deletedAt',
       debts: 'id, spaceId, startMonth, settledAt, updatedAt, deletedAt',
     });
+
+    this.version(3).stores({
+      splits: 'id, spaceId, date, closedAt, updatedAt, deletedAt',
+      budgets: 'id, spaceId, updatedAt, deletedAt',
+    });
   }
 }
 
@@ -111,6 +120,8 @@ const SYNC_TABLES: Record<SyncTable, keyof NorteDB> = {
   subscriptions: 'subscriptions',
   goals: 'goals',
   debts: 'debts',
+  splits: 'splits',
+  budgets: 'budgets',
   attachments: 'attachments',
   folders: 'folders',
   settings: 'settings',

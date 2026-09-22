@@ -9,6 +9,8 @@ import { CartoesView } from '@/features/cartoes';
 import { DividasView } from '@/features/dividas';
 import { MetasView } from '@/features/metas';
 import { MercadoView } from '@/features/mercado';
+import { OrcamentoView } from '@/features/orcamento';
+import { RateioView } from '@/features/rateio';
 import {
   DespesasView,
   InicioView,
@@ -35,7 +37,7 @@ import type { MonthKey } from '@/lib/types';
 const THEME_KEY = 'norte-theme';
 
 /** ferramentas que já têm tela própria; o resto ainda cai no aviso de obra */
-const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas']);
+const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento']);
 
 export default function AppPage() {
   const { spaceId, ready, error } = useBootstrap();
@@ -144,6 +146,8 @@ export default function AppPage() {
             <MetasView spaceId={spaceId} month={month} categories={categories} hidden={hidden} />
           )}
           {view === 'dividas' && <DividasView spaceId={spaceId} month={month} hidden={hidden} />}
+          {view === 'rateio' && <RateioView spaceId={spaceId} hidden={hidden} />}
+          {view === 'orcamento' && <OrcamentoView spaceId={spaceId} hidden={hidden} />}
           {!isTab(view) && !BUILT.has(view) && <ToolScreen view={view} />}
         </div>
       </main>
