@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, CornerUpLeft, Eye, EyeOff } from 'lucide-rea
 import { Donut, MonthBars, MonthCalendar, categorySlices } from '@/components/charts';
 import { OccurrenceList } from '@/components/entries';
 import { EmptyState, Panel, SectionTitle } from '@/components/ui';
+import { NewsList } from '@/features/mercado';
 import { cn } from '@/lib/cn';
 import { addMonthsToKey, currentMonthKey, formatMonthLabel, monthKeyParts } from '@/lib/dates';
 import { formatMoney, formatPercent, ratio } from '@/lib/money';
@@ -265,12 +266,17 @@ export function InicioView(ctx: ViewContext) {
         ]}
       />
 
-      <Trajectory points={ctx.projection} hidden={ctx.hidden} />
+      <section>
+        <SectionTitle>Notícias</SectionTitle>
+        <NewsList limit={3} />
+      </section>
 
       <Panel className="p-5">
         <SectionTitle>Calendário</SectionTitle>
         <MonthCalendar month={ctx.month} occurrences={ctx.occurrences} />
       </Panel>
+
+      <Trajectory points={ctx.projection} hidden={ctx.hidden} />
 
       <Panel className="px-5 py-4">
         <SectionTitle>Últimos lançamentos</SectionTitle>

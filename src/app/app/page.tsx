@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Drawer, TabBar, TopBar } from '@/components/shell';
 import { NewEntrySheet } from '@/components/entries';
 import { Panel } from '@/components/ui';
+import { MercadoView } from '@/features/mercado';
 import {
   DespesasView,
   InicioView,
@@ -124,7 +125,8 @@ export default function AppPage() {
           {view === 'receitas' && <ReceitasView {...ctx} />}
           {view === 'despesas' && <DespesasView {...ctx} />}
           {view === 'investimentos' && <InvestimentosView {...ctx} />}
-          {!isTab(view) && <ToolScreen view={view} />}
+          {view === 'news' && <MercadoView />}
+          {!isTab(view) && view !== 'news' && <ToolScreen view={view} />}
         </div>
       </main>
 

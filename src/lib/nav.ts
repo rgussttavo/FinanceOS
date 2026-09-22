@@ -37,7 +37,7 @@ export const TABS: NavItem<TabId>[] = [
 ];
 
 export const TOOLS: NavItem<ToolId>[] = [
-  { id: 'news', label: 'Mercado', title: 'Mercado', description: 'Cotações, indicadores e a agenda econômica' },
+  { id: 'news', label: 'News', title: 'News', description: 'Manchetes, indicadores do Banco Central, moedas e cripto' },
   { id: 'assinaturas', label: 'Assinaturas', title: 'Assinaturas', description: 'O que se repete todo mês' },
   { id: 'cartoes', label: 'Cartões', title: 'Cartões', description: 'Faturas, limite e compras parceladas' },
   { id: 'metas', label: 'Metas', title: 'Metas', description: 'Quanto falta e quanto guardar por mês' },

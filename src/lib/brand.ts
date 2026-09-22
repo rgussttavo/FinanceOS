@@ -3,12 +3,12 @@
  * Trocar o nome do produto é trocar estas linhas — nada mais.
  */
 export const BRAND = {
-  name: 'Norte',
+  name: 'FinanceCS',
   /** usado em títulos longos e no <title> das páginas */
-  tagline: 'Para onde o seu dinheiro está indo',
-  /** frase curta do topo, aparece no onboarding e na landing */
-  promise: 'Todo o seu dinheiro numa tela só. Sem conectar banco.',
-  domain: 'norte.app',
+  tagline: 'O sistema operacional da sua vida financeira',
+  /** frase curta do topo, aparece no onboarding e na vitrine */
+  promise: 'Seu mês inteiro numa tela. Grátis e sem conectar banco.',
+  domain: 'financecs.app',
   locale: 'pt-BR',
   currency: 'BRL',
   timezone: 'America/Sao_Paulo',
