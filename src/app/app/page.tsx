@@ -6,10 +6,12 @@ import { NewEntrySheet } from '@/components/entries';
 import { Panel } from '@/components/ui';
 import { AssinaturasView } from '@/features/assinaturas';
 import { CartoesView } from '@/features/cartoes';
+import { ComprovantesView } from '@/features/comprovantes';
 import { DividasView } from '@/features/dividas';
 import { MetasView } from '@/features/metas';
 import { MercadoView } from '@/features/mercado';
 import { OrcamentoView } from '@/features/orcamento';
+import { PatrimonioView } from '@/features/patrimonio';
 import { RateioView } from '@/features/rateio';
 import {
   DespesasView,
@@ -37,7 +39,7 @@ import type { MonthKey } from '@/lib/types';
 const THEME_KEY = 'norte-theme';
 
 /** ferramentas que já têm tela própria; o resto ainda cai no aviso de obra */
-const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento']);
+const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento', 'comprovantes', 'patrimonio']);
 
 export default function AppPage() {
   const { spaceId, ready, error } = useBootstrap();
@@ -148,6 +150,10 @@ export default function AppPage() {
           {view === 'dividas' && <DividasView spaceId={spaceId} month={month} hidden={hidden} />}
           {view === 'rateio' && <RateioView spaceId={spaceId} hidden={hidden} />}
           {view === 'orcamento' && <OrcamentoView spaceId={spaceId} hidden={hidden} />}
+          {view === 'comprovantes' && <ComprovantesView spaceId={spaceId} />}
+          {view === 'patrimonio' && (
+            <PatrimonioView spaceId={spaceId} month={month} hidden={hidden} />
+          )}
           {!isTab(view) && !BUILT.has(view) && <ToolScreen view={view} />}
         </div>
       </main>

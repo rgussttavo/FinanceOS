@@ -2,6 +2,7 @@ import Dexie, { type Table } from 'dexie';
 import { nowInstant } from './dates';
 import type {
   Account,
+  Asset,
   Attachment,
   Card,
   Category,
@@ -52,6 +53,7 @@ export class NorteDB extends Dexie {
   debts!: Table<Debt, string>;
   splits!: Table<Split, string>;
   budgets!: Table<Budget, string>;
+  assets!: Table<Asset, string>;
   attachments!: Table<Attachment, string>;
   folders!: Table<Folder, string>;
   settings!: Table<Settings, string>;
@@ -92,6 +94,10 @@ export class NorteDB extends Dexie {
       splits: 'id, spaceId, date, closedAt, updatedAt, deletedAt',
       budgets: 'id, spaceId, updatedAt, deletedAt',
     });
+
+    this.version(4).stores({
+      assets: 'id, spaceId, kind, updatedAt, deletedAt',
+    });
   }
 }
 
@@ -122,6 +128,7 @@ const SYNC_TABLES: Record<SyncTable, keyof NorteDB> = {
   debts: 'debts',
   splits: 'splits',
   budgets: 'budgets',
+  assets: 'assets',
   attachments: 'attachments',
   folders: 'folders',
   settings: 'settings',

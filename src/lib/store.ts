@@ -3,12 +3,14 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useState } from 'react';
 import { categorize, learnFromCorrection, type LearnedRule } from './categories';
-import { db, deleteRecord, entriesUpTo, getSyncState, liveRows, putRecord } from './db';
+import { db, deleteRecord, dropFile, entriesUpTo, getSyncState, liveRows, putRecord, saveFile } from './db';
 import { addMonthsToKey, currentMonthKey, nowInstant, todayIso } from './dates';
 import { occurrencesInMonth, projectMonth, summarizeMonth, type Occurrence } from './occurrences';
 import { ensureSpace, uid } from './provision';
 import type {
   Account,
+  Asset,
+  Attachment,
   Budget,
   Card,
   Category,
@@ -16,6 +18,7 @@ import type {
   Debt,
   Entry,
   FlowKind,
+  Folder,
   Goal,
   GoalSource,
   IsoDate,
@@ -584,6 +587,140 @@ export const updateBudget = (budget: Budget, patch: Partial<Budget>): Promise<Bu
   putRecord('budgets', { ...budget, ...patch });
 
 export const removeBudget = (id: string): Promise<void> => deleteRecord('budgets', id);
+
+/* ------------------------------------------------------------- patrimônio */
+
+export function useAssets(spaceId: string | null): Asset[] {
+  return (
+    useLiveQuery(
+      async () => (spaceId ? (await liveRows<Asset>('assets', spaceId)).sort((a, b) => b.value - a.value) : []),
+      [spaceId],
+      [] as Asset[],
+    ) ?? []
+  );
+}
+
+export interface NewAssetInput {
+  spaceId: string;
+  name: string;
+  kind: Asset['kind'];
+  icon: string;
+  value: Cents;
+  purchaseValue?: Cents;
+  purchasedAt?: IsoDate | null;
+  indexedByIpca?: boolean;
+  fipe?: Asset['fipe'];
+  notes?: string;
+}
+
+export async function createAsset(input: NewAssetInput): Promise<Asset> {
+  const at = nowInstant();
+  const asset: Asset = {
+    id: uid(),
+    spaceId: input.spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: input.name.trim(),
+    kind: input.kind,
+    icon: input.icon,
+    value: Math.max(0, Math.round(input.value)),
+    purchaseValue: Math.max(0, Math.round(input.purchaseValue ?? input.value)),
+    purchasedAt: input.purchasedAt ?? null,
+    indexedByIpca: input.indexedByIpca ?? false,
+    fipe: input.fipe ?? null,
+    notes: input.notes ?? '',
+  };
+  return putRecord('assets', asset);
+}
+
+export const updateAsset = (asset: Asset, patch: Partial<Asset>): Promise<Asset> =>
+  putRecord('assets', { ...asset, ...patch });
+
+export const removeAsset = (id: string): Promise<void> => deleteRecord('assets', id);
+
+/* ------------------------------------------------------------ comprovantes */
+
+export function useFolders(spaceId: string | null): Folder[] {
+  return (
+    useLiveQuery(
+      async () => (spaceId ? (await liveRows<Folder>('folders', spaceId)).sort((a, b) => a.order - b.order) : []),
+      [spaceId],
+      [] as Folder[],
+    ) ?? []
+  );
+}
+
+export function useAttachments(spaceId: string | null): Attachment[] {
+  return (
+    useLiveQuery(
+      async () =>
+        spaceId
+          ? (await liveRows<Attachment>('attachments', spaceId)).sort((a, b) =>
+              a.createdAt < b.createdAt ? 1 : -1,
+            )
+          : [],
+      [spaceId],
+      [] as Attachment[],
+    ) ?? []
+  );
+}
+
+export async function createFolder(spaceId: string, name: string, icon: string): Promise<Folder> {
+  const at = nowInstant();
+  const folder: Folder = {
+    id: uid(),
+    spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: name.trim() || 'Nova pasta',
+    icon,
+    order: Date.now(),
+  };
+  return putRecord('folders', folder);
+}
+
+export const removeFolder = (id: string): Promise<void> => deleteRecord('folders', id);
+
+/**
+ * Guarda um arquivo neste aparelho e registra o comprovante.
+ *
+ * O binário vai para o IndexedDB e só os metadados entram na fila de sync. O
+ * upload para a nuvem entra junto com o backend; até lá, `uploaded` fica falso
+ * e a tela diz a verdade sobre onde o arquivo está.
+ */
+export async function addAttachment(
+  spaceId: string,
+  file: File,
+  folderId: string | null,
+  title?: string,
+): Promise<Attachment> {
+  const at = nowInstant();
+  const attachment: Attachment = {
+    id: uid(),
+    spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    name: (title?.trim() || file.name || 'comprovante').slice(0, 80),
+    mime: file.type || 'application/octet-stream',
+    size: file.size,
+    storagePath: null,
+    folderId,
+    uploaded: false,
+  };
+  await saveFile(attachment.id, file);
+  return putRecord('attachments', attachment);
+}
+
+export async function removeAttachment(id: string): Promise<void> {
+  await dropFile(id);
+  await deleteRecord('attachments', id);
+}
+
+export const updateAttachment = (a: Attachment, patch: Partial<Attachment>): Promise<Attachment> =>
+  putRecord('attachments', { ...a, ...patch });
 
 /* ------------------------------------------------------- categorizacao */
 

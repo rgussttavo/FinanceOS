@@ -269,6 +269,37 @@ export interface Budget extends SyncFields {
   notes: string;
 }
 
+/* --------------------------------------------------------------- patrimônio */
+
+export type AssetKind = 'property' | 'vehicle' | 'other';
+
+/** referência de um veículo na tabela FIPE, guardada para reconsultar o valor */
+export interface FipeRef {
+  /** carros, motos ou caminhoes */
+  vehicleType: 'carros' | 'motos' | 'caminhoes';
+  brandCode: string;
+  modelCode: string;
+  yearCode: string;
+  label: string;
+  /** quando o valor foi consultado pela última vez */
+  checkedAt: IsoInstant | null;
+}
+
+export interface Asset extends SyncFields {
+  name: string;
+  kind: AssetKind;
+  icon: string;
+  /** valor atual, em centavos */
+  value: Cents;
+  /** valor e data de aquisição, para medir valorização */
+  purchaseValue: Cents;
+  purchasedAt: IsoDate | null;
+  /** imóvel pode ser corrigido pelo IPCA a partir da compra */
+  indexedByIpca: boolean;
+  fipe: FipeRef | null;
+  notes: string;
+}
+
 /* ------------------------------------------------------------- comprovante */
 
 export interface Attachment extends SyncFields {
@@ -316,6 +347,7 @@ export type SyncTable =
   | 'debts'
   | 'splits'
   | 'budgets'
+  | 'assets'
   | 'attachments'
   | 'folders'
   | 'settings';
