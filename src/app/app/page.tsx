@@ -1,48 +1,49 @@
 'use client';
 
 import * as React from 'react';
-import { AppHeader } from '@/components/AppHeader';
-import { BalanceHero, CategoryBreakdown, MonthNav, ProjectionChart } from '@/components/dashboard';
-import { AddButton, NewEntrySheet, OccurrenceList, UpcomingPanel } from '@/components/entries';
-import { Panel, SectionTitle } from '@/components/ui';
+import { Drawer, TabBar, TopBar } from '@/components/shell';
+import { NewEntrySheet } from '@/components/entries';
+import { Panel } from '@/components/ui';
+import {
+  DespesasView,
+  InicioView,
+  InvestimentosView,
+  MonthStrip,
+  ReceitasView,
+  type ViewContext,
+} from '@/features/views';
 import { db, putRecord } from '@/lib/db';
-import { currentMonthKey, formatMonthLabel } from '@/lib/dates';
+import { currentMonthKey } from '@/lib/dates';
+import { ADD_KIND_BY_TAB, TOOLS, isTab, type TabId, type ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
 import {
   toggleSettled,
   useBootstrap,
   useCategories,
   useMonth,
-  usePendingSync,
+  useMonthsSummary,
   useSettings,
 } from '@/lib/store';
 import type { MonthKey } from '@/lib/types';
 
+const THEME_KEY = 'norte-theme';
+
 export default function AppPage() {
   const { spaceId, ready, error } = useBootstrap();
+  const [view, setView] = React.useState<ViewId>('inicio');
+  const [lastTab, setLastTab] = React.useState<TabId>('inicio');
   const [month, setMonth] = React.useState<MonthKey>(currentMonthKey());
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [sheetOpen, setSheetOpen] = React.useState(false);
-  const [online, setOnline] = React.useState(true);
 
   const categories = useCategories(spaceId);
   const settings = useSettings(spaceId);
-  const pending = usePendingSync();
-  const view = useMonth(spaceId, month);
+  const monthView = useMonth(spaceId, month);
+  const history = useMonthsSummary(spaceId, month, 6);
 
   const hidden = settings?.privateMode ?? false;
 
-  React.useEffect(() => {
-    const sync = () => setOnline(navigator.onLine);
-    sync();
-    window.addEventListener('online', sync);
-    window.addEventListener('offline', sync);
-    return () => {
-      window.removeEventListener('online', sync);
-      window.removeEventListener('offline', sync);
-    };
-  }, []);
-
-  const togglePrivate = React.useCallback(async () => {
+  const toggleHidden = React.useCallback(async () => {
     if (!settings) return;
     await putRecord('settings', { ...settings, privateMode: !settings.privateMode });
   }, [settings]);
@@ -52,68 +53,130 @@ export default function AppPage() {
     if (entry) await toggleSettled(entry, o.key);
   }, []);
 
-  if (!ready) {
-    return <BootScreen message="Abrindo…" />;
-  }
+  const go = React.useCallback((next: ViewId) => {
+    setView(next);
+    if (isTab(next)) setLastTab(next);
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  const toggleTheme = React.useCallback(() => {
+    const root = document.documentElement;
+    const isLight = root.getAttribute('data-theme') === 'light';
+    try {
+      if (isLight) {
+        root.removeAttribute('data-theme');
+        localStorage.removeItem(THEME_KEY);
+      } else {
+        root.setAttribute('data-theme', 'light');
+        localStorage.setItem(THEME_KEY, 'light');
+      }
+    } catch {
+      // armazenamento bloqueado: o tema vale só nesta sessão
+      if (isLight) root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', 'light');
+    }
+  }, []);
+
+  if (!ready) return <BootScreen message="Abrindo…" />;
 
   if (error || !spaceId) {
     return (
       <BootScreen
-        message={error ?? 'Não consegui abrir a base local.'}
-        detail="O Norte guarda os dados no seu aparelho. Em janela anônima ou com o armazenamento bloqueado, ele não consegue começar."
+        message="Não consegui abrir a base local"
+        detail="O Norte guarda os dados no seu aparelho. Em janela anônima, ou com o armazenamento do navegador bloqueado, ele não tem onde começar."
       />
     );
   }
 
+  const ctx: ViewContext = {
+    month,
+    setMonth,
+    summary: monthView.summary,
+    occurrences: monthView.occurrences,
+    projection: monthView.projection,
+    categories,
+    hidden,
+    toggleHidden,
+    onToggleOccurrence,
+    history,
+  };
+
   return (
     <div className="min-h-dvh">
-      <AppHeader
-        privateMode={hidden}
-        onTogglePrivate={togglePrivate}
-        pendingSync={pending}
-        online={online}
+      <TopBar
+        view={view}
+        name="você"
+        onOpenMenu={() => setDrawerOpen(true)}
+        onOpenProfile={() => go('perfil')}
+        onOpenIA={() => go('ia')}
+        onOpenSearch={() => go('ia')}
+        onBack={() => go(lastTab)}
       />
 
-      <main className="mx-auto max-w-5xl px-4 pb-32 pt-5">
-        <div className="mb-5 flex items-center justify-between gap-3">
-          <MonthNav month={month} onChange={setMonth} />
-          <span className="hidden text-[12px] text-ink-3 sm:inline">
-            {view.summary.count} {view.summary.count === 1 ? 'lançamento' : 'lançamentos'}
-          </span>
-        </div>
+      <main
+        className="col pt-1"
+        style={{ paddingBottom: 'calc(var(--tabbar-h) + var(--sa-bottom) + 64px)' }}
+      >
+        {isTab(view) && <MonthStrip month={month} onChange={setMonth} />}
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-start">
-          <div className="grid gap-4">
-            <BalanceHero summary={view.summary} hidden={hidden} />
-            <ProjectionChart points={view.projection} hidden={hidden} />
-
-            <Panel className="px-6 py-5">
-              <SectionTitle>Lançamentos de {formatMonthLabel(month)}</SectionTitle>
-              <OccurrenceList
-                occurrences={view.occurrences}
-                categories={categories}
-                hidden={hidden}
-                onToggle={onToggleOccurrence}
-              />
-            </Panel>
-          </div>
-
-          <aside className="grid gap-4">
-            <UpcomingPanel occurrences={view.occurrences} hidden={hidden} />
-            <CategoryBreakdown summary={view.summary} categories={categories} hidden={hidden} />
-          </aside>
+        <div key={view} className="motion-safe:animate-[rise-in_var(--t-base)_var(--ease-out)]">
+          {view === 'inicio' && <InicioView {...ctx} />}
+          {view === 'receitas' && <ReceitasView {...ctx} />}
+          {view === 'despesas' && <DespesasView {...ctx} />}
+          {view === 'investimentos' && <InvestimentosView {...ctx} />}
+          {!isTab(view) && <ToolScreen view={view} />}
         </div>
       </main>
 
-      <AddButton onClick={() => setSheetOpen(true)} />
+      <TabBar view={view} onChange={go} onAdd={() => setSheetOpen(true)} />
+
+      <Drawer
+        open={drawerOpen}
+        view={view}
+        name="você"
+        onClose={() => setDrawerOpen(false)}
+        onGo={go}
+        onOpenProfile={() => {
+          go('perfil');
+          setDrawerOpen(false);
+        }}
+        onToggleTheme={toggleTheme}
+        onOpenSettings={() => {
+          go('perfil');
+          setDrawerOpen(false);
+        }}
+      />
 
       <NewEntrySheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         spaceId={spaceId}
         categories={categories}
+        defaultKind={ADD_KIND_BY_TAB[isTab(view) ? view : lastTab]}
       />
     </div>
+  );
+}
+
+/**
+ * Telas das ferramentas ainda não construídas.
+ *
+ * Deixar o item navegável e dizer o que virá é mais honesto do que escondê-lo
+ * do menu: a pessoa vê o mapa inteiro do produto e sabe onde está.
+ */
+function ToolScreen({ view }: { view: ViewId }) {
+  const tool = TOOLS.find((t) => t.id === view);
+
+  return (
+    <Panel className="mt-3 px-6 py-10 text-center">
+      <p className="font-display text-[24px] text-ink">{tool?.title ?? 'Em construção'}</p>
+      <p className="mx-auto mt-2 max-w-[32ch] text-[14px] leading-relaxed text-ink-3">
+        {tool?.description ?? 'Esta tela entra nas próximas etapas.'}
+      </p>
+      <p className="mt-5 inline-flex rounded-full bg-surface-2 px-3 py-1.5 text-[12px] text-ink-3">
+        em construção
+      </p>
+    </Panel>
   );
 }
 

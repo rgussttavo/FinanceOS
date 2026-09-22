@@ -36,17 +36,17 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#fbfaf7' },
-    { media: '(prefers-color-scheme: dark)', color: '#0e0e10' },
-  ],
+  themeColor: '#0b0b0c',
 };
 
 /**
- * Tema aplicado antes do primeiro paint. Sem isto a tela pisca em branco
- * ao abrir no escuro — o defeito mais visível que um app de dinheiro pode ter.
+ * Tema aplicado antes do primeiro paint.
+ *
+ * O escuro é o padrão da marca, então só o claro precisa ser marcado. Sem este
+ * script, quem escolheu claro veria um lampejo escuro a cada abertura — o tipo
+ * de defeito que faz um app de dinheiro parecer mal-acabado.
  */
-const THEME_BOOT = `(function(){try{var t=localStorage.getItem('norte-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
+const THEME_BOOT = `(function(){try{if(localStorage.getItem('norte-theme')==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

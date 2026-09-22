@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useState } from 'react';
 import { categorize, learnFromCorrection, type LearnedRule } from './categories';
 import { db, deleteRecord, entriesUpTo, getSyncState, liveRows, putRecord } from './db';
-import { currentMonthKey, nowInstant, todayIso } from './dates';
+import { addMonthsToKey, currentMonthKey, nowInstant, todayIso } from './dates';
 import { occurrencesInMonth, projectMonth, summarizeMonth, type Occurrence } from './occurrences';
 import { ensureSpace, uid } from './provision';
 import type {
@@ -155,6 +155,33 @@ export function useMonth(spaceId: string | null, month: MonthKey): MonthView {
       loading: entries === undefined,
     };
   }, [entries, month]);
+}
+
+/**
+ * Resumo de vários meses seguidos, terminando no mês informado.
+ *
+ * Serve ao comparativo de 6 meses e à evolução do investido. Lê os lançamentos
+ * uma vez só e reexpande as ocorrências por competência, em vez de uma consulta
+ * por mês.
+ */
+export function useMonthsSummary(
+  spaceId: string | null,
+  lastMonth: MonthKey,
+  count = 6,
+): ReturnType<typeof summarizeMonth>[] {
+  const entries = useLiveQuery(
+    async () => (spaceId ? entriesUpTo(spaceId, lastMonth) : []),
+    [spaceId, lastMonth],
+    undefined,
+  );
+
+  return useMemo(() => {
+    const rows = entries ?? [];
+    const today = todayIso();
+    const months: MonthKey[] = [];
+    for (let i = count - 1; i >= 0; i--) months.push(addMonthsToKey(lastMonth, -i));
+    return months.map((m) => summarizeMonth(occurrencesInMonth(rows, m, today), m, today));
+  }, [entries, lastMonth, count]);
 }
 
 export function useMonthCursor(initial: MonthKey = currentMonthKey()) {

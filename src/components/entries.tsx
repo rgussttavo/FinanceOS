@@ -135,14 +135,17 @@ export function NewEntrySheet({
   spaceId,
   categories,
   defaultDate,
+  defaultKind = 'out',
 }: {
   open: boolean;
   onClose: () => void;
   spaceId: string;
   categories: Category[];
   defaultDate?: string;
+  /** a aba aberta decide o tipo que o + já traz selecionado */
+  defaultKind?: FlowKind;
 }) {
-  const [kind, setKind] = React.useState<FlowKind>('out');
+  const [kind, setKind] = React.useState<FlowKind>(defaultKind);
   const [description, setDescription] = React.useState('');
   const [amountText, setAmountText] = React.useState('');
   const [date, setDate] = React.useState(defaultDate ?? todayIso());
@@ -187,7 +190,7 @@ export function NewEntrySheet({
   }, []);
 
   const reset = React.useCallback(() => {
-    setKind('out');
+    setKind(defaultKind);
     setDescription('');
     setAmountText('');
     setDate(defaultDate ?? todayIso());
@@ -197,7 +200,7 @@ export function NewEntrySheet({
     setTouchedCategory(false);
     setSuggestion(null);
     setError(null);
-  }, [defaultDate]);
+  }, [defaultDate, defaultKind]);
 
   async function submit() {
     const amount = parseMoney(amountText);
