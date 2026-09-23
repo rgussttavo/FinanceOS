@@ -21,7 +21,7 @@ export type ToolId =
   | 'comprovantes'
   | 'patrimonio';
 
-export type ViewId = TabId | ToolId | 'ia' | 'perfil';
+export type ViewId = TabId | ToolId | 'ia' | 'perfil' | 'busca';
 
 export interface NavItem<T extends string> {
   id: T;
@@ -60,6 +60,7 @@ export function viewTitle(view: ViewId): string {
   if (tool) return tool.title ?? tool.label;
   if (view === 'ia') return `${BRAND.name} IA`;
   if (view === 'perfil') return 'Meu perfil';
+  if (view === 'busca') return 'Buscar';
   return TABS.find((t) => t.id === view)?.label ?? '';
 }
 

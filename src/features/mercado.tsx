@@ -1,8 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { RefreshCw } from 'lucide-react';
-import { Panel, SectionTitle } from '@/components/ui';
+import { ArrowLeftRight, RefreshCw } from 'lucide-react';
+import { Button, Panel, SectionTitle } from '@/components/ui';
+import { CambioSheet } from '@/features/simuladores';
 import { cn } from '@/lib/cn';
 import {
   formatQuote,
@@ -131,6 +132,7 @@ function SkeletonRows({ rows }: { rows: number }) {
 
 export function MercadoView() {
   const { data, loading, stale } = useMarket();
+  const [cambio, setCambio] = React.useState(false);
 
   return (
     <div className="grid gap-4 pt-2">
@@ -203,13 +205,51 @@ export function MercadoView() {
       ) : null}
 
       <QuoteGroup title="Moedas" quotes={data?.currencies ?? []} loading={loading && !data} />
+
+      <Button variant="ghost" className="w-full" onClick={() => setCambio(true)}>
+        <ArrowLeftRight size={15} />
+        Abrir simulador de câmbio
+      </Button>
+
       <QuoteGroup title="Criptomoedas" quotes={data?.crypto ?? []} loading={loading && !data} />
 
+      {/* seções previstas no contrato da API, ainda sem fonte de dados */}
+      {(data?.pending ?? []).map((section) => (
+        <PendingPanel key={section.id} label={section.label} reason={section.reason} />
+      ))}
+
       <p className="px-1 pb-2 text-[12px] leading-relaxed text-ink-3">
-        Fontes: séries do Banco Central e cotações públicas de mercado. Valores meramente
+        Fontes: séries do Banco Central e cotações públicas de câmbio. Valores meramente
         informativos, sem recomendação de investimento.
       </p>
+
+      <CambioSheet open={cambio} onClose={() => setCambio(false)} />
     </div>
+  );
+}
+
+/**
+ * Seção que existe no produto mas ainda não tem de onde puxar dado.
+ *
+ * Fica visível e dita em português em vez de sumir da tela: quem usa vê o mapa
+ * inteiro e entende que falta a fonte, não que a funcionalidade não existe.
+ * Preencher com número inventado seria pior do que deixar vazio.
+ */
+function PendingPanel({ label, reason }: { label: string; reason: string }) {
+  return (
+    <Panel className="border-dashed px-5 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="min-w-0">
+          <span className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            {label}
+          </span>
+          <span className="mt-1 block text-[13px] text-ink-3">{reason}</span>
+        </span>
+        <span className="shrink-0 rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-ink-3">
+          sem fonte
+        </span>
+      </div>
+    </Panel>
   );
 }
 

@@ -247,6 +247,7 @@ export function Drawer({
   open,
   view,
   name,
+  hiddenTools = [],
   onClose,
   onGo,
   onOpenProfile,
@@ -256,6 +257,8 @@ export function Drawer({
   open: boolean;
   view: ViewId;
   name: string;
+  /** ferramentas desligadas nas configurações; somem do menu inteiro */
+  hiddenTools?: ToolId[];
   onClose: () => void;
   onGo: (view: ViewId) => void;
   onOpenProfile: () => void;
@@ -313,7 +316,7 @@ export function Drawer({
             Ferramentas
           </p>
           <ul className="grid gap-0.5">
-            {TOOLS.map((tool) => {
+            {TOOLS.filter((tool) => !hiddenTools.includes(tool.id)).map((tool) => {
               const Icon = TOOL_ICONS[tool.id];
               const active = view === tool.id;
               return (

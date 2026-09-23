@@ -26,9 +26,12 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   size?: ButtonSize;
 }
 
-export function Button({ variant = 'ghost', size = 'md', className, ...props }: ButtonProps) {
+export function Button({ variant = 'ghost', size = 'md', className, type, ...props }: ButtonProps) {
   return (
     <button
+      // sem type explícito o padrão do HTML é "submit"; dentro de um formulário
+      // isso dispararia envio em vez de rodar o onClick
+      type={type ?? 'button'}
       {...props}
       className={cn(
         'inline-flex items-center justify-center rounded-field font-medium',

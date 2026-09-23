@@ -1,14 +1,24 @@
 'use client';
 
 import * as React from 'react';
-import { ChevronLeft, ChevronRight, CornerUpLeft, Eye, EyeOff } from 'lucide-react';
-import { Donut, MonthBars, MonthCalendar, categorySlices } from '@/components/charts';
+import { Calculator, ChevronLeft, ChevronRight, Copy as CopyIcon, CornerUpLeft, Eye, EyeOff, Flame } from 'lucide-react';
+import {
+  Donut,
+  InflationChart,
+  MonthBars,
+  MonthCalendar,
+  buildInflationSeries,
+  categorySlices,
+} from '@/components/charts';
 import { OccurrenceList } from '@/components/entries';
-import { EmptyState, Panel, SectionTitle } from '@/components/ui';
+import { Button, EmptyState, Input, Panel, SectionTitle } from '@/components/ui';
 import { NewsList } from '@/features/mercado';
+import { FireSheet, InvestimentoSheet } from '@/features/simuladores';
+import { useMarket } from '@/lib/market';
+import { repeatPreviousMonth, setCarryOver, useCarryOver } from '@/lib/store';
 import { cn } from '@/lib/cn';
 import { addMonthsToKey, currentMonthKey, formatMonthLabel, monthKeyParts } from '@/lib/dates';
-import { formatMoney, formatPercent, ratio } from '@/lib/money';
+import { formatMoney, formatPercent, parseMoney, ratio } from '@/lib/money';
 import type { MonthSummary, Occurrence } from '@/lib/occurrences';
 import { firstNegativeDay, type DayPoint } from '@/lib/occurrences';
 import type { Category, Cents, MonthKey } from '@/lib/types';
@@ -233,6 +243,7 @@ export function Trajectory({ points, hidden }: { points: DayPoint[]; hidden: boo
 /* ------------------------------------------------------------------ Início */
 
 export interface ViewContext {
+  spaceId: string;
   month: MonthKey;
   setMonth: (m: MonthKey) => void;
   summary: MonthSummary;
@@ -240,6 +251,8 @@ export interface ViewContext {
   projection: DayPoint[];
   categories: Category[];
   hidden: boolean;
+  /** o bloco de noticias no inicio pode ser desligado nas configuracoes */
+  newsEnabled: boolean;
   toggleHidden: () => void;
   onToggleOccurrence: (o: Occurrence) => void;
   history: MonthSummary[];
@@ -266,10 +279,12 @@ export function InicioView(ctx: ViewContext) {
         ]}
       />
 
-      <section>
-        <SectionTitle>Notícias</SectionTitle>
-        <NewsList limit={3} />
-      </section>
+      {ctx.newsEnabled && (
+        <section>
+          <SectionTitle>Notícias</SectionTitle>
+          <NewsList limit={3} />
+        </section>
+      )}
 
       <Panel className="p-5">
         <SectionTitle>Calendário</SectionTitle>
@@ -327,6 +342,9 @@ export function ReceitasView(ctx: ViewContext) {
         ]}
       />
 
+      <CarryOverCard spaceId={ctx.spaceId} month={ctx.month} hidden={ctx.hidden} />
+      <RepeatPreviousButton spaceId={ctx.spaceId} month={ctx.month} kind="in" />
+
       <Panel className="px-5 py-4">
         <SectionTitle action={<span className="tnum text-[12px] text-ink-3">{incomes.length}</span>}>
           Lançamentos
@@ -377,12 +395,21 @@ export function DespesasView(ctx: ViewContext) {
         ]}
       />
 
+      <RepeatPreviousButton spaceId={ctx.spaceId} month={ctx.month} kind="out" />
+
       {slices.length > 0 && (
         <Panel className="p-5">
           <SectionTitle>Gastos por categoria</SectionTitle>
           <Donut slices={slices} total={totalOut} caption="Gastos por categoria" />
         </Panel>
       )}
+
+      <Panel className="p-5">
+        <SectionTitle action={<span className="text-[12px] text-ink-3">vs IPCA</span>}>
+          Sua inflação
+        </SectionTitle>
+        <PersonalInflation history={ctx.history} />
+      </Panel>
 
       <Panel className="p-5">
         <SectionTitle>Últimos 6 meses</SectionTitle>
@@ -414,6 +441,7 @@ export function DespesasView(ctx: ViewContext) {
 /* ----------------------------------------------------------- Investimentos */
 
 export function InvestimentosView(ctx: ViewContext) {
+  const [tool, setTool] = React.useState<null | 'invest' | 'fire'>(null);
   const contributions = ctx.occurrences.filter((o) => o.kind === 'invest');
   const slices = React.useMemo(() => {
     const byId = new Map(ctx.categories.map((c) => [c.id, c]));
@@ -455,6 +483,20 @@ export function InvestimentosView(ctx: ViewContext) {
         ]}
       />
 
+      <div className="grid gap-2">
+        <RepeatPreviousButton spaceId={ctx.spaceId} month={ctx.month} kind="invest" />
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="ghost" onClick={() => setTool('invest')}>
+            <Calculator size={15} />
+            Simulador
+          </Button>
+          <Button variant="ghost" onClick={() => setTool('fire')}>
+            <Flame size={15} />
+            Viver de renda
+          </Button>
+        </div>
+      </div>
+
       {slices.length > 0 && (
         <Panel className="p-5">
           <SectionTitle>Alocação do mês</SectionTitle>
@@ -480,6 +522,160 @@ export function InvestimentosView(ctx: ViewContext) {
           />
         )}
       </Panel>
+
+      <InvestimentoSheet open={tool === 'invest'} onClose={() => setTool(null)} />
+      <FireSheet open={tool === 'fire'} onClose={() => setTool(null)} currentWealth={accumulated} />
     </div>
+  );
+}
+
+/* --------------------------------------------------------- peças das abas */
+
+/**
+ * Traz de volta os lançamentos avulsos do mês passado.
+ *
+ * Boa parte das contas repete de valor mas não de data, e quem usa o app
+ * relança as mesmas linhas todo mês. O botão diz quantas foram copiadas — e
+ * pode ser tocado duas vezes sem duplicar nada, porque quem não tem certeza
+ * de ter apertado aperta de novo.
+ */
+function RepeatPreviousButton({
+  spaceId,
+  month,
+  kind,
+}: {
+  spaceId: string;
+  month: MonthKey;
+  kind: 'in' | 'out' | 'invest';
+}) {
+  const [state, setState] = React.useState<'idle' | 'working' | 'done' | 'none'>('idle');
+  const [count, setCount] = React.useState(0);
+
+  async function run() {
+    setState('working');
+    const copied = await repeatPreviousMonth(spaceId, month, kind);
+    setCount(copied);
+    setState(copied > 0 ? 'done' : 'none');
+    setTimeout(() => setState('idle'), 3200);
+  }
+
+  const label =
+    state === 'working'
+      ? 'Copiando…'
+      : state === 'done'
+        ? `${count} ${count === 1 ? 'lançamento copiado' : 'lançamentos copiados'}`
+        : state === 'none'
+          ? 'Nada novo para copiar'
+          : 'Repetir valores do mês anterior';
+
+  return (
+    <Button
+      variant="ghost"
+      className="w-full"
+      onClick={run}
+      disabled={state === 'working'}
+    >
+      <CopyIcon size={15} />
+      {label}
+    </Button>
+  );
+}
+
+/**
+ * O que sobrou na conta no mês passado.
+ *
+ * Sem isso o mês começa sempre do zero, e o saldo da tela nunca bate com o do
+ * banco de quem não gastou tudo.
+ */
+function CarryOverCard({
+  spaceId,
+  month,
+  hidden,
+}: {
+  spaceId: string;
+  month: MonthKey;
+  hidden: boolean;
+}) {
+  const current = useCarryOver(spaceId, month);
+  const [open, setOpen] = React.useState(false);
+  const [text, setText] = React.useState('');
+
+  const [loadedFor, setLoadedFor] = React.useState('');
+  if (open && loadedFor !== month) {
+    setLoadedFor(month);
+    setText(current > 0 ? String(current / 100).replace('.', ',') : '');
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setLoadedFor('');
+          setOpen(true);
+        }}
+        className="flex w-full items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3 text-left transition-colors hover:bg-surface-2"
+      >
+        <span className="min-w-0">
+          <span className="block text-[14px] text-ink">Sobrou saldo do mês anterior?</span>
+          <span className="block text-[12px] text-ink-3">
+            {current > 0
+              ? `${formatMoney(current, { hidden })} já lançados`
+              : 'Informe quanto ficou na conta'}
+          </span>
+        </span>
+        <ChevronRight size={17} className="shrink-0 text-ink-3" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-card border border-line bg-surface px-4 py-3">
+      <p className="text-[14px] text-ink">Quanto sobrou do mês passado</p>
+      <div className="mt-2 flex gap-2">
+        <Input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          inputMode="decimal"
+          placeholder="0,00"
+          aria-label="Saldo do mês anterior"
+          className="tnum flex-1"
+        />
+        <Button
+          variant="primary"
+          onClick={async () => {
+            await setCarryOver(spaceId, month, parseMoney(text) ?? 0);
+            setOpen(false);
+          }}
+        >
+          Salvar
+        </Button>
+        <Button variant="quiet" onClick={() => setOpen(false)}>
+          Cancelar
+        </Button>
+      </div>
+      <p className="mt-2 text-[12px] text-ink-3">
+        Entra como receita do dia 1º. Zerar o campo remove o lançamento.
+      </p>
+    </div>
+  );
+}
+
+/** sua inflação contra o IPCA, com a série oficial vinda do Banco Central */
+function PersonalInflation({ history }: { history: MonthSummary[] }) {
+  const { data } = useMarket();
+  const points = React.useMemo(
+    () => buildInflationSeries(history, data?.ipcaSeries ?? []),
+    [history, data],
+  );
+
+  return (
+    <>
+      <InflationChart points={points} />
+      <p className="mt-2 text-[12px] leading-relaxed text-ink-3">
+        A inflação oficial é a cesta média do país. A sua é a sua — ver as duas juntas responde se a
+        conta que subiu foi do país ou do seu mês.
+      </p>
+    </>
   );
 }

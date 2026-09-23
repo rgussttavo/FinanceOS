@@ -5,6 +5,7 @@ import { Drawer, TabBar, TopBar } from '@/components/shell';
 import { NewEntrySheet } from '@/components/entries';
 import { Panel } from '@/components/ui';
 import { AssinaturasView } from '@/features/assinaturas';
+import { BuscaView } from '@/features/busca';
 import { CartoesView } from '@/features/cartoes';
 import { ComprovantesView } from '@/features/comprovantes';
 import { DividasView } from '@/features/dividas';
@@ -12,6 +13,7 @@ import { MetasView } from '@/features/metas';
 import { MercadoView } from '@/features/mercado';
 import { OrcamentoView } from '@/features/orcamento';
 import { PatrimonioView } from '@/features/patrimonio';
+import { PerfilView } from '@/features/perfil';
 import { RateioView } from '@/features/rateio';
 import {
   DespesasView,
@@ -24,7 +26,7 @@ import {
 import { BRAND } from '@/lib/brand';
 import { db, putRecord } from '@/lib/db';
 import { currentMonthKey } from '@/lib/dates';
-import { ADD_KIND_BY_TAB, TOOLS, isTab, type TabId, type ViewId } from '@/lib/nav';
+import { ADD_KIND_BY_TAB, TOOLS, isTab, type TabId, type ToolId, type ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
 import {
   toggleSettled,
@@ -38,8 +40,22 @@ import type { MonthKey } from '@/lib/types';
 
 const THEME_KEY = 'norte-theme';
 
+/**
+ * O tema vive no atributo do <html>, escrito antes do primeiro paint pelo
+ * script do layout. O React lê de lá em vez de guardar uma cópia — uma fonte
+ * da verdade só, sem piscar na hidratação.
+ */
+const themeListeners = new Set<() => void>();
+const readIsLight = () => document.documentElement.getAttribute('data-theme') === 'light';
+const subscribeTheme = (fn: () => void) => {
+  themeListeners.add(fn);
+  return () => {
+    themeListeners.delete(fn);
+  };
+};
+
 /** ferramentas que já têm tela própria; o resto ainda cai no aviso de obra */
-const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento', 'comprovantes', 'patrimonio']);
+const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento', 'comprovantes', 'patrimonio', 'busca', 'perfil']);
 
 export default function AppPage() {
   const { spaceId, ready, error } = useBootstrap();
@@ -72,11 +88,13 @@ export default function AppPage() {
     window.scrollTo({ top: 0 });
   }, []);
 
+  const isLight = React.useSyncExternalStore(subscribeTheme, readIsLight, () => false);
+
   const toggleTheme = React.useCallback(() => {
     const root = document.documentElement;
-    const isLight = root.getAttribute('data-theme') === 'light';
+    const wasLight = root.getAttribute('data-theme') === 'light';
     try {
-      if (isLight) {
+      if (wasLight) {
         root.removeAttribute('data-theme');
         localStorage.removeItem(THEME_KEY);
       } else {
@@ -85,10 +103,22 @@ export default function AppPage() {
       }
     } catch {
       // armazenamento bloqueado: o tema vale só nesta sessão
-      if (isLight) root.removeAttribute('data-theme');
+      if (wasLight) root.removeAttribute('data-theme');
       else root.setAttribute('data-theme', 'light');
     }
+    for (const notify of themeListeners) notify();
   }, []);
+
+  /** ferramentas desligadas somem do menu e das telas */
+  const hiddenTools = React.useMemo(() => {
+    const off: ToolId[] = [];
+    if (settings && !settings.cardsEnabled) off.push('cartoes');
+    if (settings && !settings.newsEnabled) off.push('news');
+    return off;
+  }, [settings]);
+
+  /** o nome do perfil, quando preenchido; senão o app trata por "você" */
+  const displayName = settings?.displayName.trim() || 'você';
 
   if (!ready) return <BootScreen message="Abrindo…" />;
 
@@ -102,6 +132,7 @@ export default function AppPage() {
   }
 
   const ctx: ViewContext = {
+    spaceId,
     month,
     setMonth,
     summary: monthView.summary,
@@ -109,6 +140,7 @@ export default function AppPage() {
     projection: monthView.projection,
     categories,
     hidden,
+    newsEnabled: settings?.newsEnabled ?? true,
     toggleHidden,
     onToggleOccurrence,
     history,
@@ -118,11 +150,11 @@ export default function AppPage() {
     <div className="min-h-dvh">
       <TopBar
         view={view}
-        name="você"
+        name={displayName}
         onOpenMenu={() => setDrawerOpen(true)}
         onOpenProfile={() => go('perfil')}
         onOpenIA={() => go('ia')}
-        onOpenSearch={() => go('ia')}
+        onOpenSearch={() => go('busca')}
         onBack={() => go(lastTab)}
       />
 
@@ -154,6 +186,12 @@ export default function AppPage() {
           {view === 'patrimonio' && (
             <PatrimonioView spaceId={spaceId} month={month} hidden={hidden} />
           )}
+          {view === 'busca' && (
+            <BuscaView spaceId={spaceId} month={month} hidden={hidden} onGo={go} />
+          )}
+          {view === 'perfil' && (
+            <PerfilView settings={settings} onToggleTheme={toggleTheme} isLight={isLight} />
+          )}
           {!isTab(view) && !BUILT.has(view) && <ToolScreen view={view} />}
         </div>
       </main>
@@ -163,7 +201,8 @@ export default function AppPage() {
       <Drawer
         open={drawerOpen}
         view={view}
-        name="você"
+        name={displayName}
+        hiddenTools={hiddenTools}
         onClose={() => setDrawerOpen(false)}
         onGo={go}
         onOpenProfile={() => {

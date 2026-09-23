@@ -1,11 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Plus } from 'lucide-react';
+import { Check, Plus, ScanLine } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatDayShort, formatRelativeDay, todayIso } from '@/lib/dates';
 import { formatMoney, parseMoney } from '@/lib/money';
 import type { Occurrence } from '@/lib/occurrences';
+import { SCAN_LABELS, scanCode, type ScanResult } from '@/lib/scan';
 import { createEntry, rememberCategory, suggestCategory } from '@/lib/store';
 import type { Category, FlowKind, Repeat, RepeatKind } from '@/lib/types';
 import { Button, EmptyState, Field, Input, Panel, SectionTitle, Segmented, Select, Sheet } from './ui';
@@ -246,6 +247,16 @@ export function NewEntrySheet({
       }
     >
       <div className="grid gap-4">
+        {kind === 'out' && (
+          <CodeScanner
+            onRead={(result) => {
+              if (result.amount != null) setAmountText(String(result.amount / 100).replace('.', ','));
+              if (result.dueDate) setDate(result.dueDate);
+              if (!description.trim()) setDescription(result.payee ?? result.description);
+            }}
+          />
+        )}
+
         <Segmented options={KIND_OPTIONS} value={kind} onChange={changeKind} label="Tipo do lançamento" />
 
         <Field label="O que foi" htmlFor="entry-description" error={error?.includes('foi') ? error : null}>
@@ -330,6 +341,103 @@ export function NewEntrySheet({
         </Field>
       </div>
     </Sheet>
+  );
+}
+
+/* --------------------------------------------------- boleto e Pix colados */
+
+/**
+ * Cola do código, leitura local.
+ *
+ * O boleto traz valor e vencimento; o Pix traz valor e beneficiário. Ler isso
+ * do código remove o passo mais chato e mais sujeito a erro do app — e nada
+ * sai do aparelho: o código de um boleto é informação bancária de quem está
+ * com o papel na mão.
+ */
+function CodeScanner({ onRead }: { onRead: (result: ScanResult) => void }) {
+  const [open, setOpen] = React.useState(false);
+  const [text, setText] = React.useState('');
+  const [status, setStatus] = React.useState<'idle' | 'ok' | 'fail'>('idle');
+  const [kindLabel, setKindLabel] = React.useState('');
+
+  function read(raw: string) {
+    const result = scanCode(raw);
+    if (!result) {
+      setStatus('fail');
+      return;
+    }
+    setKindLabel(SCAN_LABELS[result.kind]);
+    setStatus('ok');
+    onRead(result);
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center gap-3 rounded-card border border-line bg-surface-2 px-3.5 py-3 text-left transition-colors hover:bg-surface-3"
+      >
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-surface text-accent">
+          <ScanLine size={17} />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[14px] font-medium text-ink">Boleto ou Pix copia e cola</span>
+          <span className="block text-[12px] text-ink-3">Cole o código e eu preencho tudo</span>
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-card border border-line bg-surface-2 p-3">
+      <textarea
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setStatus('idle');
+        }}
+        rows={3}
+        spellCheck={false}
+        aria-label="Código do boleto ou Pix"
+        placeholder="Cole aqui a linha digitável do boleto ou o código Pix copia e cola"
+        className="w-full resize-none rounded-field border border-line bg-surface px-3 py-2.5 text-[13px] text-ink outline-none placeholder:text-ink-3 focus:border-accent"
+      />
+
+      <div className="mt-2 flex gap-2">
+        <Button variant="primary" size="sm" onClick={() => read(text)} disabled={text.trim().length < 20}>
+          Ler código
+        </Button>
+        <Button
+          variant="quiet"
+          size="sm"
+          onClick={async () => {
+            try {
+              const clip = await navigator.clipboard.readText();
+              setText(clip);
+              read(clip);
+            } catch {
+              // sem permissão de área de transferência: resta colar à mão
+              setStatus('fail');
+            }
+          }}
+        >
+          Colar
+        </Button>
+        <Button variant="quiet" size="sm" className="ml-auto" onClick={() => setOpen(false)}>
+          Fechar
+        </Button>
+      </div>
+
+      {status === 'ok' && (
+        <p className="mt-2 text-[12px] text-in">{kindLabel} lido: preenchi o que dava.</p>
+      )}
+      {status === 'fail' && (
+        <p className="mt-2 text-[12px] text-out">
+          Não reconheci esse código. Confira se copiou inteiro, ou preencha à mão.
+        </p>
+      )}
+    </div>
   );
 }
 

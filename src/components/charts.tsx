@@ -251,6 +251,118 @@ export function MonthCalendar({
   );
 }
 
+/* ------------------------------------------------------- inflação pessoal */
+
+export interface InflationPoint {
+  month: MonthKey;
+  /** variação das despesas em relação ao mês anterior, em % */
+  personal: number | null;
+  /** IPCA do mês, em % */
+  official: number | null;
+}
+
+/**
+ * Cruza a variação dos seus gastos com o IPCA do mesmo mês.
+ *
+ * A inflação oficial é uma cesta média do país; a sua é a sua. Ver as duas
+ * linhas juntas responde a pergunta que o noticiário não responde — se a
+ * conta que subiu foi a do país ou a sua.
+ *
+ * Só há variação onde existe mês anterior com gasto: sem base de comparação,
+ * o ponto fica de fora em vez de virar 0% ou 100%.
+ */
+export function buildInflationSeries(
+  months: MonthSummary[],
+  ipca: { month: string; value: number }[],
+): InflationPoint[] {
+  const officialBy = new Map(ipca.map((row) => [row.month, row.value]));
+
+  return months.map((m, i) => {
+    const previous = months[i - 1];
+    const canCompare = previous && previous.expense > 0 && m.expense > 0;
+    return {
+      month: m.month,
+      personal: canCompare ? (m.expense / previous.expense - 1) * 100 : null,
+      official: officialBy.get(m.month) ?? null,
+    };
+  });
+}
+
+/** caixa do gráfico de inflação, em unidades do viewBox */
+const INF_W = 620;
+const INF_H = 150;
+const INF_PAD = { x: 12, y: 16 };
+
+export function InflationChart({ points }: { points: InflationPoint[] }) {
+  const geo = React.useMemo(() => {
+    const values = points.flatMap((p) => [p.personal, p.official].filter((v): v is number => v != null));
+    if (values.length < 2) return null;
+
+    const max = Math.max(...values, 1);
+    const min = Math.min(...values, -1);
+    const span = max - min || 1;
+
+    const x = (i: number) => INF_PAD.x + (i / Math.max(1, points.length - 1)) * (INF_W - INF_PAD.x * 2);
+    const y = (v: number) => INF_PAD.y + (1 - (v - min) / span) * (INF_H - INF_PAD.y * 2);
+
+    const line = (pick: (p: InflationPoint) => number | null) => {
+      const segments: string[] = [];
+      let started = false;
+      points.forEach((p, i) => {
+        const v = pick(p);
+        if (v == null) {
+          started = false;
+          return;
+        }
+        segments.push(`${started ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+        started = true;
+      });
+      return segments.join(' ');
+    };
+
+    return { x, y, zeroY: y(0), personal: line((p) => p.personal), official: line((p) => p.official) };
+  }, [points]);
+
+  if (!geo) {
+    return (
+      <p className="py-6 text-center text-[13px] text-ink-3">
+        A comparação aparece quando houver gasto em pelo menos dois meses seguidos.
+      </p>
+    );
+  }
+
+  const last = [...points].reverse().find((p) => p.personal != null || p.official != null);
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${INF_W} ${INF_H}`} className="h-[150px] w-full" role="img" aria-label="Sua inflação comparada ao IPCA">
+        <line
+          x1={INF_PAD.x}
+          x2={INF_W - INF_PAD.x}
+          y1={geo.zeroY}
+          y2={geo.zeroY}
+          stroke="var(--line-strong)"
+          strokeWidth="1"
+          strokeDasharray="3 4"
+        />
+        <path d={geo.official} fill="none" stroke="var(--ink-3)" strokeWidth="1.8" strokeDasharray="5 4" strokeLinecap="round" />
+        <path d={geo.personal} fill="none" stroke="var(--accent)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-3">
+        <Legend color="var(--accent)">sua inflação</Legend>
+        <Legend color="var(--ink-3)">IPCA</Legend>
+        {last && (
+          <span className="tnum ml-auto text-ink-2">
+            {last.personal != null ? `${last.personal > 0 ? '+' : ''}${last.personal.toFixed(2)}%` : '—'} contra{' '}
+            {last.official != null ? `${last.official > 0 ? '+' : ''}${last.official.toFixed(2)}%` : '—'}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* --------------------------------------------------------- fatias por categoria */
 
 /** monta as fatias da rosca a partir do resumo do mês */

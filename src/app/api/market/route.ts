@@ -120,6 +120,32 @@ function toQuote(key: string, raw: AwesomeQuote | undefined): Quote {
   };
 }
 
+/**
+ * Blocos de mercado que ainda não têm fonte.
+ *
+ * Índices, commodities e papéis da B3 não têm API pública, gratuita e sem
+ * chave que seja confiável — ao contrário do Banco Central e do câmbio. O
+ * contrato já prevê os campos e a resposta diz que estão pendentes, então
+ * ligar um provedor depois é preencher estes arrays: nem a rota nem a tela
+ * mudam de forma.
+ *
+ * Nada de fonte improvisada ou número inventado no lugar. Em tela de dinheiro,
+ * um valor errado é pior do que um espaço vazio.
+ */
+export type MarketSection = 'indices' | 'commodities' | 'stocks' | 'funds' | 'treasury';
+
+export interface PendingSection {
+  id: MarketSection;
+  label: string;
+  reason: string;
+}
+
+const PENDING: PendingSection[] = [
+  { id: 'indices', label: 'Índices', reason: 'Ibovespa, S&P 500 e Nasdaq' },
+  { id: 'commodities', label: 'Commodities', reason: 'Petróleo Brent, WTI e ouro' },
+  { id: 'stocks', label: 'Ações e FIIs', reason: 'papéis da B3 que você acompanha' },
+];
+
 export async function GET() {
   const [selicRows, cdiRows, ipcaRows, poupancaRows, fx] = await Promise.all([
     sgs(SGS.selic, 1),
@@ -157,8 +183,32 @@ export async function GET() {
   const currencies = ['USDBRL', 'EURBRL', 'GBPBRL', 'ARSBRL'].map((k) => toQuote(k, fx[k]));
   const crypto = ['BTCBRL', 'ETHBRL', 'SOLBRL'].map((k) => toQuote(k, fx[k]));
 
+  /**
+   * Série mensal do IPCA, para o app comparar a inflação de quem usa com a
+   * oficial. A data vem como DD/MM/AAAA no SGS e é convertida para competência.
+   */
+  const ipcaSeries = ipcaRows
+    .map((row) => {
+      const [, m, y] = row.data.split('/');
+      const value = Number(row.valor);
+      return y && m && Number.isFinite(value) ? { month: `${y}-${m}`, value } : null;
+    })
+    .filter((row): row is { month: string; value: number } => row !== null);
+
   return NextResponse.json(
-    { indicators, real, currencies, crypto, fetchedAt: new Date().toISOString() },
+    {
+      indicators,
+      real,
+      currencies,
+      crypto,
+      ipcaSeries,
+      /* já existem no contrato; ficam vazios até haver fonte */
+      indices: [] as Quote[],
+      commodities: [] as Quote[],
+      stocks: [] as Quote[],
+      pending: PENDING,
+      fetchedAt: new Date().toISOString(),
+    },
     { headers: { 'cache-control': `public, s-maxage=${revalidate}, stale-while-revalidate=900` } },
   );
 }

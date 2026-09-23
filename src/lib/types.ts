@@ -330,6 +330,21 @@ export interface Settings extends SyncFields {
   /** primeiro dia do mês financeiro; 1 = mês civil */
   monthStartsOn: number;
   onboardedAt: IsoInstant | null;
+
+  /* ------- perfil -------
+     Mora junto das preferências porque é o mesmo registro por espaço e
+     sincroniza pelo mesmo caminho. Tudo opcional: o app funciona inteiro sem
+     a pessoa preencher nada disso. */
+  displayName: string;
+  bio: string;
+  birthDate: IsoDate | null;
+  location: string;
+  phone: string;
+
+  /* ------- funcionalidades que podem ser desligadas -------
+     Quem não usa cartão não quer a fatura ocupando a aba de despesas. */
+  cardsEnabled: boolean;
+  newsEnabled: boolean;
 }
 
 /* ------------------------------------------------------------------ sync */

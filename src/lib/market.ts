@@ -40,11 +40,24 @@ export interface Quote {
   changePercent: number | null;
 }
 
+export interface PendingSection {
+  id: string;
+  label: string;
+  reason: string;
+}
+
 export interface MarketPayload {
   indicators: Indicator[];
   real: RealGain[];
   currencies: Quote[];
   crypto: Quote[];
+  /** IPCA mensal, para comparar com a inflacao de quem usa */
+  ipcaSeries: { month: string; value: number }[];
+  /** ja no contrato; vazios enquanto nao houver fonte */
+  indices: Quote[];
+  commodities: Quote[];
+  stocks: Quote[];
+  pending: PendingSection[];
   fetchedAt: string;
 }
 

@@ -4,7 +4,16 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useState } from 'react';
 import { categorize, learnFromCorrection, type LearnedRule } from './categories';
 import { db, deleteRecord, dropFile, entriesUpTo, getSyncState, liveRows, putRecord, saveFile } from './db';
-import { addMonthsToKey, currentMonthKey, nowInstant, todayIso } from './dates';
+import {
+  addMonthsToKey,
+  clampDayToMonth,
+  currentMonthKey,
+  monthKeyOf,
+  monthKeyParts,
+  nowInstant,
+  partsToIso,
+  todayIso,
+} from './dates';
 import { occurrencesInMonth, projectMonth, summarizeMonth, type Occurrence } from './occurrences';
 import { ensureSpace, uid } from './provision';
 import type {
@@ -721,6 +730,119 @@ export async function removeAttachment(id: string): Promise<void> {
 
 export const updateAttachment = (a: Attachment, patch: Partial<Attachment>): Promise<Attachment> =>
   putRecord('attachments', { ...a, ...patch });
+
+/* --------------------------------------------------- repetir mês anterior */
+
+/** marca que identifica o saldo trazido do mês passado */
+export const CARRY_OVER_TAG = 'saldo-anterior';
+
+/**
+ * Copia para a competência os lançamentos avulsos do mês anterior.
+ *
+ * Só os avulsos: o que já é recorrente aparece sozinho, e copiá-lo criaria o
+ * lançamento em dobro. Também pula o que já existe no mês com mesma descrição
+ * e valor, para o botão poder ser tocado duas vezes sem duplicar a conta —
+ * que é exatamente o que acontece quando alguém não tem certeza se apertou.
+ */
+export async function repeatPreviousMonth(
+  spaceId: string,
+  month: MonthKey,
+  kind: FlowKind,
+): Promise<number> {
+  const previous = addMonthsToKey(month, -1);
+  const rows = await entriesUpTo(spaceId, month);
+
+  const already = new Set(
+    occurrencesInMonth(rows, month, todayIso())
+      .filter((o) => o.kind === kind)
+      .map((o) => `${o.description.toLowerCase()}|${o.amount}`),
+  );
+
+  const source = occurrencesInMonth(rows, previous, todayIso()).filter((o) => o.kind === kind);
+
+  let copied = 0;
+  for (const occurrence of source) {
+    const entry = rows.find((e) => e.id === occurrence.entryId);
+    if (!entry || entry.repeat.kind !== 'once') continue;
+    if (already.has(`${occurrence.description.toLowerCase()}|${occurrence.amount}`)) continue;
+
+    const { y, m } = monthKeyParts(month);
+    const day = Number(occurrence.date.slice(8));
+
+    await createEntry({
+      spaceId,
+      kind: entry.kind,
+      description: entry.description,
+      amount: entry.amount,
+      date: partsToIso(y, m, clampDayToMonth(day, y, m)),
+      categoryId: entry.categoryId,
+      accountId: entry.accountId,
+      cardId: entry.cardId,
+      repeat: { kind: 'once' },
+      tags: entry.tags,
+    });
+    copied += 1;
+  }
+
+  return copied;
+}
+
+/**
+ * O saldo que sobrou na conta no mês passado, trazido como receita.
+ *
+ * Vira um lançamento marcado: reescrever o valor substitui o de antes em vez
+ * de somar mais um, e apagar é apagar um lançamento comum.
+ */
+export async function setCarryOver(
+  spaceId: string,
+  month: MonthKey,
+  amount: Cents,
+): Promise<Entry | null> {
+  const rows = await entriesUpTo(spaceId, month);
+  const existing = rows.find(
+    (e) => e.tags.includes(CARRY_OVER_TAG) && monthKeyOf(e.date) === month && !e.deletedAt,
+  );
+
+  if (amount <= 0) {
+    if (existing) await deleteRecord('entries', existing.id);
+    return null;
+  }
+
+  const { y, m } = monthKeyParts(month);
+  const date = partsToIso(y, m, 1);
+
+  if (existing) {
+    return putRecord('entries', { ...existing, amount, date });
+  }
+
+  return createEntry({
+    spaceId,
+    kind: 'in',
+    description: 'Saldo do mês anterior',
+    amount,
+    date,
+    repeat: { kind: 'once' },
+    tags: [CARRY_OVER_TAG],
+  });
+}
+
+/** quanto já está registrado como saldo trazido para a competência */
+export function useCarryOver(spaceId: string | null, month: MonthKey): Cents {
+  return (
+    useLiveQuery(
+      async () => {
+        if (!spaceId) return 0;
+        const rows = await entriesUpTo(spaceId, month);
+        const hit = rows.find(
+          (e) => e.tags.includes(CARRY_OVER_TAG) && monthKeyOf(e.date) === month && !e.deletedAt,
+        );
+        return hit?.amount ?? 0;
+      },
+      [spaceId, month],
+      0,
+    ) ?? 0
+  );
+}
 
 /* ------------------------------------------------------- categorizacao */
 

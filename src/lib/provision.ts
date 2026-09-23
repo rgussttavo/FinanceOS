@@ -74,6 +74,13 @@ async function seedSpace(spaceId: string): Promise<void> {
       privateMode: false,
       monthStartsOn: 1,
       onboardedAt: null,
+      displayName: '',
+      bio: '',
+      birthDate: null,
+      location: '',
+      phone: '',
+      cardsEnabled: true,
+      newsEnabled: true,
     };
     await putRecord('settings', fresh);
   }
