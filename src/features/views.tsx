@@ -1,7 +1,17 @@
 'use client';
 
 import * as React from 'react';
-import { Calculator, ChevronLeft, ChevronRight, Copy as CopyIcon, CornerUpLeft, Eye, EyeOff, Flame } from 'lucide-react';
+import {
+  Calculator,
+  ChevronLeft,
+  ChevronRight,
+  Copy as CopyIcon,
+  CornerUpLeft,
+  CreditCard,
+  Eye,
+  EyeOff,
+  Flame,
+} from 'lucide-react';
 import {
   Donut,
   InflationChart,
@@ -15,9 +25,17 @@ import { Button, EmptyState, Input, Panel, SectionTitle } from '@/components/ui'
 import { NewsList } from '@/features/mercado';
 import { FireSheet, InvestimentoSheet } from '@/features/simuladores';
 import { useMarket } from '@/lib/market';
-import { repeatPreviousMonth, setCarryOver, useCarryOver } from '@/lib/store';
+import { buildInvoice } from '@/lib/cards';
+import { repeatPreviousMonth, setCarryOver, useCardsData, useCarryOver } from '@/lib/store';
 import { cn } from '@/lib/cn';
-import { addMonthsToKey, currentMonthKey, formatMonthLabel, monthKeyParts } from '@/lib/dates';
+import {
+  addMonthsToKey,
+  currentMonthKey,
+  formatDayShort,
+  formatMonthLabel,
+  monthKeyParts,
+  todayIso,
+} from '@/lib/dates';
 import { formatMoney, formatPercent, parseMoney, ratio } from '@/lib/money';
 import type { MonthSummary, Occurrence } from '@/lib/occurrences';
 import { firstNegativeDay, type DayPoint } from '@/lib/occurrences';
@@ -253,6 +271,8 @@ export interface ViewContext {
   hidden: boolean;
   /** o bloco de noticias no inicio pode ser desligado nas configuracoes */
   newsEnabled: boolean;
+  /** cartoes desligado tira a fatura da aba de despesas */
+  cardsEnabled: boolean;
   toggleHidden: () => void;
   onToggleOccurrence: (o: Occurrence) => void;
   history: MonthSummary[];
@@ -394,6 +414,8 @@ export function DespesasView(ctx: ViewContext) {
           { label: 'Vencido', value: ctx.summary.overdueExpense, tone: 'out' },
         ]}
       />
+
+      <BillsToPay spaceId={ctx.spaceId} month={ctx.month} hidden={ctx.hidden} enabled={ctx.cardsEnabled} />
 
       <RepeatPreviousButton spaceId={ctx.spaceId} month={ctx.month} kind="out" />
 
@@ -658,6 +680,65 @@ function CarryOverCard({
         Entra como receita do dia 1º. Zerar o campo remove o lançamento.
       </p>
     </div>
+  );
+}
+
+/**
+ * A fatura de cada cartão, dentro da aba de despesas.
+ *
+ * A fatura não é uma despesa comum: ela junta várias compras e vence num dia
+ * só. Deixá-la aqui, e não misturada na lista, é o que faz o "quanto ainda
+ * tenho que pagar neste mês" bater com a realidade.
+ */
+function BillsToPay({
+  spaceId,
+  month,
+  hidden,
+  enabled,
+}: {
+  spaceId: string;
+  month: MonthKey;
+  hidden: boolean;
+  enabled: boolean;
+}) {
+  const { cards, subscriptions, entries } = useCardsData(spaceId, addMonthsToKey(month, 1));
+  const today = todayIso();
+
+  const invoices = React.useMemo(
+    () =>
+      cards
+        .map((card) => ({ card, invoice: buildInvoice(card, entries, subscriptions, month, today) }))
+        .filter((row) => row.invoice.total > 0),
+    [cards, entries, subscriptions, month, today],
+  );
+
+  if (!enabled || !invoices.length) return null;
+
+  return (
+    <Panel className="px-5 py-4">
+      <SectionTitle>Contas a pagar</SectionTitle>
+      <ul className="divide-y divide-line">
+        {invoices.map(({ card, invoice }) => (
+          <li key={card.id} className="flex items-center gap-3 py-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-surface-2">
+              <CreditCard size={17} className="text-ink-2" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[15px] text-ink">
+                {card.name || card.institution}
+              </span>
+              <span className="block text-[12px] text-ink-3">
+                {invoice.closed ? 'fatura fechada' : `fecha ${formatDayShort(invoice.closesOn)}`} ·
+                vence {formatDayShort(invoice.dueOn)}
+              </span>
+            </span>
+            <span className="tnum shrink-0 text-[15px] font-semibold text-ink">
+              {formatMoney(invoice.total, { hidden })}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }
 

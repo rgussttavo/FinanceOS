@@ -141,6 +141,7 @@ export default function AppPage() {
     categories,
     hidden,
     newsEnabled: settings?.newsEnabled ?? true,
+    cardsEnabled: settings?.cardsEnabled ?? true,
     toggleHidden,
     onToggleOccurrence,
     history,
