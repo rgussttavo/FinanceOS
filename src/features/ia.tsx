@@ -3,14 +3,16 @@
 import * as React from 'react';
 import { ArrowUp, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { todayIso } from '@/lib/dates';
 import { SUGGESTIONS, ask, greeting, type AssistantContext } from '@/lib/assistant';
 import { useMarket } from '@/lib/market';
 import type { MonthSummary, Occurrence, DayPoint } from '@/lib/occurrences';
 import {
+  useAllSubscriptions,
   useCards,
   useDebts,
+  useEntriesUpTo,
   useGoals,
-  useAllSubscriptions,
 } from '@/lib/store';
 import type { Category, MonthKey } from '@/lib/types';
 
@@ -19,6 +21,7 @@ interface Message {
   from: 'app' | 'you';
   text: string;
   highlight?: { label: string; value: string };
+  list?: { label: string; detail: string; value: string }[];
   at: string;
 }
 
@@ -57,6 +60,7 @@ export function IAView({
   const subscriptions = useAllSubscriptions(spaceId);
   const goals = useGoals(spaceId);
   const debts = useDebts(spaceId);
+  const entries = useEntriesUpTo(spaceId, month);
   const { data: market } = useMarket();
 
   const [messages, setMessages] = React.useState<Message[]>(() => [
@@ -68,6 +72,8 @@ export function IAView({
   const ctx: AssistantContext = React.useMemo(
     () => ({
       month,
+      entries,
+      today: todayIso(),
       summary,
       occurrences,
       projection,
@@ -81,7 +87,7 @@ export function IAView({
         ? { indicators: market.indicators, currencies: market.currencies, crypto: market.crypto }
         : null,
     }),
-    [month, summary, occurrences, projection, history, categories, cards, subscriptions, goals, debts, market],
+    [month, entries, summary, occurrences, projection, history, categories, cards, subscriptions, goals, debts, market],
   );
 
   // a conversa rola para o fim a cada resposta, como qualquer chat
@@ -100,7 +106,14 @@ export function IAView({
       setMessages((current) => [
         ...current,
         { id: `${Date.now()}-q`, from: 'you', text: question, at },
-        { id: `${Date.now()}-a`, from: 'app', text: answer.text, highlight: answer.highlight, at },
+        {
+          id: `${Date.now()}-a`,
+          from: 'app',
+          text: answer.text,
+          highlight: answer.highlight,
+          list: answer.list,
+          at,
+        },
       ]);
       setDraft('');
     },
@@ -133,6 +146,24 @@ export function IAView({
                     </p>
                     <p className="amount mt-0.5 text-[24px] text-ink">{m.highlight.value}</p>
                   </div>
+                )}
+
+                {m.list && m.list.length > 0 && (
+                  <ul className="mt-3 divide-y divide-line border-t border-line">
+                    {m.list.map((row, i) => (
+                      <li key={`${row.label}-${i}`} className="flex items-baseline gap-3 py-2">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] text-ink">{row.label}</span>
+                          {row.detail && (
+                            <span className="block truncate text-[11px] text-ink-3">{row.detail}</span>
+                          )}
+                        </span>
+                        <span className="tnum shrink-0 text-[13px] font-semibold text-ink-2">
+                          {row.value}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 )}
 
                 <p
