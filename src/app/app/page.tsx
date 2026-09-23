@@ -9,6 +9,7 @@ import { BuscaView } from '@/features/busca';
 import { CartoesView } from '@/features/cartoes';
 import { ComprovantesView } from '@/features/comprovantes';
 import { DividasView } from '@/features/dividas';
+import { IAView } from '@/features/ia';
 import { MetasView } from '@/features/metas';
 import { MercadoView } from '@/features/mercado';
 import { OrcamentoView } from '@/features/orcamento';
@@ -55,7 +56,7 @@ const subscribeTheme = (fn: () => void) => {
 };
 
 /** ferramentas que já têm tela própria; o resto ainda cai no aviso de obra */
-const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento', 'comprovantes', 'patrimonio', 'busca', 'perfil']);
+const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento', 'comprovantes', 'patrimonio', 'busca', 'perfil', 'ia']);
 
 export default function AppPage() {
   const { spaceId, ready, error } = useBootstrap();
@@ -186,6 +187,18 @@ export default function AppPage() {
           {view === 'comprovantes' && <ComprovantesView spaceId={spaceId} />}
           {view === 'patrimonio' && (
             <PatrimonioView spaceId={spaceId} month={month} hidden={hidden} />
+          )}
+          {view === 'ia' && (
+            <IAView
+              name={displayName}
+              month={month}
+              summary={monthView.summary}
+              occurrences={monthView.occurrences}
+              projection={monthView.projection}
+              history={history}
+              categories={categories}
+              spaceId={spaceId}
+            />
           )}
           {view === 'busca' && (
             <BuscaView spaceId={spaceId} month={month} hidden={hidden} onGo={go} />
