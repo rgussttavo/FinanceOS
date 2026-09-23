@@ -16,10 +16,13 @@ export function PerfilView({
   settings,
   onToggleTheme,
   isLight,
+  account,
 }: {
   settings: Settings | null;
   onToggleTheme: () => void;
   isLight: boolean;
+  /** o cartao de conta na nuvem, montado pela tela principal */
+  account?: React.ReactNode;
 }) {
   const [editing, setEditing] = React.useState<null | keyof Settings>(null);
   const [exporting, setExporting] = React.useState(false);
@@ -54,6 +57,8 @@ export function PerfilView({
         <Row label="Localização" value={settings.location || 'Não informada'} onClick={() => setEditing('location')} />
         <Row label="Telefone" value={settings.phone || 'Não informado'} onClick={() => setEditing('phone')} last />
       </Panel>
+
+      {account}
 
       <Panel className="px-5 py-2">
         <SectionTitle>Aparência</SectionTitle>

@@ -5,6 +5,7 @@ import { Drawer, TabBar, TopBar } from '@/components/shell';
 import { NewEntrySheet } from '@/components/entries';
 import { Panel } from '@/components/ui';
 import { AssinaturasView } from '@/features/assinaturas';
+import { AccountPanel, SignInSheet, useCloudSync, useSession } from '@/features/auth';
 import { BuscaView } from '@/features/busca';
 import { CartoesView } from '@/features/cartoes';
 import { ComprovantesView } from '@/features/comprovantes';
@@ -26,6 +27,7 @@ import {
 } from '@/features/views';
 import { BRAND } from '@/lib/brand';
 import { db, putRecord } from '@/lib/db';
+import { detachCloud } from '@/lib/sync';
 import { currentMonthKey } from '@/lib/dates';
 import { ADD_KIND_BY_TAB, TOOLS, isTab, type TabId, type ToolId, type ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
@@ -65,6 +67,10 @@ export default function AppPage() {
   const [month, setMonth] = React.useState<MonthKey>(currentMonthKey());
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [sheetOpen, setSheetOpen] = React.useState(false);
+  const [signInOpen, setSignInOpen] = React.useState(false);
+
+  const { session } = useSession();
+  const cloud = useCloudSync(session);
 
   const categories = useCategories(spaceId);
   const settings = useSettings(spaceId);
@@ -204,7 +210,25 @@ export default function AppPage() {
             <BuscaView spaceId={spaceId} month={month} hidden={hidden} onGo={go} />
           )}
           {view === 'perfil' && (
-            <PerfilView settings={settings} onToggleTheme={toggleTheme} isLight={isLight} />
+            <PerfilView
+              settings={settings}
+              onToggleTheme={toggleTheme}
+              isLight={isLight}
+              account={
+                <AccountPanel
+                  session={session}
+                  report={cloud.report}
+                  pending={cloud.pending}
+                  syncing={cloud.syncing}
+                  onSync={cloud.sync}
+                  onSignIn={() => setSignInOpen(true)}
+                  onSignOut={async () => {
+                    await detachCloud();
+                    location.reload();
+                  }}
+                />
+              }
+            />
           )}
           {!isTab(view) && !BUILT.has(view) && <ToolScreen view={view} />}
         </div>
@@ -228,6 +252,12 @@ export default function AppPage() {
           go('perfil');
           setDrawerOpen(false);
         }}
+      />
+
+      <SignInSheet
+        open={signInOpen}
+        onClose={() => setSignInOpen(false)}
+        onSignedIn={cloud.sync}
       />
 
       <NewEntrySheet
