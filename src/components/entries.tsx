@@ -14,7 +14,7 @@ import { Badge, Button, EmptyState } from './ui';
 
 const TONE: Record<FlowKind, string> = {
   in: 'text-in',
-  out: 'text-ink',
+  out: 'text-out',
   invest: 'text-inv',
 };
 
@@ -23,7 +23,8 @@ const SIGN: Record<FlowKind, string> = { in: '+', out: '−', invest: '' };
 /**
  * A lista de lançamentos de qualquer tela.
  *
- * O círculo da esquerda dá baixa (marca como pago); tocar no resto abre o
+ * O círculo da esquerda é a categoria e dá baixa (o selo verde marca o que
+ * já foi pago ou recebido); tocar no resto abre o
  * lançamento para editar. Assinatura e parcela de dívida aparecem na lista
  * porque pesam no mês, mas se editam na tela delas — por isso levam uma marca
  * e não têm o círculo de baixa.
@@ -131,15 +132,26 @@ function OccurrenceRow({
           aria-pressed={settled}
           aria-label={settled ? `Desfazer baixa de ${o.description}` : `Marcar ${o.description} como ${o.kind === 'in' ? 'recebido' : 'pago'}`}
           className={cn(
-            'grid size-10 shrink-0 place-items-center rounded-full border text-[15px] transition-all duration-[var(--t-fast)]',
+            // o círculo é a categoria; a baixa aparece no selo do canto, e um toque alterna
+            'relative grid size-10 shrink-0 place-items-center rounded-full border text-[17px] transition-colors duration-[var(--t-fast)]',
             settled
-              ? 'border-transparent bg-in text-canvas'
+              ? 'border-transparent bg-surface-2'
               : overdue
-                ? 'border-out/50 text-out hover:bg-out-soft'
-                : 'border-line text-ink-3 hover:border-line-strong hover:text-ink-2',
+                ? 'border-out/60 bg-out-soft'
+                : 'border-dashed border-line-strong bg-transparent hover:bg-surface-2',
           )}
         >
-          {settled ? <Check size={17} strokeWidth={2.6} className="motion-safe:animate-[pop-in_var(--t-base)_var(--ease-out)]" /> : <span aria-hidden>{category?.icon ?? '•'}</span>}
+          <span aria-hidden className={cn(!settled && !overdue && 'opacity-80')}>
+            {category?.icon ?? (o.kind === 'in' ? '💰' : o.kind === 'invest' ? '📈' : '🏷️')}
+          </span>
+          {settled ? (
+            <span
+              aria-hidden
+              className="absolute -bottom-0.5 -right-0.5 grid size-[18px] place-items-center rounded-full bg-in text-canvas ring-2 ring-surface motion-safe:animate-[pop-in_var(--t-base)_var(--ease-out)]"
+            >
+              <Check size={11} strokeWidth={3.2} />
+            </span>
+          ) : null}
         </button>
       )}
 
@@ -150,8 +162,7 @@ function OccurrenceRow({
       >
         <span
           className={cn(
-            'w-full truncate text-[15px]',
-            settled && !o.virtual ? 'text-ink-3' : 'text-ink',
+            'w-full truncate text-[15px] text-ink',
           )}
         >
           {o.description}
@@ -180,7 +191,7 @@ function OccurrenceRow({
         <span
           className={cn(
             'tnum text-[15px] font-semibold',
-            settled && !o.virtual ? 'text-ink-3' : TONE[o.kind],
+            TONE[o.kind],
           )}
         >
           {hidden ? '••••' : `${SIGN[o.kind]}${formatMoney(o.amount, { hidden })}`}
