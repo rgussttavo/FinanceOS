@@ -1,5 +1,6 @@
 import { categorize, cleanDescription, type LearnedRule } from './categories';
 import { addMonthsToKey, clampDayToMonth, diffDays, monthKeyOf, monthKeyParts, nowInstant, partsToIso, todayIso } from './dates';
+import { invoiceMonthOf } from './cards';
 import { db, entriesUpTo, putRecords } from './db';
 import { occurrencesInMonth, type Occurrence } from './occurrences';
 import { uid } from './provision';
@@ -76,6 +77,8 @@ export interface ReviewRow {
   externalId: string;
   status: RowStatus;
   include: boolean;
+  /** pagamento de fatura (na conta, o que paga; na fatura, o crédito da anterior) */
+  billPayment?: boolean;
   /** a ocorrência com que a linha bateu, quando bateu */
   match: { entryId: string; occurrenceKey: string; description: string } | null;
   installment: { index: number; total: number } | null;
@@ -131,6 +134,33 @@ function hash(text: string): string {
 /* ------------------------------------------------------------- revisão */
 
 const CARD_PAYMENT = /pagamento (de |da )?fatura|pgto fatura|pagamento recebido|pag fatura|pagto fatura/;
+
+
+/**
+ * A conta de uma fatura importada: o que o arquivo cobra e o que vai entrar.
+ *
+ * É o que responde "a minha fatura é 829 e o app diz 594": compras que
+ * bateram com algo já lançado ficam desmarcadas, estornos abatem no banco —
+ * e cada diferença aparece com nome antes de importar.
+ */
+export function invoiceReconciliation(rows: ReviewRow[]) {
+  const charges = rows.filter((r) => r.kind !== 'in' && r.status !== 'transfer');
+  const credits = rows.filter((r) => r.kind === 'in' && !r.billPayment);
+  const sum = (list: ReviewRow[]) => list.reduce((s, r) => s + r.amount, 0);
+  const entering = charges.filter((r) => r.include);
+  const left = charges.filter((r) => !r.include && r.status !== 'imported');
+  const already = charges.filter((r) => r.status === 'imported');
+  return {
+    charges: sum(charges),
+    credits: sum(credits),
+    /** o total que o banco cobra: compras menos estornos */
+    fileTotal: sum(charges) - sum(credits),
+    entering: sum(entering),
+    left,
+    leftTotal: sum(left),
+    alreadyTotal: sum(already),
+  };
+}
 const INTERNAL = /transferencia entre contas|mesma titularidade|conta propria|entre suas contas|resgate|transf.*propria/;
 const ACCOUNT_CARD_BILL = /fatura|pagamento (de )?cartao|pgto cartao|pag cartao/;
 
@@ -188,6 +218,8 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
     const amount = Math.abs(signed);
     const description = tidyDescription(row.description);
     const plainDesc = cleanDescription(row.description);
+    // a limpeza tira "pagamento": para reconhecer pagamento de fatura, vale o texto inteiro
+    const fullDesc = normalize(row.description);
 
     // saída que é aplicação vira investimento, não despesa
     let kind: FlowKind = outflow ? 'out' : 'in';
@@ -214,7 +246,7 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       match = { entryId: `sub:${sub.id}`, occurrenceKey: '', description: sub.name };
     } else if (INTERNAL.test(plainDesc)) {
       status = 'internal';
-    } else if (target.type === 'card' && (!outflow || CARD_PAYMENT.test(plainDesc))) {
+    } else if (target.type === 'card' && (!outflow || CARD_PAYMENT.test(fullDesc))) {
       // crédito na fatura (pagamento, estorno) somaria na fatura em vez de abater
       status = 'transfer';
     } else {
@@ -244,6 +276,7 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       include: status === 'new' || status === 'settle',
       match,
       installment: installment ? { index: installment.index, total: installment.total } : null,
+      billPayment: CARD_PAYMENT.test(fullDesc) || (target.type === 'account' && outflow && ACCOUNT_CARD_BILL.test(plainDesc)),
     };
   }
 }
@@ -318,6 +351,8 @@ export interface ImportResult {
   settled: number;
   /** a competência mais recente do extrato, para a tela abrir nela */
   lastMonth: string;
+  /** na fatura de cartão: qual fatura o arquivo é */
+  invoiceMonth?: string;
 }
 
 /**
@@ -338,6 +373,20 @@ export async function commitReview(
   const created: Entry[] = [];
   const settleBy = new Map<string, { key: string; amount: Cents }[]>();
 
+  /**
+   * O arquivo de uma fatura É uma fatura. Todas as compras dele ficam presas a
+   * ela, em vez de cada uma ser redistribuída pelo dia de fechamento
+   * cadastrado — que, errado por dois dias, jogava compras para a fatura do
+   * lado e fazia a fatura do app não bater com a do banco. Qual fatura é: a da
+   * compra mais recente do arquivo.
+   */
+  const cardId = opts.target.type === 'card' ? opts.target.cardId : null;
+  const card = cardId ? await db().cards.get(cardId) : null;
+  const purchases = rows.filter((r) => r.kind !== 'in' && r.status !== 'transfer');
+  const lastPurchase = purchases.reduce<string>((max, r) => (r.date > max ? r.date : max), '');
+  const invoiceMonth = card && lastPurchase ? invoiceMonthOf(card, lastPurchase) : null;
+  const pinFor = (r: ReviewRow) => (invoiceMonth ? addMonthsToKey(invoiceMonth, -((r.installment?.index ?? 1) - 1)) : null);
+
   for (const r of chosen) {
     if (r.status === 'settle' && r.match) {
       const list = settleBy.get(r.match.entryId) ?? [];
@@ -346,7 +395,6 @@ export async function commitReview(
       continue;
     }
 
-    const cardId = opts.target.type === 'card' ? opts.target.cardId : null;
     let date = r.date;
     let repeat: Entry['repeat'] = { kind: 'once' };
 
@@ -382,7 +430,24 @@ export async function commitReview(
       source: opts.source,
       externalId: r.externalId,
       attachmentIds: [],
+      ...(cardId && invoiceMonth ? { invoiceMonth: pinFor(r) } : null),
     });
+  }
+
+  // reimportar a mesma fatura conserta as compras que já tinham entrado no ciclo errado
+  const repinned: Entry[] = [];
+  if (cardId && invoiceMonth) {
+    const ids = rows.filter((r) => r.status === 'imported' && r.kind !== 'in').map((r) => r.externalId);
+    const want = new Map(rows.map((r) => [r.externalId, r]));
+    if (ids.length) {
+      const existing = await db().entries.where('externalId').anyOf(ids).toArray();
+      for (const e of existing) {
+        const r = want.get(e.externalId ?? '');
+        if (!r || e.deletedAt || e.spaceId !== opts.spaceId || e.cardId !== cardId) continue;
+        const pin = pinFor(r);
+        if (pin && e.invoiceMonth !== pin) repinned.push({ ...e, invoiceMonth: pin });
+      }
+    }
   }
 
   const toSettle: Entry[] = [];
@@ -396,12 +461,13 @@ export async function commitReview(
     toSettle.push({ ...entry, settled });
   }
 
-  await putRecords('entries', [...created, ...toSettle]);
+  await putRecords('entries', [...created, ...toSettle, ...repinned]);
 
   const lastMonth = chosen.reduce((max, r) => (monthKeyOf(r.date) > max ? monthKeyOf(r.date) : max), '');
   return {
     created: created.length,
     settled: toSettle.reduce((n, e) => n + (settleBy.get(e.id)?.length ?? 0), 0),
     lastMonth,
+    ...(invoiceMonth ? { invoiceMonth } : null),
   };
 }

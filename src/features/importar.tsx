@@ -11,6 +11,7 @@ import {
   buildReview,
   commitReview,
   groupOf,
+  invoiceReconciliation,
   type ImportResult,
   type ImportTarget,
   type ReviewGroup,
@@ -569,8 +570,59 @@ function Review({
   const confirmAll = (group: ReviewGroup) =>
     setRows((list) => list.map((r) => (groupOf(r) === group && r.categoryId ? { ...r, confidence: 'alta', unsure: false, include: true } : r)));
 
+  const recon = targetType === 'card' ? invoiceReconciliation(rows) : null;
+  // fatura já importada: reimportar não cria nada, mas põe as compras antigas na fatura certa
+  const refit = targetType === 'card' && rows.some((r) => r.status === 'imported');
+  const includeLeft = () => {
+    const keys = new Set(recon?.left.map((r) => r.key));
+    setRows((list) => list.map((r) => (keys.has(r.key) ? { ...r, include: true } : r)));
+  };
+
   return (
     <div className="grid gap-4">
+      {recon ? (
+        <Panel className={cn('p-5', recon.left.length ? 'border-warn/40' : 'border-in/30')}>
+          <SectionTitle>Confere com a fatura do banco?</SectionTitle>
+          <dl className="grid grid-cols-2 gap-2">
+            <div className="rounded-field bg-surface-2 px-3 py-2">
+              <dt className="text-[12px] text-ink-3">Total da fatura no arquivo</dt>
+              <dd className="tnum text-[18px] font-semibold text-ink">{formatMoney(recon.fileTotal, { hidden })}</dd>
+            </div>
+            <div className="rounded-field bg-surface-2 px-3 py-2">
+              <dt className="text-[12px] text-ink-3">Vai entrar no app</dt>
+              <dd className={cn('tnum text-[18px] font-semibold', recon.left.length ? 'text-warn' : 'text-in')}>
+                {formatMoney(recon.entering + recon.alreadyTotal, { hidden })}
+              </dd>
+            </div>
+          </dl>
+          <ul className="mt-3 grid gap-1 text-[12.5px] leading-relaxed text-ink-3">
+            <li>
+              {formatMoney(recon.charges, { hidden })} em compras
+              {recon.credits ? ` menos ${formatMoney(recon.credits, { hidden })} em estornos e créditos` : ''}. O pagamento da fatura anterior não
+              entra na conta.
+            </li>
+            {recon.credits ? (
+              <li>Estornos abatem a fatura no banco, mas no app ficam de fora: é por isso que o app mostra um pouco mais.</li>
+            ) : null}
+            {recon.alreadyTotal ? <li>{formatMoney(recon.alreadyTotal, { hidden })} já estavam no app de uma importação anterior.</li> : null}
+          </ul>
+          {recon.left.length ? (
+            <div className="mt-3 rounded-field border border-warn/40 bg-warn-soft px-3 py-2.5">
+              <p className="text-[13px] leading-relaxed text-ink">
+                <strong className="font-semibold">
+                  {recon.left.length} {recon.left.length === 1 ? 'compra ficou' : 'compras ficaram'} de fora ({formatMoney(recon.leftTotal, { hidden })})
+                </strong>{' '}
+                — {recon.left.length === 1 ? 'parece' : 'parecem'} com algo já lançado ou com uma assinatura. Se{' '}
+                {recon.left.length === 1 ? 'for compra de verdade' : 'forem compras de verdade'} desta fatura, inclua.
+              </p>
+              <Button size="sm" className="mt-2" onClick={includeLeft}>
+                Incluir {recon.left.length === 1 ? 'a compra' : `as ${recon.left.length}`}
+              </Button>
+            </div>
+          ) : null}
+        </Panel>
+      ) : null}
+
       <Panel className="p-5">
         <p className="truncate text-[12px] text-ink-3">{name}</p>
         <p className="mt-1 font-display text-[26px] leading-tight text-ink">
@@ -655,8 +707,8 @@ function Review({
           <Button variant="ghost" onClick={onCancel} disabled={saving}>
             Cancelar
           </Button>
-          <Button variant="primary" className="flex-1" disabled={!chosen.length || saving} onClick={onCommit}>
-            {saving ? 'Importando…' : 'Importar lançamentos'}
+          <Button variant="primary" className="flex-1" disabled={(!chosen.length && !refit) || saving} onClick={onCommit}>
+            {saving ? 'Importando…' : !chosen.length && refit ? 'Acertar a fatura' : 'Importar lançamentos'}
             {!saving ? <ArrowRight size={16} /> : null}
           </Button>
         </div>
@@ -975,6 +1027,11 @@ function Done({
         {created ? `${created} ${created === 1 ? 'lançamento criado' : 'lançamentos criados'}` : 'Nenhum lançamento novo'}
         {settled ? ` e ${settled} ${settled === 1 ? 'conta prevista marcada' : 'contas previstas marcadas'} como paga.` : '.'}
       </p>
+      {result.invoiceMonth ? (
+        <p className="mx-auto mt-2 max-w-[36ch] text-[13px] leading-relaxed text-ink-3">
+          As compras ficaram na fatura de {formatMonthLabel(result.invoiceMonth)}, a mesma do arquivo — confira em Cartões.
+        </p>
+      ) : null}
       <div className="mt-6 flex flex-col justify-center gap-2 sm:flex-row">
         {lastMonth ? (
           <Button variant="primary" onClick={() => onOpenMonth(lastMonth)}>

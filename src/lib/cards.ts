@@ -192,6 +192,11 @@ export const BRANDS: { key: Card['brand']; label: string }[] = [
  * os usa — lá toda compra cai na fatura do mês em que foi feita. Aqui a conta
  * é a de verdade.
  */
+/** a fatura da primeira parcela: a do arquivo importado, se houver; senão, a do ciclo */
+export function firstInvoiceOf(card: Pick<Card, 'closingDay'>, entry: Pick<Entry, 'date' | 'invoiceMonth'>): MonthKey {
+  return entry.invoiceMonth || invoiceMonthOf(card, entry.date);
+}
+
 export function invoiceMonthOf(card: Pick<Card, 'closingDay'>, purchase: IsoDate): MonthKey {
   const month = monthKeyOf(purchase);
   const closing = Math.trunc(card.closingDay) || 0;
@@ -274,7 +279,7 @@ export function buildInvoice(
 
     // a compra parcelada rende uma ocorrência por mês; o ciclo decide em qual
     // fatura a primeira delas entra, e as seguintes andam junto
-    const shift = invoiceMonthOf(card, entry.date) === monthKeyOf(entry.date) ? 0 : 1;
+    const shift = monthsSince(monthKeyOf(entry.date), firstInvoiceOf(card, entry));
     const competence = addMonthsToKey(month, -shift);
 
     for (const occurrence of occurrencesOf(entry, competence, today)) {
@@ -353,7 +358,7 @@ export function cardUsage(
 
     if (entry.repeat.kind === 'installments') {
       const total = Math.max(1, Math.trunc(entry.repeat.count ?? 1));
-      const startInvoice = invoiceMonthOf(card, entry.date);
+      const startInvoice = firstInvoiceOf(card, entry);
       const paid = Math.max(0, monthsSince(startInvoice, month));
       const remaining = Math.max(0, total - paid);
       used += remaining * entry.amount;
@@ -423,7 +428,7 @@ export function futureInstallments(card: Card, entries: Entry[], openMonth: Mont
   for (const e of entries) {
     if (e.cardId !== card.id || e.deletedAt || e.repeat.kind !== 'installments') continue;
     const total = Math.max(1, Math.trunc(e.repeat.count ?? 1));
-    const first = invoiceMonthOf(card, e.date);
+    const first = firstInvoiceOf(card, e);
     const current = monthsSince(first, openMonth) + 1;
     const left = total - Math.max(0, current);
     if (left <= 0) continue;

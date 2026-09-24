@@ -146,6 +146,12 @@ export interface Entry extends SyncFields {
   /** hash do lançamento no extrato importado; único por espaço */
   externalId: string | null;
   attachmentIds: string[];
+  /**
+   * A fatura em que a (primeira) parcela cai, quando a compra veio do arquivo
+   * de uma fatura. O arquivo diz qual é a fatura; o dia de fechamento
+   * cadastrado é só um palpite, e errar por dois dias mudava compras de fatura.
+   */
+  invoiceMonth?: MonthKey | null;
 }
 
 export type EntrySource = 'manual' | 'ofx' | 'csv' | 'qif' | 'xlsx' | 'boleto' | 'pix' | 'recurring' | 'card';
