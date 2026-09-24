@@ -1,7 +1,7 @@
 'use client';
 
 import { applyRemote, db, getSyncState, liveRows, setSyncState } from './db';
-import { requireSupabase, supabase, type CloudRecord } from './supabase';
+import { RECEIPTS_BUCKET, requireSupabase, supabase, type CloudRecord } from './supabase';
 import type { Mutation, SyncTable } from './types';
 
 /**
@@ -189,7 +189,7 @@ async function pushAttachments(spaceId: string): Promise<number> {
 
     const path = `${spaceId}/${attachment.id}`;
     const { error } = await client.storage
-      .from('receipts')
+      .from(RECEIPTS_BUCKET)
       .upload(path, file.blob, { contentType: attachment.mime, upsert: true });
 
     // arquivo já lá é sucesso, não erro
@@ -213,7 +213,7 @@ export async function fetchAttachment(spaceId: string, attachmentId: string): Pr
   const client = supabase();
   if (!client) return null;
 
-  const { data, error } = await client.storage.from('receipts').download(`${spaceId}/${attachmentId}`);
+  const { data, error } = await client.storage.from(RECEIPTS_BUCKET).download(`${spaceId}/${attachmentId}`);
   if (error || !data) return null;
 
   await db().files.put({ id: attachmentId, blob: data, savedAt: new Date().toISOString() });

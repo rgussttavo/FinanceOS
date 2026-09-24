@@ -19,6 +19,16 @@ const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 export const cloudConfigured = (): boolean => Boolean(URL && ANON);
 
+/**
+ * O balde do Storage onde os comprovantes ficam.
+ *
+ * Fica numa constante só porque o nome é escolhido na hora de criar o balde no
+ * painel, e errar por uma letra dá "Bucket not found" sem explicar o porquê.
+ * Trocar o nome é trocar aqui — ou a variável de ambiente, quando o balde do
+ * ambiente de produção tiver outro nome.
+ */
+export const RECEIPTS_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'receipts';
+
 let client: SupabaseClient | null = null;
 
 /** o cliente, criado sob demanda; null quando a nuvem não está configurada */
