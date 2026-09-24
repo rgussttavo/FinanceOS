@@ -81,6 +81,14 @@ const SHEET_EXT = /\.(xlsx|xlsm|xlsb|xls|ods|numbers)$/i;
  * decide é o conteúdo — os primeiros bytes dizem se é planilha de verdade.
  */
 export async function parseStatementFile(file: File, onRead?: (fraction: number) => void): Promise<ParsedStatement> {
+  // sem filtro no seletor do iPhone, chega de tudo: foto e PDF merecem um aviso que diga o que fazer
+  if (/^image\//.test(file.type) || /\.(jpe?g|png|heic|heif|gif|webp)$/i.test(file.name)) {
+    throw new StatementError('Isso é uma imagem, não um extrato. No app do banco, exporte o extrato em OFX, CSV ou Excel.');
+  }
+  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+    throw new StatementError('Extrato em PDF não dá para ler com segurança. No app do banco, procure exportar em OFX, CSV ou Excel.');
+  }
+
   const buffer = await readBuffer(file, onRead);
   if (!buffer.length) throw new StatementError('O arquivo está vazio.');
 

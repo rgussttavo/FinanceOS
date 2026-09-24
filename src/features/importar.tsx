@@ -39,6 +39,16 @@ import type { Category, Cents, EntrySource, MonthKey } from '@/lib/types';
 
 const ACCEPT = '.ofx,.qfx,.csv,.tsv,.txt,.qif,.xls,.xlsx,.xlsm,.ods';
 
+/**
+ * No iPhone e no iPad o filtro vira armadilha: o Safari traduz cada extensão
+ * para um tipo do sistema, e OFX, QFX e QIF não têm um — o arquivo aparece
+ * apagado no seletor e não dá para escolher. Lá o seletor abre sem filtro e o
+ * formato é conferido depois de escolhido, como em qualquer outro lugar.
+ */
+const isAppleMobile = () =>
+  typeof navigator !== 'undefined' &&
+  (/iphone|ipad|ipod/i.test(navigator.userAgent) || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+
 const FORMATS = ['OFX', 'CSV', 'XLSX', 'XLS', 'QIF', 'ODS', 'TXT'] as const;
 
 const SOURCE_BY_FORMAT: Record<ParsedStatement['format'], EntrySource> = {
@@ -381,7 +391,7 @@ function DropZone({
     >
       <input
         type="file"
-        accept={ACCEPT}
+        accept={isAppleMobile() ? undefined : ACCEPT}
         className="sr-only"
         disabled={disabled}
         onChange={(e) => {

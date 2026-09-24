@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
 import { db, getSyncState } from '@/lib/db';
 import { ensureCategories } from '@/lib/provision';
 import { adoptLocalSpace, runSync, type SyncReport } from '@/lib/sync';
-import { cloudConfigured, supabase } from '@/lib/supabase';
+import { cloudConfigured, enabledProviders, supabase } from '@/lib/supabase';
 
 /* ----------------------------------------------------------------- sessão */
 
@@ -320,14 +320,29 @@ export function SignInSheet({
     if (!client) return;
     setBusy(true);
     setError(null);
-    const { error: err } = await client.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/app` },
-    });
-    if (err) {
-      setError(explainAuthError(err.message));
+    const providers = await enabledProviders();
+    if (providers && !providers.google) {
+      setError(
+        'O login com Google ainda não está ligado neste projeto. No painel do Supabase: Authentication → Sign In / Providers → Google.',
+      );
       setBusy(false);
+      return;
     }
+    const { data, error: err } = await client.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/app`,
+        skipBrowserRedirect: true,
+        // sempre deixa escolher a conta: quem tem duas contas Google não entra na errada sem ver
+        queryParams: { prompt: 'select_account' },
+      },
+    });
+    if (err || !data?.url) {
+      setError(explainAuthError(err?.message ?? 'Não consegui abrir o login do Google.'));
+      setBusy(false);
+      return;
+    }
+    window.location.assign(data.url);
   }
 
   return (

@@ -29,6 +29,25 @@ export const cloudConfigured = (): boolean => Boolean(URL && ANON);
  */
 export const RECEIPTS_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'receipts';
 
+/**
+ * Quais jeitos de entrar estão ligados no projeto.
+ *
+ * O login social redireciona direto para o Supabase; se o provedor estiver
+ * desligado, a pessoa cai numa página de erro em JSON, fora do app. Perguntar
+ * antes permite explicar ali mesmo, na tela de entrar.
+ */
+export async function enabledProviders(): Promise<Record<string, boolean> | null> {
+  if (!cloudConfigured()) return null;
+  try {
+    const res = await fetch(`${URL}/auth/v1/settings`, { headers: { apikey: ANON } });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { external?: Record<string, boolean> };
+    return body.external ?? null;
+  } catch {
+    return null;
+  }
+}
+
 let client: SupabaseClient | null = null;
 
 /** o cliente, criado sob demanda; null quando a nuvem não está configurada */
