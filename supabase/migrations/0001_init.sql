@@ -201,31 +201,6 @@ $$;
 
 grant execute on function public.create_space(uuid, text) to authenticated;
 
--- ------------------------------------------------------------- anexos ------
--- Os comprovantes vão para o Storage, num balde privado. O caminho começa com
--- o id do espaço, e a política só deixa passar quem é membro daquele espaço.
-
-insert into storage.buckets (id, name, public)
-values ('receipts', 'receipts', false)
-on conflict (id) do nothing;
-
-drop policy if exists receipts_read on storage.objects;
-create policy receipts_read on storage.objects
-  for select using (
-    bucket_id = 'receipts'
-    and public.is_space_member(((storage.foldername(name))[1])::uuid)
-  );
-
-drop policy if exists receipts_write on storage.objects;
-create policy receipts_write on storage.objects
-  for insert with check (
-    bucket_id = 'receipts'
-    and public.is_space_member(((storage.foldername(name))[1])::uuid)
-  );
-
-drop policy if exists receipts_delete on storage.objects;
-create policy receipts_delete on storage.objects
-  for delete using (
-    bucket_id = 'receipts'
-    and public.is_space_member(((storage.foldername(name))[1])::uuid)
-  );
+-- Os comprovantes ficam no Storage, e essa parte vive em 0002_storage.sql:
+-- projetos novos do Supabase nao deixam mexer em storage.objects pelo SQL
+-- Editor, entao ela precisa de um caminho proprio.

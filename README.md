@@ -59,18 +59,25 @@ Região sugerida: **South America (São Paulo)**, que é a mais perto.
 
 ### 2. Rodar a migração
 
-No painel do projeto, abra **SQL Editor**, cole o conteúdo de
-`supabase/migrations/0001_init.sql` e execute.
+No painel do projeto, abra **SQL Editor** e execute os dois arquivos, nesta
+ordem:
 
-Isso cria as tabelas, as políticas de acesso e o balde `receipts` do Storage.
-Pode rodar mais de uma vez sem quebrar nada.
+1. `supabase/migrations/0001_init.sql` — tabelas, políticas de acesso e a
+   função que cria o espaço. Pode rodar mais de uma vez sem quebrar nada.
+2. `supabase/migrations/0002_storage.sql` — o balde dos comprovantes.
+
+Se o segundo falhar com *"must be owner of table objects"*, não tem problema:
+projetos novos do Supabase restringem mexer em `storage.objects` por SQL. O
+próprio arquivo traz o passo a passo pelo painel, no fim. O app funciona sem
+isso — só os comprovantes é que ficam sem cópia na nuvem.
 
 ### 3. Configurar o login
 
 Em **Authentication → Providers**:
 
-- **Email**: já vem ligado. Desligue "Confirm email" se quiser que o código de
-  6 dígitos baste, sem link de confirmação.
+- **Email**: precisa estar **ligado** — em projetos novos ele vem desligado, e
+  sem isso o login não funciona. Desligue também "Confirm email" para o código
+  de 6 dígitos bastar, sem link de confirmação.
 - **Google** (opcional): crie as credenciais OAuth no Google Cloud e cole o
   Client ID e o Secret. Em **URL Configuration**, adicione a URL do seu site em
   "Redirect URLs" — em desenvolvimento, `http://localhost:3000/app`.

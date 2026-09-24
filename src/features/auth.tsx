@@ -121,6 +121,41 @@ export function useCloudSync(session: Session | null): {
   return { report, pending, syncing, sync: () => void sync() };
 }
 
+/* ------------------------------------------------------------------ erros */
+
+/**
+ * O Supabase responde em inglês e em linguagem de servidor.
+ *
+ * Traduzir importa porque quem lê está tentando entrar na própria conta e não
+ * tem como agir sobre "Email logins are disabled". Cada mensagem aqui diz o que
+ * fazer, e a original fica no fim quando não reconheço — esconder o motivo real
+ * só transformaria um problema resolvível num mistério.
+ */
+function explainAuthError(raw: string): string {
+  const message = raw.toLowerCase();
+
+  if (/email logins are disabled/.test(message)) {
+    return 'O login por e-mail está desligado neste projeto. Ligue em Authentication → Providers → Email, no painel do Supabase.';
+  }
+  if (/signups? not allowed|signup is disabled/.test(message)) {
+    return 'Este projeto não está aceitando cadastros novos.';
+  }
+  if (/provider is not enabled|unsupported provider/.test(message)) {
+    return 'Esse jeito de entrar não está ligado no projeto.';
+  }
+  if (/invalid|expired|otp/.test(message) && /token|code|otp/.test(message)) {
+    return 'Código inválido ou já expirado. Peça um novo.';
+  }
+  if (/rate limit|too many/.test(message)) {
+    return 'Muitas tentativas seguidas. Espere um minuto e tente de novo.';
+  }
+  if (/failed to fetch|network|timeout/.test(message)) {
+    return 'Não consegui falar com o servidor. Confira a conexão.';
+  }
+
+  return raw;
+}
+
 /* -------------------------------------------------------------- entrada */
 
 type Step = 'email' | 'code';
@@ -155,7 +190,7 @@ export function SignInSheet({
       if (err) throw new Error(err.message);
       setStep('code');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não consegui enviar o código.');
+      setError(explainAuthError(err instanceof Error ? err.message : 'Não consegui enviar o código.'));
     } finally {
       setBusy(false);
     }
@@ -180,7 +215,7 @@ export function SignInSheet({
       onSignedIn();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Código inválido ou expirado.');
+      setError(explainAuthError(err instanceof Error ? err.message : 'Código inválido ou expirado.'));
     } finally {
       setBusy(false);
     }
@@ -196,7 +231,7 @@ export function SignInSheet({
       options: { redirectTo: `${window.location.origin}/app` },
     });
     if (err) {
-      setError(err.message);
+      setError(explainAuthError(err.message));
       setBusy(false);
     }
   }
