@@ -247,3 +247,13 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* a esteira de frases da vitrine: duas cópias lado a lado, volta ao meio */
+@keyframes esteira {
+  from {
+    transform: none;
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
