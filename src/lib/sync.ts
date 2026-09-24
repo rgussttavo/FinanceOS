@@ -4,6 +4,9 @@ import { applyRemote, db, getSyncState, liveRows, setSyncState } from './db';
 import { RECEIPTS_BUCKET, requireSupabase, supabase, type CloudRecord } from './supabase';
 import type { Mutation, SyncTable } from './types';
 
+/** a forma minima de todo registro que sincroniza */
+type Syncable = { id: string; spaceId: string; updatedAt: string; deletedAt: string | null };
+
 /**
  * Sincronização incremental.
  *
@@ -272,6 +275,29 @@ export async function adoptLocalSpace(userId: string): Promise<void> {
   const local = state.spaceId ? await d.spaces.get(state.spaceId) : await d.spaces.toCollection().first();
   if (!local) throw new Error('Não encontrei o espaço local para vincular.');
 
+  /**
+   * Primeiro pergunta se esta conta já tem espaço lá.
+   *
+   * Sem isto, cada aparelho novo criava o próprio espaço e a conta acabava com
+   * um espaço por navegador — que é o oposto de sincronizar. O mais antigo
+   * ganha, porque é onde a vida da pessoa já está.
+   */
+  const { data: remotos, error: erroBusca } = await client
+    .from('spaces')
+    .select('id, name')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: true })
+    .limit(1);
+
+  if (erroBusca) throw new Error(erroBusca.message);
+
+  const remoto = remotos?.[0];
+
+  if (remoto && remoto.id !== local.id) {
+    await joinExistingSpace(local.id, remoto.id, remoto.name ?? 'Meu dinheiro', userId);
+    return;
+  }
+
   const { error } = await client.rpc('create_space', {
     space_id: local.id,
     space_name: local.name,
@@ -284,6 +310,101 @@ export async function adoptLocalSpace(userId: string): Promise<void> {
   // nada do que já existe aqui pode ficar para trás
   await queueEverything(local.id);
 }
+
+/** o que este aparelho tem de conteúdo de verdade, fora as sementes */
+const CONTENT_TABLES: SyncTable[] = [
+  'entries',
+  'cards',
+  'subscriptions',
+  'goals',
+  'debts',
+  'splits',
+  'budgets',
+  'assets',
+  'attachments',
+  'folders',
+];
+
+/**
+ * Este aparelho entra num espaço que já existe na conta.
+ *
+ * Dois caminhos, e a diferença é o que há de local:
+ *
+ * Aparelho novo — só as sementes que todo espaço ganha ao nascer. Elas são
+ * descartadas e as do espaço de verdade descem no pull. Trazê-las viraria
+ * cinquenta e seis categorias onde deviam ser vinte e oito.
+ *
+ * Aparelho que já era usado sem conta — tem lançamento, cartão, meta. Aí tudo
+ * é transferido para o espaço da conta, categorias inclusive, porque os
+ * lançamentos apontam para elas e deixá-las para trás quebraria o vínculo.
+ * Pode sobrar categoria repetida; é o preço de não perder nada, e a pessoa
+ * apaga a que não quiser.
+ */
+async function joinExistingSpace(
+  localId: string,
+  remoteId: string,
+  remoteName: string,
+  userId: string,
+): Promise<void> {
+  const d = db();
+
+  let conteudo = 0;
+  for (const table of CONTENT_TABLES) {
+    conteudo += (await liveRows<Syncable>(table, localId)).length;
+  }
+
+  // a fila ainda tem as sementes deste aparelho apontando para o espaço velho
+  await d.mutations.clear();
+
+  if (conteudo === 0) {
+    for (const table of TABLES) {
+      const rows = await liveRows<Syncable>(table, localId);
+      const target = d[TABLE_OF[table]] as unknown as { bulkDelete: (k: string[]) => Promise<void> };
+      await target.bulkDelete(rows.map((r) => r.id));
+    }
+  } else {
+    for (const table of TABLES) {
+      const rows = await liveRows<Syncable>(table, localId);
+      if (!rows.length) continue;
+      const target = d[TABLE_OF[table]] as unknown as {
+        bulkPut: (r: unknown[]) => Promise<unknown>;
+      };
+      await target.bulkPut(rows.map((row) => ({ ...row, spaceId: remoteId })));
+    }
+  }
+
+  await d.spaces.delete(localId);
+  await d.spaces.put({
+    id: remoteId,
+    ownerId: userId,
+    name: remoteName,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    deletedAt: null,
+  });
+
+  // marca d'água zerada: este aparelho ainda não viu nada daquele espaço
+  await setSyncState({ spaceId: remoteId, userId, pulledAt: null });
+
+  if (conteudo > 0) await queueEverything(remoteId);
+}
+
+/** o nome da tabela local de cada coleção que sincroniza */
+const TABLE_OF: Record<SyncTable, keyof ReturnType<typeof db>> = {
+  categories: 'categories',
+  accounts: 'accounts',
+  cards: 'cards',
+  entries: 'entries',
+  subscriptions: 'subscriptions',
+  goals: 'goals',
+  debts: 'debts',
+  splits: 'splits',
+  budgets: 'budgets',
+  assets: 'assets',
+  attachments: 'attachments',
+  folders: 'folders',
+  settings: 'settings',
+};
 
 /** coloca todo o conteúdo local na fila, para o primeiro sync levar tudo */
 async function queueEverything(spaceId: string): Promise<void> {
