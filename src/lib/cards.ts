@@ -329,6 +329,46 @@ function toLine(o: Occurrence, subscription: boolean): InvoiceLine {
   };
 }
 
+/**
+ * Lançamentos da fatura que parecem o mesmo gasto contado duas vezes.
+ *
+ * Acontece quando a parcela de uma compra antiga chega por dois arquivos com
+ * texto ou centavos diferentes, ou quando uma assinatura cadastrada no cartão
+ * também entra como compra. Mesma loja (uma palavra em comum) e o mesmo
+ * valor — até dez por cento de diferença quando uma das duas é assinatura,
+ * porque preço de assinatura muda. Uma lista para conferir, nunca para apagar
+ * sozinha: duas pizzas do mesmo lugar no mesmo mês existem.
+ */
+export function suspectDuplicates(lines: InvoiceLine[]): [InvoiceLine, InvoiceLine][] {
+  const words = (t: string) =>
+    new Set(
+      norm(t)
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 4 && !/^\d+$/.test(w) && w !== 'parcela'),
+    );
+  const out: [InvoiceLine, InvoiceLine][] = [];
+  const used = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    for (let j = i + 1; j < lines.length; j++) {
+      const a = lines[i];
+      const b = lines[j];
+      if (used.has(a.id) || used.has(b.id) || a.amount <= 0 || b.amount <= 0) continue;
+      if (a.id.split(':')[0] === b.id.split(':')[0]) continue;
+      const diff = Math.abs(a.amount - b.amount);
+      const close = a.subscription || b.subscription ? diff <= Math.max(a.amount, b.amount) * 0.1 : diff <= 3;
+      if (!close) continue;
+      // repetição de verdade envolve parcela ou assinatura; duas compras avulsas iguais são comuns
+      if (!a.installment && !b.installment && !a.subscription && !b.subscription) continue;
+      const wa = words(a.description);
+      if (![...words(b.description)].some((w) => wa.has(w))) continue;
+      out.push([a, b]);
+      used.add(a.id);
+      used.add(b.id);
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ limite */
 
 export interface CardUsage {

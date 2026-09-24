@@ -1,5 +1,5 @@
 import { categorize, cleanDescription, type LearnedRule } from './categories';
-import { addMonthsToKey, clampDayToMonth, diffDays, monthKeyOf, monthKeyParts, nowInstant, partsToIso, todayIso } from './dates';
+import { addDaysIso, addMonthsToKey, clampDayToMonth, diffDays, monthKeyOf, monthKeyParts, nowInstant, partsToIso, todayIso } from './dates';
 import { buildInvoice, invoiceMonthOf } from './cards';
 import { db, entriesUpTo, putRecords } from './db';
 import { occurrencesInMonth, type Occurrence } from './occurrences';
@@ -198,7 +198,9 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       .map((e) => e.externalId),
   );
 
-  const occurrences = await occurrencesCovering(spaceId, rows[0].date, rows[rows.length - 1].date);
+  // na fatura, parcelas de compras antigas podem estar datadas bem longe do arquivo: a janela é mais larga
+  const pad = target.type === 'card' ? 45 : 0;
+  const occurrences = await occurrencesCovering(spaceId, addDaysIso(rows[0].date, -pad), addDaysIso(rows[rows.length - 1].date, pad));
   const taken = new Set<string>();
   const subs = (opts.subscriptions ?? []).filter((s) => !s.deletedAt);
 
@@ -255,12 +257,13 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       // o pagamento da fatura anterior não é compra nem estorno: fica de fora
       status = 'transfer';
     } else {
-      const hit = findMatch(occurrences, taken, row.date, amount, outflow, installment);
+      const hit = findMatch(occurrences, taken, row.date, amount, outflow, installment, target.type === 'card' ? plainDesc : null);
       if (hit) {
         taken.add(`${hit.entryId}:${hit.key}`);
         match = { entryId: hit.entryId, occurrenceKey: hit.key, description: hit.description };
         status = hit.settlement || hit.cardId || target.type === 'card' ? 'similar' : 'settle';
-        if (installment && hit.installment) status = 'imported';
+        // parcela de uma compra que já está no app (veio de outra fatura): não entra de novo
+        if (hit.installment && (installment || target.type === 'card')) status = 'imported';
       } else if (target.type === 'account' && outflow && ACCOUNT_CARD_BILL.test(plainDesc)) {
         // a fatura paga pela conta: se as compras do cartão já estão no app, é dobro
         status = 'transfer';
@@ -333,23 +336,46 @@ function findMatch(
   amount: Cents,
   outflow: boolean,
   installment: { index: number; total: number } | null,
+  /** na fatura de cartão: a descrição limpa, para reconhecer parcela de compra antiga */
+  cardDesc: string | null = null,
 ): Occurrence | null {
   let best: Occurrence | null = null;
   let bestGap = Infinity;
+  let continuation: Occurrence | null = null;
+  let continuationGap = Infinity;
   for (const o of occurrences) {
     if (taken.has(`${o.entryId}:${o.key}`)) continue;
-    if (o.amount !== amount) continue;
     if ((o.kind === 'in') === outflow) continue;
-    if (installment && o.installment && o.installment.total === installment.total && o.installment.index === installment.index) {
+    // parcelas podem diferir em centavos (a primeira leva o arredondamento)
+    const diff = Math.abs(o.amount - amount);
+    if (installment && o.installment && o.installment.total === installment.total && o.installment.index === installment.index && diff <= 3) {
       return o;
     }
+    if (diff === 0) {
+      const gap = Math.abs(diffDays(o.date, date));
+      // na fatura, parcela conhecida fica com a regra de parcela, que olha a loja
+      if (gap <= 3 && gap < bestGap && !(cardDesc && o.installment)) {
+        best = o;
+        bestGap = gap;
+      }
+    }
+    // a parcela de uma compra antiga que o arquivo trouxe sem "2/6", ou com outra data
+    // a parcela de data mais próxima: a de agosto e a de setembro da mesma compra têm o mesmo valor
     const gap = Math.abs(diffDays(o.date, date));
-    if (gap <= 3 && gap < bestGap) {
-      best = o;
-      bestGap = gap;
+    if (cardDesc && o.cardId && o.installment && diff <= 3 && gap <= 45 && gap < continuationGap && sharesWord(cardDesc, o.description)) {
+      continuation = o;
+      continuationGap = gap;
     }
   }
-  return best;
+  return best ?? continuation;
+}
+
+/** duas descrições falam da mesma loja: dividem uma palavra de verdade */
+export function sharesWord(a: string, b: string): boolean {
+  const words = (t: string) => new Set(normalize(t).split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !/^\d+$/.test(w)));
+  const wa = words(a);
+  for (const w of words(b)) if (wa.has(w)) return true;
+  return false;
 }
 
 /* -------------------------------------------------------------- gravação */
@@ -472,7 +498,32 @@ export async function commitReview(
     toSettle.push({ ...entry, settled });
   }
 
-  await putRecords('entries', [...created, ...toSettle, ...repinned]);
+  // parcela reconhecida com centavos de diferença: vale o valor do banco naquela parcela
+  const adjusted: Entry[] = [];
+  if (cardId) {
+    const byEntry = new Map<string, { key: string; amount: Cents }[]>();
+    for (const r of rows) {
+      if (r.status !== 'imported' || !r.match || r.match.entryId.startsWith('sub:')) continue;
+      byEntry.set(r.match.entryId, [...(byEntry.get(r.match.entryId) ?? []), { key: r.match.occurrenceKey, amount: r.amount }]);
+    }
+    for (const [entryId, marks] of byEntry) {
+      const base = repinned.find((e) => e.id === entryId) ?? (await db().entries.get(entryId));
+      if (!base || base.deletedAt) continue;
+      const settled = { ...base.settled };
+      let changed = false;
+      for (const m of marks) {
+        const current = settled[m.key]?.amount ?? base.amount;
+        if (current !== m.amount) {
+          settled[m.key] = { at, amount: m.amount };
+          changed = true;
+        }
+      }
+      if (changed) adjusted.push({ ...base, settled });
+    }
+  }
+  const adjustedIds = new Set(adjusted.map((e) => e.id));
+
+  await putRecords('entries', [...created, ...toSettle, ...repinned.filter((e) => !adjustedIds.has(e.id)), ...adjusted]);
 
   const lastMonth = chosen.reduce((max, r) => (monthKeyOf(r.date) > max ? monthKeyOf(r.date) : max), '');
 

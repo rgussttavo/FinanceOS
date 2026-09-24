@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { CreditCard, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, CreditCard, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import {
   Button,
@@ -29,14 +29,16 @@ import {
   futureInstallments,
   invoiceMonthOf,
   matchBank,
+  suspectDuplicates,
   type Invoice,
+  type InvoiceLine,
 } from '@/lib/cards';
 import { cn } from '@/lib/cn';
 import { addMonthsToKey, diffDays, formatDayShort, formatMonthLabel, monthKeyOf, todayIso } from '@/lib/dates';
 import { restoreRecord } from '@/lib/db';
 import type { FinanceBase } from '@/lib/picture';
 import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
-import { createCard, createEntry, removeCard, updateCard } from '@/lib/store';
+import { createCard, createEntry, removeCard, removeEntry, updateCard } from '@/lib/store';
 import type { Card, Category, MonthKey } from '@/lib/types';
 
 /* --------------------------------------------------------------- bandeiras */
@@ -247,6 +249,45 @@ function InvoicePanel({
   const open = today <= invoice.closesOn;
   const dueIn = diffDays(today, invoice.dueOn);
 
+  // o que a pessoa já disse que não é repetido fica guardado neste aparelho
+  const [dismissed, setDismissed] = React.useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('financeos-nao-repetido') ?? '[]') as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const pairKey = (a: InvoiceLine, b: InvoiceLine) => [a.id, b.id].sort().join('|');
+  const suspects = suspectDuplicates(invoice.lines).filter(([a, b]) => !dismissed.has(pairKey(a, b)));
+  const suspectIds = new Set(suspects.flat().map((l) => l.id));
+
+  const notDuplicate = (a: InvoiceLine, b: InvoiceLine) => {
+    const next = new Set(dismissed).add(pairKey(a, b));
+    setDismissed(next);
+    try {
+      localStorage.setItem('financeos-nao-repetido', JSON.stringify([...next]));
+    } catch {
+      // sem armazenamento: vale até fechar
+    }
+  };
+
+  const removeLine = async (line: InvoiceLine) => {
+    if (line.subscription) return;
+    const entryId = line.id.split(':')[0];
+    const series = Boolean(line.installment);
+    const ok = await confirmAction({
+      title: series ? `Apagar a compra “${line.description}”?` : `Apagar “${line.description}”?`,
+      description: series
+        ? `É uma compra parcelada: todas as ${line.installment?.total} parcelas saem, desta e das outras faturas.`
+        : 'O lançamento sai desta fatura.',
+      confirmLabel: 'Apagar',
+      danger: true,
+    });
+    if (!ok) return;
+    await removeEntry(entryId);
+    toast('Lançamento apagado.', { action: { label: 'Desfazer', onClick: () => void restoreRecord('entries', entryId) } });
+  };
+
   return (
     <div>
       <div className="flex items-end justify-between gap-3">
@@ -265,6 +306,53 @@ function InvoicePanel({
         </div>
       </div>
 
+      {suspects.length ? (
+        <div className="mt-3 rounded-card border border-warn/40 bg-warn-soft p-3">
+          <p className="flex items-start gap-2 text-[13px] leading-relaxed text-ink">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+            <span>
+              <strong className="font-semibold">
+                {suspects.length === 1 ? 'Um gasto parece' : `${suspects.length} gastos parecem`} contado{suspects.length === 1 ? '' : 's'} duas vezes
+              </strong>{' '}
+              ({formatMoney(suspects.reduce((sum, [a, b]) => sum + Math.min(a.amount, b.amount), 0), { hidden })}). Se a fatura do banco é
+              menor que esta, é daqui que vem a diferença.
+            </span>
+          </p>
+          <ul className="mt-2 grid gap-2">
+            {suspects.map(([a, b]) => (
+              <li key={pairKey(a, b)} className="rounded-field bg-surface px-3 py-2">
+                {[a, b].map((line) => (
+                  <div key={line.id} className="flex items-center gap-2 py-1">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] text-ink">{line.description}</span>
+                      <span className="block text-[11.5px] text-ink-3">
+                        {formatDayShort(line.date)}
+                        {line.installment ? ` · parcela ${line.installment.index}/${line.installment.total}` : ''}
+                        {line.subscription ? ' · assinatura' : ''} · {formatMoney(line.amount, { hidden })}
+                      </span>
+                    </span>
+                    {line.subscription ? (
+                      <span className="shrink-0 text-[11.5px] text-ink-3">em Assinaturas</span>
+                    ) : (
+                      <Button size="sm" variant="quiet" onClick={() => void removeLine(line)}>
+                        Apagar
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => notDuplicate(a, b)}
+                  className="mt-1 h-8 text-[12px] font-medium text-ink-3 hover:text-ink"
+                >
+                  Não é repetido
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {invoice.lines.length ? (
         <ul className="mt-3 divide-y divide-line border-t border-line">
           {invoice.lines.map((line) => {
@@ -280,6 +368,7 @@ function InvoicePanel({
                     {formatDayShort(line.date)}
                     {line.installment ? ` · parcela ${line.installment.index}/${line.installment.total}` : ''}
                     {line.subscription ? ' · assinatura' : ''}
+                    {suspectIds.has(line.id) ? <span className="font-medium text-warn"> · repetido?</span> : null}
                   </span>
                 </span>
                 <span className={cn('tnum shrink-0 text-[15px] font-semibold', line.amount < 0 ? 'text-in' : 'text-ink')}>
