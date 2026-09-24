@@ -365,9 +365,24 @@ async function joinExistingSpace(
       await target.bulkDelete(rows.map((r) => r.id));
     }
   } else {
+    /**
+     * As preferências ficam de fora da mudança.
+     *
+     * Só existe uma por espaço, e o espaço da conta já tem a sua. Levar a deste
+     * aparelho junto criaria duas, e a tela de perfil lê a primeira que
+     * aparecer — o nome e o tema da pessoa passariam a depender de qual das
+     * duas o banco devolvesse primeiro. O conteúdo muda de espaço; a
+     * preferência local é descartada e a do espaço desce no pull.
+     */
     for (const table of TABLES) {
       const rows = await liveRows<Syncable>(table, localId);
       if (!rows.length) continue;
+
+      if (table === 'settings') {
+        await d.settings.bulkDelete(rows.map((r) => r.id));
+        continue;
+      }
+
       const target = d[TABLE_OF[table]] as unknown as {
         bulkPut: (r: unknown[]) => Promise<unknown>;
       };
