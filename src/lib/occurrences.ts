@@ -37,6 +37,13 @@ export interface Occurrence {
   installment: { index: number; total: number } | null;
   /** venceu e nao foi baixado */
   overdue: boolean;
+  /**
+   * Linha que não é lançamento: a cobrança de uma assinatura ou a parcela de
+   * uma dívida. Aparece nas listas e soma no mês, mas se edita na tela dela.
+   */
+  virtual?: 'subscription' | 'debt';
+  /** id da assinatura ou da dívida, quando `virtual` */
+  refId?: string;
 }
 
 const MAX_WEEKLY_PER_MONTH = 6;
@@ -65,7 +72,8 @@ function buildOccurrence(
     cardId: entry.cardId,
     settlement,
     installment,
-    overdue: settlement === null && diffDays(today, date) < 0,
+    // compra no cartão não vence sozinha: quem vence é a fatura
+    overdue: settlement === null && !entry.cardId && diffDays(today, date) < 0,
   };
 }
 
@@ -154,6 +162,9 @@ export function occurrencesInMonth(
 
 /* ------------------------------------------------------------------ resumo */
 
+/** chave das parcelas de dívida no resumo por categoria: elas não têm categoria */
+export const DEBT_SLICE = 'parcelas-de-dividas';
+
 export interface MonthSummary {
   month: MonthKey;
   income: Cents;
@@ -204,7 +215,7 @@ export function summarizeMonth(
     }
 
     if (o.kind !== 'in') {
-      const key = o.categoryId ?? 'sem-categoria';
+      const key = o.categoryId ?? (o.virtual === 'debt' ? DEBT_SLICE : 'sem-categoria');
       s.byCategory.set(key, (s.byCategory.get(key) ?? 0) + o.amount);
     }
   }

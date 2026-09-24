@@ -11,7 +11,7 @@ import {
   todayIso,
 } from '@/lib/dates';
 import { formatMoney, formatPercent, ratio } from '@/lib/money';
-import type { MonthSummary, Occurrence } from '@/lib/occurrences';
+import { DEBT_SLICE, type MonthSummary, type Occurrence } from '@/lib/occurrences';
 import type { Category, Cents, FlowKind, MonthKey } from '@/lib/types';
 
 /* ------------------------------------------------------------------ rosca */
@@ -109,10 +109,10 @@ export function MonthBars({
 
   return (
     <div>
-      <div className="flex h-[132px] items-end gap-2">
+      <div className="flex h-[132px] gap-2">
         {months.map((m) => (
-          <div key={m.month} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-            <div className="flex h-full w-full items-end justify-center gap-1">
+          <div key={m.month} className="flex h-full min-w-0 flex-1 flex-col items-center gap-1.5" title={`${formatMonthLabel(m.month)}: entrou ${formatMoney(m.income, { hidden })}, saiu ${formatMoney(m.expense, { hidden })}`}>
+            <div className="flex min-h-0 w-full flex-1 items-end justify-center gap-1">
               <Bar value={m.income} max={max} color="var(--in)" label={`Entrou em ${formatMonthLabel(m.month)}`} />
               <Bar value={m.expense} max={max} color="var(--out)" label={`Saiu em ${formatMonthLabel(m.month)}`} />
             </div>
@@ -371,6 +371,7 @@ export function categorySlices(summary: MonthSummary, categories: Category[]): D
   return Array.from(summary.byCategory.entries())
     .map(([id, value]) => {
       const cat = byId.get(id);
+      if (id === DEBT_SLICE) return { id, label: 'Parcelas de dívidas', value, color: 'var(--warn)' };
       return {
         id,
         label: cat?.name ?? 'Sem categoria',

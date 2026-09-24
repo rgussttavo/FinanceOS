@@ -62,8 +62,8 @@ export class NorteDB extends Dexie {
   mutations!: Table<Mutation, number>;
   syncState!: Table<SyncState, string>;
 
-  constructor() {
-    super('norte');
+  constructor(name = 'norte') {
+    super(name);
 
     this.version(1).stores({
       spaces: 'id, ownerId, updatedAt',
@@ -102,6 +102,27 @@ export class NorteDB extends Dexie {
 }
 
 let _db: NorteDB | null = null;
+let _dbName = 'norte';
+
+/** nome da base do modo demonstração: nunca é a mesma dos dados de verdade */
+export const DEMO_DB = 'norte-demo';
+
+/**
+ * Escolhe a base antes de qualquer leitura.
+ *
+ * O modo demonstração usa uma base própria. Trocar de uma para a outra fecha a
+ * aberta, para uma tela nunca ler metade de cada.
+ */
+export function selectDatabase(name: string): void {
+  if (_dbName === name) return;
+  if (_db) {
+    _db.close();
+    _db = null;
+  }
+  _dbName = name;
+}
+
+export const isDemoDatabase = (): boolean => _dbName === DEMO_DB;
 
 /**
  * A base so existe no navegador. Chamar isto durante render de servidor e um
@@ -111,7 +132,7 @@ export function db(): NorteDB {
   if (typeof window === 'undefined') {
     throw new Error('A base local do FinanceCS só existe no navegador.');
   }
-  if (!_db) _db = new NorteDB();
+  if (!_db) _db = new NorteDB(_dbName);
   return _db;
 }
 

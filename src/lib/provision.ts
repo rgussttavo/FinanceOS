@@ -1,5 +1,7 @@
 import { buildSeedCategories } from './categories';
+import { buildDemoData, DEMO_SPACE_ID } from './demo';
 import { db, deleteRecord, getSyncState, putRecord, setSyncState } from './db';
+import { todayIso } from './dates';
 import { nowInstant } from './dates';
 import type { Settings, Space } from './types';
 
@@ -149,4 +151,35 @@ async function seedSpace(spaceId: string): Promise<void> {
     };
     await putRecord('settings', fresh);
   }
+}
+
+/**
+ * Monta o exemplo do zero, a partir do dia de hoje.
+ *
+ * Roda a cada entrada no modo demonstração: o exemplo não acumula o que a
+ * pessoa mexeu da última vez, e as datas acompanham o calendário. Escreve
+ * direto nas tabelas, sem fila de sincronização — nada daqui sobe para lugar
+ * nenhum.
+ */
+export async function provisionDemo(): Promise<Space> {
+  const d = db();
+  const data = buildDemoData(todayIso());
+  const at = nowInstant();
+  const space: Space = { id: DEMO_SPACE_ID, ownerId: LOCAL_OWNER, name: 'Exemplo', createdAt: at, updatedAt: at, deletedAt: null };
+
+  await d.transaction('rw', d.tables, async () => {
+    for (const table of d.tables) await table.clear();
+    await d.spaces.put(space);
+    await d.categories.bulkPut(data.categories);
+    await d.entries.bulkPut(data.entries);
+    await d.cards.bulkPut(data.cards);
+    await d.subscriptions.bulkPut(data.subscriptions);
+    await d.goals.bulkPut(data.goals);
+    await d.debts.bulkPut(data.debts);
+    await d.assets.bulkPut(data.assets);
+    await d.settings.put(data.settings);
+    await d.syncState.put({ id: 'singleton', pulledAt: null, lastPushAt: null, spaceId: space.id, userId: null });
+  });
+
+  return space;
 }

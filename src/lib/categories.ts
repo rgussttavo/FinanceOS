@@ -206,6 +206,8 @@ export interface LearnedRule {
   /** quantas vezes foi confirmada; desempata contra o dicionario */
   hits: number;
   updatedAt: string;
+  /** a pessoa ja respondeu "manter essa regra?" — nao pergunta de novo */
+  confirmed?: boolean;
 }
 
 export interface CategorizeInput {

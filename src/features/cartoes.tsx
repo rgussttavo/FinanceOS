@@ -316,11 +316,14 @@ export function CartoesView({
   month,
   categories,
   hidden,
+  startNew = false,
 }: {
   spaceId: string;
   month: MonthKey;
   categories: Category[];
   hidden: boolean;
+  /** veio do "novo cartão" de outra tela: abre o cadastro direto */
+  startNew?: boolean;
 }) {
   const { cards, subscriptions, entries } = useCardsData(spaceId, addMonthsToKey(month, 1));
   const [activeId, setActiveId] = React.useState('');
@@ -329,6 +332,11 @@ export function CartoesView({
     editing: null,
   });
   const [purchaseOpen, setPurchaseOpen] = React.useState(false);
+  const [autoOpened, setAutoOpened] = React.useState(false);
+  if (startNew && !autoOpened) {
+    setAutoOpened(true);
+    setCardSheet({ open: true, editing: null });
+  }
 
   const active = cards.find((c) => c.id === activeId) ?? cards[0] ?? null;
   const today = todayIso();

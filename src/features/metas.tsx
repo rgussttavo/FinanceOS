@@ -79,11 +79,13 @@ export function MetasView({
   month,
   categories,
   hidden,
+  startNew = false,
 }: {
   spaceId: string;
   month: MonthKey;
   categories: Category[];
   hidden: boolean;
+  startNew?: boolean;
 }) {
   const goals = useGoals(spaceId);
   const entries = useEntriesUpTo(spaceId, month);
@@ -91,6 +93,11 @@ export function MetasView({
     open: false,
     editing: null,
   });
+  const [autoOpened, setAutoOpened] = React.useState(false);
+  if (startNew && !autoOpened) {
+    setAutoOpened(true);
+    setSheet({ open: true, editing: null });
+  }
 
   if (!goals.length) {
     return (

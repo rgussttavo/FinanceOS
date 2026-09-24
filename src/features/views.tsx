@@ -16,13 +16,11 @@ import {
   Donut,
   InflationChart,
   MonthBars,
-  MonthCalendar,
   buildInflationSeries,
   categorySlices,
 } from '@/components/charts';
 import { OccurrenceList } from '@/components/entries';
 import { Button, EmptyState, Input, Panel, SectionTitle } from '@/components/ui';
-import { NewsList } from '@/features/mercado';
 import { FireSheet, InvestimentoSheet } from '@/features/simuladores';
 import { useMarket } from '@/lib/market';
 import { buildInvoice } from '@/lib/cards';
@@ -258,7 +256,7 @@ export function Trajectory({ points, hidden }: { points: DayPoint[]; hidden: boo
   );
 }
 
-/* ------------------------------------------------------------------ Início */
+/* ---------------------------------------------------------------- contexto */
 
 export interface ViewContext {
   spaceId: string;
@@ -266,78 +264,15 @@ export interface ViewContext {
   setMonth: (m: MonthKey) => void;
   summary: MonthSummary;
   occurrences: Occurrence[];
-  projection: DayPoint[];
   categories: Category[];
   hidden: boolean;
-  /** o bloco de noticias no inicio pode ser desligado nas configuracoes */
-  newsEnabled: boolean;
   /** cartoes desligado tira a fatura da aba de despesas */
   cardsEnabled: boolean;
   toggleHidden: () => void;
   onToggleOccurrence: (o: Occurrence) => void;
+  /** abre o lançamento (ou a tela da assinatura/dívida, nas linhas virtuais) */
+  onOpenOccurrence: (o: Occurrence) => void;
   history: MonthSummary[];
-  /** atalho para o import de extrato, oferecido quando o mês está vazio */
-  onImport: () => void;
-}
-
-export function InicioView(ctx: ViewContext) {
-  const recent = ctx.occurrences.slice(0, 6);
-
-  return (
-    <div className="grid gap-4">
-      <Hero
-        label="Saldo do mês"
-        value={ctx.summary.balance}
-        hidden={ctx.hidden}
-        onToggleHidden={ctx.toggleHidden}
-        tone={ctx.summary.balance < 0 ? 'out' : 'ink'}
-      />
-      <StatRow
-        hidden={ctx.hidden}
-        items={[
-          { label: 'Receitas', value: ctx.summary.income, tone: 'in' },
-          { label: 'Despesas', value: ctx.summary.expense, tone: 'out' },
-          { label: 'Investido', value: ctx.summary.invested, tone: 'inv' },
-        ]}
-      />
-
-      {ctx.newsEnabled && (
-        <section>
-          <SectionTitle>Notícias</SectionTitle>
-          <NewsList limit={3} />
-        </section>
-      )}
-
-      <Panel className="p-5">
-        <SectionTitle>Calendário</SectionTitle>
-        <MonthCalendar month={ctx.month} occurrences={ctx.occurrences} />
-      </Panel>
-
-      <Trajectory points={ctx.projection} hidden={ctx.hidden} />
-
-      <Panel className="px-5 py-4">
-        <SectionTitle>Últimos lançamentos</SectionTitle>
-        {recent.length ? (
-          <OccurrenceList
-            occurrences={recent}
-            categories={ctx.categories}
-            hidden={ctx.hidden}
-            onToggle={ctx.onToggleOccurrence}
-          />
-        ) : (
-          <EmptyState
-            title="O mês está em branco"
-            description="Comece pelo que você já sabe: o aluguel, o salário, a assinatura que cai todo dia 12. Ou traga o mês inteiro de uma vez pelo extrato do banco."
-            action={
-              <Button variant="ghost" size="sm" onClick={ctx.onImport}>
-                Importar extrato
-              </Button>
-            }
-          />
-        )}
-      </Panel>
-    </div>
-  );
 }
 
 /* ---------------------------------------------------------------- Receitas */
@@ -382,6 +317,8 @@ export function ReceitasView(ctx: ViewContext) {
             categories={ctx.categories}
             hidden={ctx.hidden}
             onToggle={ctx.onToggleOccurrence}
+            onOpen={ctx.onOpenOccurrence}
+            groupByDay
           />
         ) : (
           <EmptyState
@@ -455,6 +392,8 @@ export function DespesasView(ctx: ViewContext) {
             categories={ctx.categories}
             hidden={ctx.hidden}
             onToggle={ctx.onToggleOccurrence}
+            onOpen={ctx.onOpenOccurrence}
+            groupByDay
           />
         ) : (
           <EmptyState
@@ -543,6 +482,8 @@ export function InvestimentosView(ctx: ViewContext) {
             categories={ctx.categories}
             hidden={ctx.hidden}
             onToggle={ctx.onToggleOccurrence}
+            onOpen={ctx.onOpenOccurrence}
+            groupByDay
           />
         ) : (
           <EmptyState

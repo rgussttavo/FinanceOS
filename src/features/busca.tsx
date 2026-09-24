@@ -7,7 +7,7 @@ import { cn } from '@/lib/cn';
 import { normalize } from '@/lib/categories';
 import { formatDayShort } from '@/lib/dates';
 import { formatMoney } from '@/lib/money';
-import type { ViewId } from '@/lib/nav';
+import type { Route } from '@/lib/nav';
 import {
   useAllSubscriptions,
   useAssets,
@@ -27,7 +27,7 @@ export interface SearchHit {
   detail: string;
   amount: Cents | null;
   /** para onde a busca leva ao tocar no resultado */
-  view: ViewId;
+  route: Route;
 }
 
 /**
@@ -63,7 +63,7 @@ export function useSearch(spaceId: string | null, month: MonthKey, query: string
         title: e.description,
         detail: formatDayShort(e.date),
         amount: e.amount,
-        view: e.kind === 'in' ? 'receitas' : e.kind === 'invest' ? 'investimentos' : 'despesas',
+        route: { view: 'movimentos', param: e.kind === 'in' ? 'entradas' : e.kind === 'invest' ? 'investimentos' : 'saidas' },
       });
     }
 
@@ -75,7 +75,7 @@ export function useSearch(spaceId: string | null, month: MonthKey, query: string
         title: s.name,
         detail: s.canceledAt ? 'cancelada' : `dia ${String(s.billingDay).padStart(2, '0')}`,
         amount: s.amount,
-        view: 'assinaturas',
+        route: { view: 'assinaturas' },
       });
     }
 
@@ -87,13 +87,13 @@ export function useSearch(spaceId: string | null, month: MonthKey, query: string
         title: c.name || c.institution,
         detail: c.last4 ? `····${c.last4}` : c.institution,
         amount: c.limit || null,
-        view: 'cartoes',
+        route: { view: 'cartoes' },
       });
     }
 
     for (const g of goals) {
       if (!hit(g.name)) continue;
-      out.push({ id: `goal:${g.id}`, group: 'Metas', title: g.name, detail: 'meta', amount: g.target, view: 'metas' });
+      out.push({ id: `goal:${g.id}`, group: 'Metas', title: g.name, detail: 'meta', amount: g.target, route: { view: 'metas' } });
     }
 
     for (const d of debts) {
@@ -104,7 +104,7 @@ export function useSearch(spaceId: string | null, month: MonthKey, query: string
         title: d.name,
         detail: `${d.installments}x`,
         amount: d.installment,
-        view: 'dividas',
+        route: { view: 'dividas' },
       });
     }
 
@@ -116,13 +116,13 @@ export function useSearch(spaceId: string | null, month: MonthKey, query: string
         title: s.name,
         detail: `${s.participants.length} pessoas`,
         amount: s.items.reduce((sum, i) => sum + i.amount, 0),
-        view: 'rateio',
+        route: { view: 'rateio' },
       });
     }
 
     for (const a of assets) {
       if (!hit(a.name)) continue;
-      out.push({ id: `asset:${a.id}`, group: 'Patrimônio', title: a.name, detail: 'bem', amount: a.value, view: 'patrimonio' });
+      out.push({ id: `asset:${a.id}`, group: 'Patrimônio', title: a.name, detail: 'bem', amount: a.value, route: { view: 'patrimonio' } });
     }
 
     for (const a of attachments) {
@@ -133,7 +133,7 @@ export function useSearch(spaceId: string | null, month: MonthKey, query: string
         title: a.name,
         detail: formatDayShort(a.createdAt.slice(0, 10)),
         amount: null,
-        view: 'comprovantes',
+        route: { view: 'comprovantes' },
       });
     }
 
@@ -152,7 +152,7 @@ export function BuscaView({
   spaceId: string;
   month: MonthKey;
   hidden: boolean;
-  onGo: (view: ViewId) => void;
+  onGo: (route: Route) => void;
 }) {
   const [query, setQuery] = React.useState('');
   const hits = useSearch(spaceId, month, query);
@@ -218,7 +218,7 @@ export function BuscaView({
                   <li key={h.id} className={cn(i > 0 && 'border-t border-line')}>
                     <button
                       type="button"
-                      onClick={() => onGo(h.view)}
+                      onClick={() => onGo(h.route)}
                       className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
                     >
                       <span className="min-w-0 flex-1">

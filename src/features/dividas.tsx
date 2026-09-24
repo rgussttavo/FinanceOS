@@ -35,16 +35,23 @@ export function DividasView({
   spaceId,
   month,
   hidden,
+  startNew = false,
 }: {
   spaceId: string;
   month: MonthKey;
   hidden: boolean;
+  startNew?: boolean;
 }) {
   const debts = useDebts(spaceId);
   const [sheet, setSheet] = React.useState<{ open: boolean; editing: Debt | null }>({
     open: false,
     editing: null,
   });
+  const [autoOpened, setAutoOpened] = React.useState(false);
+  if (startNew && !autoOpened) {
+    setAutoOpened(true);
+    setSheet({ open: true, editing: null });
+  }
   const [tool, setTool] = React.useState<Tool>(null);
 
   const rows = debts.map((debt) => ({ debt, progress: debtProgress(debt, month) }));
@@ -375,7 +382,7 @@ function DebtSheet({
 
 /* -------------------------------------------------- simulador empréstimo */
 
-function LoanSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function LoanSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [principalText, setPrincipalText] = React.useState('');
   const [rate, setRate] = React.useState('2,5');
   const [months, setMonths] = React.useState('24');
@@ -460,7 +467,7 @@ function LoanSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 /* ----------------------------------------------- simulador cheque especial */
 
-function OverdraftSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function OverdraftSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [usedText, setUsedText] = React.useState('');
   const [rate, setRate] = React.useState('8');
   const [days, setDays] = React.useState('30');
@@ -520,7 +527,7 @@ function OverdraftSheet({ open, onClose }: { open: boolean; onClose: () => void 
 
 /* ----------------------------------------------------- simulador quitação */
 
-function PayoffSheet({
+export function PayoffSheet({
   open,
   onClose,
   debts,

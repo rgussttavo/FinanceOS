@@ -23,7 +23,8 @@
   /* tinta */
   --ink: #f5f3ee;
   --ink-2: #a5a29a;
-  --ink-3: #7b786f;
+  /* 4,8:1 sobre surface-2 — o mínimo para texto pequeno ler bem */
+  --ink-3: #8b877d;
 
   --line: rgba(245, 243, 238, 0.08);
   --line-strong: rgba(245, 243, 238, 0.16);
@@ -64,6 +65,9 @@
   /* estrutura do app */
   --col: 520px;
   --tabbar-h: 66px;
+  --nav-h: 64px;
+  --sidebar-w: 256px;
+  --toast-bottom: calc(var(--nav-h) + var(--sa-bottom) + 84px);
   --sa-top: env(safe-area-inset-top, 0px);
   --sa-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -80,7 +84,7 @@
   --ink-3: #6e6a5e;
   --line: rgba(26, 25, 21, 0.10);
   --line-strong: rgba(26, 25, 21, 0.18);
-  --accent: #8a6a33;
+  --accent: #7f612e;
   --accent-ink: #ffffff;
   --accent-soft: rgba(138, 106, 51, 0.10);
   --in: #2f6a4a;
@@ -228,6 +232,27 @@ body {
   }
 }
 
+/* o destaque que acende e apaga quando um valor muda */
+@keyframes value-flash {
+  0% {
+    background-color: var(--accent-soft);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @keyframes drawer-in {
   from {
     transform: translateX(-100%);
@@ -245,5 +270,11 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --toast-bottom: 24px;
   }
 }

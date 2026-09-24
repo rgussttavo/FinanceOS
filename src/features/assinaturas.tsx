@@ -139,11 +139,13 @@ export function AssinaturasView({
   month,
   categories,
   hidden,
+  startNew = false,
 }: {
   spaceId: string;
   month: MonthKey;
   categories: Category[];
   hidden: boolean;
+  startNew?: boolean;
 }) {
   const all = useAllSubscriptions(spaceId);
   const cards = useCards(spaceId);
@@ -151,6 +153,11 @@ export function AssinaturasView({
     open: false,
     editing: null,
   });
+  const [autoOpened, setAutoOpened] = React.useState(false);
+  if (startNew && !autoOpened) {
+    setAutoOpened(true);
+    setSheet({ open: true, editing: null });
+  }
 
   const active = React.useMemo(
     () => all.filter((s) => !s.canceledAt).sort((a, b) => b.amount - a.amount),

@@ -2,9 +2,10 @@
 
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useState } from 'react';
-import { categorize, learnFromCorrection, type LearnedRule } from './categories';
+import { categorize, cleanDescription, learnFromCorrection, type LearnedRule } from './categories';
 import { db, deleteRecord, dropFile, entriesUpTo, getSyncState, liveRows, putRecord, saveFile } from './db';
 import {
+  addDaysIso,
   addMonthsToKey,
   clampDayToMonth,
   currentMonthKey,
@@ -15,7 +16,7 @@ import {
   todayIso,
 } from './dates';
 import { occurrencesInMonth, projectMonth, summarizeMonth, type Occurrence } from './occurrences';
-import { ensureSpace, uid } from './provision';
+import { ensureSpace, provisionDemo, uid } from './provision';
 import type {
   Account,
   Asset,
@@ -47,12 +48,12 @@ export interface Bootstrap {
 }
 
 /** abre a base local e garante o espaco antes de qualquer tela pintar dados */
-export function useBootstrap(): Bootstrap {
+export function useBootstrap(demo = false): Bootstrap {
   const [state, setState] = useState<Bootstrap>({ spaceId: null, ready: false, error: null });
 
   useEffect(() => {
     let alive = true;
-    ensureSpace()
+    (demo ? provisionDemo() : ensureSpace())
       .then((space) => {
         if (alive) setState({ spaceId: space.id, ready: true, error: null });
       })
@@ -68,7 +69,7 @@ export function useBootstrap(): Bootstrap {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [demo]);
 
   return state;
 }
@@ -220,6 +221,11 @@ export interface NewEntryInput {
   repeat?: Repeat;
   notes?: string;
   tags?: string[];
+  /**
+   * O que foi registrado com data de hoje ou de antes já aconteceu: nasce
+   * baixado. Compra no cartão nunca, porque quem é paga é a fatura.
+   */
+  paidIfPast?: boolean;
 }
 
 export async function createEntry(input: NewEntryInput): Promise<Entry> {
@@ -238,7 +244,10 @@ export async function createEntry(input: NewEntryInput): Promise<Entry> {
     accountId: input.accountId ?? null,
     cardId: input.cardId ?? null,
     repeat: input.repeat ?? { kind: 'once' },
-    settled: {},
+    settled:
+      input.paidIfPast && !input.cardId && (input.date ?? todayIso()) <= todayIso()
+        ? { [input.repeat?.kind === 'weekly' ? (input.date ?? todayIso()) : monthKeyOf(input.date ?? todayIso())]: { at } }
+        : {},
     notes: input.notes ?? '',
     tags: input.tags ?? [],
     source: 'manual',
@@ -454,9 +463,17 @@ export const updateGoal = (goal: Goal, patch: Partial<Goal>): Promise<Goal> =>
 
 export const removeGoal = (id: string): Promise<void> => deleteRecord('goals', id);
 
-/** guarda mais um tanto numa meta manual */
+/** guarda mais um tanto numa meta manual, e o aporte entra no histórico */
 export const depositIntoGoal = (goal: Goal, amount: Cents): Promise<Goal> =>
-  putRecord('goals', { ...goal, saved: Math.max(0, goal.saved + amount) });
+  putRecord('goals', {
+    ...goal,
+    saved: Math.max(0, goal.saved + amount),
+    deposits: [...(goal.deposits ?? []), { at: nowInstant(), amount }],
+  });
+
+/** pausa ou retoma: meta pausada sai dos alertas e do ritmo */
+export const setGoalPaused = (goal: Goal, paused: boolean): Promise<Goal> =>
+  putRecord('goals', { ...goal, pausedAt: paused ? nowInstant() : null });
 
 /* ---------------------------------------------------------------- dividas */
 
@@ -859,13 +876,132 @@ export async function suggestCategory(
   return categorize({ description, kind, categories, learned: await readLearned() });
 }
 
-/** a pessoa corrigiu a categoria: vira regra para a proxima vez */
-export async function rememberCategory(description: string, categoryId: string): Promise<void> {
+/**
+ * A pessoa escolheu a categoria: vira regra para a próxima vez.
+ *
+ * Devolve a regra como ficou — quem chamou decide se vale perguntar "manter
+ * essa regra?" (na segunda vez que a mesma escolha se repete).
+ */
+export async function rememberCategory(description: string, categoryId: string): Promise<LearnedRule | null> {
   const learned = await readLearned();
+  const pattern = cleanDescription(description);
   const next = learnFromCorrection(learned, description, categoryId);
-  const changed = next.find((r) => r.categoryId === categoryId && description.length > 0);
-  if (!changed) return;
+  const changed = next.find((r) => r.pattern === pattern);
+  if (!changed) return null;
   await db().learned.put({ ...changed, id: changed.pattern });
+  return changed;
+}
+
+/** "Sim, mantenha": a regra fica e o app para de perguntar */
+export async function confirmRule(pattern: string): Promise<void> {
+  const rule = await db().learned.get(pattern);
+  if (rule) await db().learned.put({ ...rule, confirmed: true });
+}
+
+/** "Não": a regra sai, e a descrição volta a ser sugerida pelo dicionário */
+export async function forgetRule(pattern: string): Promise<void> {
+  await db().learned.delete(pattern);
+}
+
+/* ------------------------------------------------------------ saldo inicial */
+
+/**
+ * Quanto havia na conta no começo do mês — positivo ou negativo.
+ *
+ * É o que ancora o "saldo de hoje". Ajustar o saldo para bater com o banco é
+ * mexer aqui: o resto do mês continua exatamente como foi lançado.
+ */
+export async function setOpeningBalance(spaceId: string, month: MonthKey, signedAmount: Cents): Promise<void> {
+  const rows = await entriesUpTo(spaceId, month);
+  const existing = rows.filter(
+    (e) => e.tags.includes(CARRY_OVER_TAG) && monthKeyOf(e.date) === month && !e.deletedAt,
+  );
+  const { y, m } = monthKeyParts(month);
+  const date = partsToIso(y, m, 1);
+  const kind: FlowKind = signedAmount >= 0 ? 'in' : 'out';
+  const amount = Math.abs(Math.round(signedAmount));
+
+  // um só registro por mês; sobra de versão antiga some
+  for (const extra of existing.slice(1)) await deleteRecord('entries', extra.id);
+  const current = existing[0];
+
+  if (amount === 0) {
+    if (current) await deleteRecord('entries', current.id);
+    return;
+  }
+  const description = kind === 'in' ? 'Saldo do mês anterior' : 'Saldo negativo do mês anterior';
+  if (current) {
+    await putRecord('entries', { ...current, kind, amount, date, description, categoryId: null });
+    return;
+  }
+  const entry = await createEntry({ spaceId, kind, description, amount, date, repeat: { kind: 'once' }, tags: [CARRY_OVER_TAG] });
+  await putRecord('entries', { ...entry, settled: { [month]: { at: nowInstant() } } });
+}
+
+/** saldo inicial do mês, com sinal */
+export function useOpeningBalance(spaceId: string | null, month: MonthKey): Cents | null {
+  return (
+    useLiveQuery(
+      async () => {
+        if (!spaceId) return null;
+        const rows = await entriesUpTo(spaceId, month);
+        const hit = rows.find((e) => e.tags.includes(CARRY_OVER_TAG) && monthKeyOf(e.date) === month && !e.deletedAt);
+        if (!hit) return null;
+        return hit.kind === 'in' ? hit.amount : -hit.amount;
+      },
+      [spaceId, month],
+      null,
+    ) ?? null
+  );
+}
+
+/* ------------------------------------------------------- editar a partir de */
+
+/**
+ * Muda uma repetição só daqui para frente.
+ *
+ * O aluguel subiu em março: os meses até fevereiro continuam com o valor
+ * antigo, e de março em diante vale o novo. A série antiga ganha data de fim
+ * e nasce uma nova a partir da ocorrência escolhida — mexer na série inteira
+ * reescreveria o passado.
+ */
+export async function changeEntryFrom(entry: Entry, occurrenceDate: IsoDate, patch: Partial<Entry>): Promise<Entry> {
+  const until = addDaysIso(occurrenceDate, -1);
+  const settledBefore: Entry['settled'] = {};
+  const settledAfter: Entry['settled'] = {};
+  for (const [key, mark] of Object.entries(entry.settled)) {
+    if (key < occurrenceDate.slice(0, key.length)) settledBefore[key] = mark;
+    else settledAfter[key] = mark;
+  }
+
+  let repeat = entry.repeat;
+  let oldRepeat: Entry['repeat'] = { ...entry.repeat, until };
+  if (entry.repeat.kind === 'installments') {
+    // parcela não tem data de fim: a série antiga fica com as que já foram,
+    // e a nova continua contando as que faltam
+    const done = monthsBetweenKeys(monthKeyOf(entry.date), monthKeyOf(occurrenceDate));
+    oldRepeat = { kind: 'installments', count: Math.max(1, done) };
+    repeat = { kind: 'installments', count: Math.max(1, (entry.repeat.count ?? 1) - done) };
+  }
+
+  await putRecord('entries', { ...entry, repeat: oldRepeat, settled: settledBefore });
+  const at = nowInstant();
+  return putRecord('entries', {
+    ...entry,
+    ...patch,
+    id: uid(),
+    createdAt: at,
+    date: occurrenceDate,
+    repeat: patch.repeat ?? repeat,
+    settled: settledAfter,
+    externalId: null,
+  });
+}
+
+function monthsBetweenKeys(from: MonthKey, to: MonthKey): number {
+  const a = monthKeyParts(from);
+  const b = monthKeyParts(to);
+  return (b.y - a.y) * 12 + (b.m - a.m);
 }
 
 /* ------------------------------------------------------------- utilidades */

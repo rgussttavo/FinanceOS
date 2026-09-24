@@ -8,6 +8,7 @@ import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/cn';
 import { db, putRecord, wipeLocal } from '@/lib/db';
 import { formatDateFull } from '@/lib/dates';
+import type { Route } from '@/lib/nav';
 import type { Settings } from '@/lib/types';
 
 /* ------------------------------------------------------------------- tela */
@@ -17,12 +18,16 @@ export function PerfilView({
   onToggleTheme,
   isLight,
   account,
+  demo = false,
+  onGo,
 }: {
   settings: Settings | null;
   onToggleTheme: () => void;
   isLight: boolean;
   /** o cartao de conta na nuvem, montado pela tela principal */
   account?: React.ReactNode;
+  demo?: boolean;
+  onGo?: (route: Route) => void;
 }) {
   const [editing, setEditing] = React.useState<null | keyof Settings>(null);
   const [exporting, setExporting] = React.useState(false);
@@ -82,6 +87,7 @@ export function PerfilView({
           checked={settings.privateMode}
           onChange={(v) => patch({ privateMode: v })}
         />
+        {onGo ? <Row label="Categorias" value="Nomes e ícones" onClick={() => onGo({ view: 'categorias' })} last /> : null}
       </Panel>
 
       <Panel className="px-5 py-2">
@@ -124,6 +130,7 @@ export function PerfilView({
         <ImportRow />
       </Panel>
 
+      {demo ? null : (
       <Panel className="border-out/25 px-5 py-2">
         <SectionTitle>Zona de risco</SectionTitle>
         <button
@@ -143,6 +150,7 @@ export function PerfilView({
           <Trash2 size={17} className="shrink-0 text-out" />
         </button>
       </Panel>
+      )}
 
       <p className="px-1 pb-2 text-center text-[12px] text-ink-3">
         {BRAND.name} · seus dados ficam neste aparelho

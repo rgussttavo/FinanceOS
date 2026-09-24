@@ -1,17 +1,22 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
+  ArrowLeftRight,
+  Calculator,
+  CalendarDays,
+  CalendarRange,
   ChevronLeft,
   ClipboardList,
   CreditCard,
+  Eye,
+  EyeOff,
   FileText,
   FileUp,
   Home,
   Landmark,
-  Menu as MenuIcon,
+  LayoutGrid,
   Newspaper,
   Plus,
   Receipt,
@@ -20,33 +25,51 @@ import {
   Settings,
   Sparkles,
   SunMoon,
+  Tags,
   Target,
-  TrendingUp,
   Users,
   type LucideIcon,
 } from 'lucide-react';
 import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/cn';
-import { TABS, TOOLS, isTab, viewTitle, type TabId, type ToolId, type ViewId } from '@/lib/nav';
+import {
+  ROOTS,
+  VIEW_META,
+  isRoot,
+  parseHash,
+  rootOf,
+  routeHash,
+  viewTitle,
+  type RootId,
+  type Route,
+  type SubId,
+  type ViewId,
+} from '@/lib/nav';
+import { IconButton } from './ui';
 
-const TAB_ICONS: Record<TabId, LucideIcon> = {
+export { IconButton } from './ui';
+
+export const VIEW_ICONS: Record<ViewId, LucideIcon> = {
   inicio: Home,
-  receitas: ArrowDownToLine,
-  despesas: ArrowUpFromLine,
-  investimentos: TrendingUp,
-};
-
-const TOOL_ICONS: Record<ToolId, LucideIcon> = {
-  news: Newspaper,
-  importar: FileUp,
+  movimentos: ArrowLeftRight,
+  planejamento: CalendarRange,
+  patrimonio: Landmark,
+  mais: LayoutGrid,
+  calendario: CalendarDays,
+  orcamento: ClipboardList,
+  metas: Target,
   assinaturas: Repeat,
   cartoes: CreditCard,
-  metas: Target,
   dividas: Receipt,
+  importar: FileUp,
+  simuladores: Calculator,
   rateio: Users,
-  orcamento: ClipboardList,
   comprovantes: FileText,
-  patrimonio: Landmark,
+  news: Newspaper,
+  busca: Search,
+  ia: Sparkles,
+  ajustes: Settings,
+  categorias: Tags,
 };
 
 /* ------------------------------------------------------------------ saudação */
@@ -57,70 +80,6 @@ export function greetingFor(date = new Date()): string {
   if (h < 12) return 'Bom dia';
   if (h < 18) return 'Boa tarde';
   return 'Boa noite';
-}
-
-/* ------------------------------------------------------------------- topo */
-
-export interface TopBarProps {
-  view: ViewId;
-  name: string;
-  onOpenMenu: () => void;
-  onOpenProfile: () => void;
-  onOpenIA: () => void;
-  onOpenSearch: () => void;
-  onBack: () => void;
-}
-
-export function TopBar({ view, name, onOpenMenu, onOpenProfile, onOpenIA, onOpenSearch, onBack }: TopBarProps) {
-  const inner = isTab(view);
-
-  return (
-    <header
-      className="sticky top-0 z-30 bg-canvas/80 backdrop-blur-xl"
-      style={{ paddingTop: 'var(--sa-top)' }}
-    >
-      <div className="col flex h-14 items-center gap-2">
-        <IconButton label="Menu" onClick={onOpenMenu}>
-          <MenuIcon size={19} />
-        </IconButton>
-
-        {inner ? (
-          <>
-            <button
-              type="button"
-              onClick={onOpenProfile}
-              className="flex items-center gap-2.5 rounded-field px-1 py-1 text-left transition-colors hover:bg-surface-2"
-            >
-              <Avatar name={name} />
-              <span className="leading-tight">
-                <span className="block text-[11px] text-ink-3">{greetingFor()},</span>
-                <span className="block text-[14px] font-semibold text-ink">{name}</span>
-              </span>
-            </button>
-
-            <div className="flex-1" />
-
-            <IconButton label="Perguntar sobre meu dinheiro" onClick={onOpenIA} accent>
-              <Sparkles size={18} />
-            </IconButton>
-            <IconButton label="Buscar" onClick={onOpenSearch}>
-              <Search size={18} />
-            </IconButton>
-          </>
-        ) : (
-          <>
-            <IconButton label="Voltar" onClick={onBack}>
-              <ChevronLeft size={20} />
-            </IconButton>
-            <h1 className="flex-1 text-center font-display text-[21px] leading-none text-ink">
-              {viewTitle(view)}
-            </h1>
-            <span className="w-9" aria-hidden />
-          </>
-        )}
-      </div>
-    </header>
-  );
 }
 
 export function Avatar({ name, size = 30 }: { name: string; size?: number }) {
@@ -142,218 +101,349 @@ export function Avatar({ name, size = 30 }: { name: string; size?: number }) {
   );
 }
 
-export function IconButton({
-  label,
-  onClick,
-  accent,
-  active,
-  children,
+/* -------------------------------------------------------------------- rotas */
+
+/**
+ * A tela aberta mora na URL (`/app#/metas`).
+ *
+ * Antes ela vivia só na memória: o voltar do celular fechava o app, recarregar
+ * jogava de volta no início e não dava para guardar o atalho de uma tela. O
+ * hash resolve os três sem servidor nenhum — o app continua uma página só.
+ */
+const routeListeners = new Set<() => void>();
+
+function subscribeRoute(fn: () => void) {
+  routeListeners.add(fn);
+  window.addEventListener('popstate', fn);
+  window.addEventListener('hashchange', fn);
+  return () => {
+    routeListeners.delete(fn);
+    window.removeEventListener('popstate', fn);
+    window.removeEventListener('hashchange', fn);
+  };
+}
+
+const readHash = () => window.location.hash;
+
+export function navigate(route: Route, opts: { replace?: boolean } = {}) {
+  const url = `${window.location.pathname}${window.location.search}${routeHash(route)}`;
+  if (opts.replace) {
+    window.history.replaceState(window.history.state, '', url);
+  } else {
+    const depth = (window.history.state?.appDepth ?? 0) + 1;
+    window.history.pushState({ appDepth: depth }, '', url);
+  }
+  routeListeners.forEach((fn) => fn());
+}
+
+export function useRoute() {
+  const hash = React.useSyncExternalStore(subscribeRoute, readHash, () => '');
+  const route = React.useMemo<Route>(() => parseHash(hash) ?? { view: 'inicio' }, [hash]);
+
+  const go = React.useCallback((next: Route | ViewId) => {
+    const target = typeof next === 'string' ? { view: next } : next;
+    navigate(target);
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  /** volta pelo histórico quando fomos nós que empilhamos; senão, sobe para o pai */
+  const back = React.useCallback(() => {
+    if ((window.history.state?.appDepth ?? 0) > 0) {
+      window.history.back();
+      return;
+    }
+    const parent = isRoot(route.view) ? 'inicio' : rootOf(route.view);
+    navigate({ view: parent }, { replace: true });
+  }, [route.view]);
+
+  return { route, go, back };
+}
+
+/* --------------------------------------------------------------------- topo */
+
+export function TopBar({
+  view,
+  hidden,
+  onToggleHidden,
+  onBack,
+  onGo,
+  greeting,
 }: {
-  label: string;
-  onClick: () => void;
-  accent?: boolean;
-  active?: boolean;
-  children: React.ReactNode;
+  view: ViewId;
+  hidden: boolean;
+  onToggleHidden: () => void;
+  onBack: () => void;
+  onGo: (view: ViewId) => void;
+  greeting: string;
 }) {
+  const root = isRoot(view);
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className={cn(
-        'grid h-9 w-9 shrink-0 place-items-center rounded-full transition-colors duration-[var(--t-fast)]',
-        active
-          ? 'bg-accent-soft text-accent'
-          : accent
-            ? 'text-accent hover:bg-accent-soft'
-            : 'text-ink-3 hover:bg-surface-2 hover:text-ink',
-      )}
+    <header
+      className="sticky top-0 z-30 border-b border-transparent bg-canvas/85 backdrop-blur-xl lg:hidden"
+      style={{ paddingTop: 'var(--sa-top)' }}
     >
-      {children}
-    </button>
+      <div className="mx-auto flex h-14 max-w-[720px] items-center gap-1 px-2">
+        {root ? (
+          view === 'inicio' ? (
+            <button
+              type="button"
+              onClick={() => onGo('ajustes')}
+              className="flex min-h-11 items-center gap-2.5 rounded-field px-2 text-left"
+              aria-label="Abrir ajustes e perfil"
+            >
+              <BrandMark />
+              <span className="text-[15px] font-semibold tracking-tight text-ink">{BRAND.name}</span>
+            </button>
+          ) : (
+            <h1 className="px-3 font-display text-[24px] leading-none text-ink">{viewTitle(view)}</h1>
+          )
+        ) : (
+          <>
+            <IconButton label="Voltar" onClick={onBack}>
+              <ChevronLeft size={21} />
+            </IconButton>
+            <h1 className="min-w-0 truncate font-display text-[21px] leading-none text-ink">{viewTitle(view)}</h1>
+          </>
+        )}
+
+        <span className="flex-1" />
+        <span className="sr-only">{greeting}</span>
+
+        <IconButton label={hidden ? 'Mostrar valores' : 'Esconder valores'} onClick={onToggleHidden} active={hidden}>
+          {hidden ? <EyeOff size={18} /> : <Eye size={18} />}
+        </IconButton>
+        {view !== 'busca' && (
+          <IconButton label="Buscar no FinanceOS" onClick={() => onGo('busca')}>
+            <Search size={18} />
+          </IconButton>
+        )}
+        {view !== 'ia' && (
+          <IconButton label="Perguntar ao assistente" onClick={() => onGo('ia')} accent>
+            <Sparkles size={18} />
+          </IconButton>
+        )}
+      </div>
+    </header>
   );
 }
 
-/* ------------------------------------------------------------------ abas */
+/** o losango de latão: o mesmo da vitrine */
+export function BrandMark({ size = 30 }: { size?: number }) {
+  return (
+    <span
+      aria-hidden
+      className="grid shrink-0 place-items-center rounded-[10px] bg-accent-soft ring-1 ring-inset ring-accent/25"
+      style={{ width: size, height: size }}
+    >
+      <svg viewBox="0 0 24 24" style={{ width: size * 0.52, height: size * 0.52 }}>
+        <path d="M12 2.5 21.5 12 12 21.5 2.5 12Z" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M12 7.5 16.5 12 12 16.5 7.5 12Z" fill="var(--accent)" />
+      </svg>
+    </span>
+  );
+}
 
-export function TabBar({
-  view,
-  onChange,
-  onAdd,
-}: {
-  view: ViewId;
-  onChange: (tab: TabId) => void;
-  onAdd: () => void;
-}) {
+/* ------------------------------------------------------------ barra de baixo */
+
+export function BottomNav({ view, onGo }: { view: ViewId; onGo: (view: RootId) => void }) {
+  const active = rootOf(view);
+
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-40"
-      style={{ paddingBottom: 'calc(var(--sa-bottom) + 14px)' }}
       aria-label="Navegação principal"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/92 backdrop-blur-xl lg:hidden"
+      style={{ paddingBottom: 'var(--sa-bottom)' }}
     >
-      {/* véu que apaga o conteúdo por baixo da barra sem cortar seco */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-canvas via-canvas/85 to-transparent"
-      />
-      <div className="col relative flex items-center gap-2.5">
-        <div
-          className={cn(
-            'flex flex-1 items-center justify-around rounded-full border border-line bg-surface/85 px-1.5',
-            'shadow-e2 backdrop-blur-xl',
-          )}
-          style={{ height: 'var(--tabbar-h)' }}
-        >
-          {TABS.map((tab) => {
-            const Icon = TAB_ICONS[tab.id];
-            const active = view === tab.id;
-            return (
+      <ul className="mx-auto grid max-w-[720px] grid-cols-5" style={{ height: 'var(--nav-h)' }}>
+        {ROOTS.map((r) => {
+          const Icon = VIEW_ICONS[r.id];
+          const on = active === r.id;
+          return (
+            <li key={r.id} className="flex">
               <button
-                key={tab.id}
                 type="button"
-                onClick={() => onChange(tab.id)}
-                aria-label={tab.label}
-                aria-current={active ? 'page' : undefined}
+                onClick={() => onGo(r.id)}
+                aria-current={on ? 'page' : undefined}
                 className={cn(
-                  'grid h-11 w-11 place-items-center rounded-full transition-all duration-[var(--t-base)] ease-[var(--ease)]',
-                  active ? 'bg-accent-soft text-accent' : 'text-ink-3 hover:text-ink-2',
+                  'relative flex flex-1 flex-col items-center justify-center gap-1 text-[10.5px] font-medium tracking-tight',
+                  'transition-colors duration-[var(--t-fast)]',
+                  on ? 'text-accent' : 'text-ink-3 hover:text-ink-2',
                 )}
               >
-                <Icon size={20} strokeWidth={active ? 2.3 : 1.9} />
+                <span
+                  aria-hidden
+                  className={cn(
+                    'absolute top-0 h-0.5 w-8 rounded-full bg-accent transition-opacity duration-[var(--t-base)]',
+                    on ? 'opacity-100' : 'opacity-0',
+                  )}
+                />
+                <Icon size={21} strokeWidth={on ? 2.2 : 1.8} aria-hidden />
+                {r.label}
               </button>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={onAdd}
-          aria-label="Adicionar lançamento"
-          className={cn(
-            'grid shrink-0 place-items-center rounded-full bg-accent text-accent-ink shadow-e2',
-            'transition-transform duration-[var(--t-fast)] ease-[var(--ease)] active:scale-95',
-          )}
-          style={{ width: 'var(--tabbar-h)', height: 'var(--tabbar-h)' }}
-        >
-          <Plus size={26} strokeWidth={2.3} />
-        </button>
-      </div>
+            </li>
+          );
+        })}
+      </ul>
     </nav>
   );
 }
 
-/* --------------------------------------------------------------- gaveta */
-
-export function Drawer({
-  open,
-  view,
-  name,
-  hiddenTools = [],
-  onClose,
-  onGo,
-  onOpenProfile,
-  onToggleTheme,
-  onOpenSettings,
-}: {
-  open: boolean;
-  view: ViewId;
-  name: string;
-  /** ferramentas desligadas nas configurações; somem do menu inteiro */
-  hiddenTools?: ToolId[];
-  onClose: () => void;
-  onGo: (view: ViewId) => void;
-  onOpenProfile: () => void;
-  onToggleTheme: () => void;
-  onOpenSettings: () => void;
-}) {
-  React.useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
+/** o botão de registrar, flutuando acima da barra no celular */
+export function Fab({ onClick }: { onClick: () => void }) {
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Menu">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Registrar gasto, receita ou investimento"
+      className={cn(
+        'fixed right-4 z-40 grid size-14 place-items-center rounded-full bg-accent text-accent-ink shadow-e3 lg:hidden',
+        'transition-transform duration-[var(--t-fast)] ease-[var(--ease)] active:scale-95',
+      )}
+      style={{ bottom: 'calc(var(--nav-h) + var(--sa-bottom) + 14px)' }}
+    >
+      <Plus size={26} strokeWidth={2.3} />
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------------- lateral */
+
+const SIDEBAR_GROUPS: { label: string | null; items: ViewId[] }[] = [
+  { label: null, items: ['inicio', 'movimentos'] },
+  { label: 'Planejamento', items: ['calendario', 'metas', 'assinaturas', 'orcamento'] },
+  { label: 'Compromissos', items: ['cartoes', 'dividas'] },
+  { label: 'Seu patrimônio', items: ['patrimonio'] },
+  { label: 'Ferramentas', items: ['importar', 'simuladores', 'rateio', 'comprovantes', 'news'] },
+];
+
+export function Sidebar({
+  view,
+  hiddenViews,
+  onGo,
+  onAdd,
+  onToggleTheme,
+  footer,
+}: {
+  view: ViewId;
+  hiddenViews: SubId[];
+  onGo: (view: ViewId) => void;
+  onAdd: () => void;
+  onToggleTheme: () => void;
+  /** estado da sincronização ou aviso do modo demonstração */
+  footer?: React.ReactNode;
+}) {
+  return (
+    <aside
+      aria-label="Menu"
+      className="fixed inset-y-0 left-0 z-30 hidden w-[var(--sidebar-w)] flex-col border-r border-line bg-surface/60 lg:flex"
+    >
+      <div className="flex items-center gap-2.5 px-5 pb-4 pt-5">
+        <Link href="/" className="flex items-center gap-2.5" aria-label={`${BRAND.name}, página inicial`}>
+          <BrandMark />
+          <span className="text-[15px] font-semibold tracking-tight text-ink">{BRAND.name}</span>
+        </Link>
+      </div>
+
+      <div className="grid gap-2 px-3">
+        <button
+          type="button"
+          onClick={onAdd}
+          className="flex h-11 items-center justify-center gap-2 rounded-field bg-accent text-[14px] font-semibold text-accent-ink shadow-e1 transition-[filter,transform] hover:brightness-110 active:scale-[0.98]"
+        >
+          <Plus size={18} strokeWidth={2.4} />
+          Registrar
+        </button>
+        <button
+          type="button"
+          onClick={() => onGo('busca')}
+          className="flex h-10 items-center gap-2 rounded-field border border-line bg-surface-2 px-3 text-left text-[13px] text-ink-3 transition-colors hover:border-line-strong hover:text-ink-2"
+        >
+          <Search size={15} />
+          <span className="flex-1">Buscar no {BRAND.name}…</span>
+          <kbd className="rounded-[5px] border border-line px-1.5 text-[11px] text-ink-3">/</kbd>
+        </button>
+      </div>
+
+      <nav className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        {SIDEBAR_GROUPS.map((group) => {
+          const items = group.items.filter((id) => !hiddenViews.includes(id as SubId));
+          if (!items.length) return null;
+          return (
+            <div key={group.label ?? 'topo'} className="mb-1.5">
+              {group.label ? (
+                <p className="px-2.5 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+                  {group.label}
+                </p>
+              ) : null}
+              <ul className="grid gap-0.5">
+                {items.map((id) => (
+                  <SidebarItem key={id} id={id} active={view === id} onGo={onGo} />
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+
+        <ul className="mt-1 grid gap-0.5 border-t border-line pt-3">
+          <SidebarItem id="ia" active={view === 'ia'} onGo={onGo} />
+          <SidebarItem id="ajustes" active={view === 'ajustes' || view === 'categorias'} onGo={onGo} />
+        </ul>
+      </nav>
+
+      <div className="flex items-center gap-2 border-t border-line px-4 py-3">
+        <div className="min-w-0 flex-1 text-[12px] leading-snug text-ink-3">{footer}</div>
+        <IconButton label="Tema claro ou escuro" onClick={onToggleTheme}>
+          <SunMoon size={17} />
+        </IconButton>
+      </div>
+    </aside>
+  );
+}
+
+function SidebarItem({ id, active, onGo }: { id: ViewId; active: boolean; onGo: (view: ViewId) => void }) {
+  const Icon = VIEW_ICONS[id];
+  return (
+    <li>
       <button
         type="button"
-        aria-label="Fechar menu"
-        onClick={onClose}
-        className="absolute inset-0 bg-[rgba(0,0,0,0.55)] motion-safe:animate-[fade-in_var(--t-base)_ease-out]"
-      />
-      <div
+        onClick={() => onGo(id)}
+        aria-current={active ? 'page' : undefined}
         className={cn(
-          'relative flex h-full w-[min(19rem,84vw)] flex-col border-r border-line bg-surface',
-          'motion-safe:animate-[drawer-in_var(--t-slow)_var(--ease-out)]',
+          'flex h-9 w-full items-center gap-3 rounded-field px-2.5 text-left text-[14px] transition-colors',
+          active ? 'bg-accent-soft font-medium text-accent' : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
         )}
-        style={{ paddingTop: 'var(--sa-top)' }}
       >
-        <div className="flex items-center gap-3 px-5 py-5">
-          <button
-            type="button"
-            onClick={onOpenProfile}
-            className="flex min-w-0 flex-1 items-center gap-3 text-left"
-          >
-            <Avatar name={name} size={42} />
-            <span className="min-w-0 leading-tight">
-              <span className="block text-[12px] text-ink-3">{greetingFor()},</span>
-              <span className="block truncate text-[16px] font-semibold text-ink">{name}</span>
-            </span>
-          </button>
-          <IconButton label="Claro ou escuro" onClick={onToggleTheme}>
-            <SunMoon size={18} />
-          </IconButton>
-          <IconButton label="Configurações" onClick={onOpenSettings}>
-            <Settings size={18} />
-          </IconButton>
-        </div>
+        <Icon size={17} strokeWidth={active ? 2.2 : 1.8} aria-hidden />
+        {id === 'patrimonio' ? 'Patrimônio' : VIEW_META[id].title.replace(`${BRAND.name} `, '')}
+      </button>
+    </li>
+  );
+}
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
-          <p className="px-2 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
-            Ferramentas
-          </p>
-          <ul className="grid gap-0.5">
-            {TOOLS.filter((tool) => !hiddenTools.includes(tool.id)).map((tool) => {
-              const Icon = TOOL_ICONS[tool.id];
-              const active = view === tool.id;
-              return (
-                <li key={tool.id}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onGo(tool.id);
-                      onClose();
-                    }}
-                    className={cn(
-                      'flex w-full items-center gap-3 rounded-field px-2.5 py-2.5 text-left transition-colors',
-                      active ? 'bg-accent-soft text-accent' : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'grid h-9 w-9 place-items-center rounded-[10px]',
-                        active ? 'bg-accent/15' : 'bg-surface-2',
-                      )}
-                    >
-                      <Icon size={17} strokeWidth={1.9} />
-                    </span>
-                    <span className="text-[15px] font-medium">{tool.label}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        <p className="border-t border-line px-5 py-4 text-[12px] text-ink-3">
-          {BRAND.name} · {BRAND.tagline}
-        </p>
+/** cabeçalho de página no desktop: título, para que serve e ações */
+export function PageHeader({
+  view,
+  onBack,
+  actions,
+}: {
+  view: ViewId;
+  onBack: () => void;
+  actions?: React.ReactNode;
+}) {
+  const nested = !isRoot(view);
+  return (
+    <div className="mb-6 hidden items-end gap-4 pt-8 lg:flex">
+      {nested ? (
+        <IconButton label="Voltar" onClick={onBack} className="-ml-2 mb-0.5">
+          <ChevronLeft size={21} />
+        </IconButton>
+      ) : null}
+      <div className="min-w-0 flex-1">
+        <h1 className="font-display text-[34px] leading-none text-ink">{viewTitle(view)}</h1>
+        <p className="mt-2 text-[14px] text-ink-3">{VIEW_META[view].description}</p>
       </div>
+      {actions}
     </div>
   );
 }

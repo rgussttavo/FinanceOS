@@ -168,6 +168,10 @@ export interface Subscription extends SyncFields {
   canceledAt: IsoDate | null;
   /** aviso antes da renovação, em dias; 0 desliga */
   remindDaysBefore: number;
+  /** a pessoa marcou como essencial (true) ou dispensável (false); ausente = não disse */
+  essential?: boolean | null;
+  /** valores anteriores, para mostrar quando a assinatura subiu */
+  priceHistory?: { amount: Cents; until: IsoDate }[];
 }
 
 /* ------------------------------------------------------------------- meta */
@@ -195,6 +199,10 @@ export interface Goal extends SyncFields {
   deadline: IsoDate | null;
   color: string;
   archivedAt: IsoInstant | null;
+  /** meta pausada: sai dos alertas e das contas de ritmo até ser retomada */
+  pausedAt?: IsoInstant | null;
+  /** aportes feitos numa meta manual, para o histórico e o ritmo */
+  deposits?: { at: IsoInstant; amount: Cents }[];
 }
 
 /* ------------------------------------------------------------------ dívida */
@@ -215,6 +223,8 @@ export interface Debt extends SyncFields {
   monthlyRate: number;
   /** lança a parcela nas despesas do mês automaticamente */
   inFlow: boolean;
+  /** dia do mês em que a parcela vence; ausente nas cadastradas antes do campo */
+  dueDay?: number;
   settledAt: IsoInstant | null;
 }
 
@@ -345,6 +355,10 @@ export interface Settings extends SyncFields {
      Quem não usa cartão não quer a fatura ocupando a aba de despesas. */
   cardsEnabled: boolean;
   newsEnabled: boolean;
+
+  /* ------- o Início -------
+     Blocos que a pessoa escolheu esconder. Ausente = tudo aparece. */
+  hiddenBlocks?: string[];
 }
 
 /* ------------------------------------------------------------------ sync */
