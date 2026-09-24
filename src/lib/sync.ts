@@ -1,6 +1,7 @@
 'use client';
 
 import { applyRemote, db, getSyncState, liveRows, setSyncState } from './db';
+import { ensureSpace } from './provision';
 import { RECEIPTS_BUCKET, requireSupabase, supabase, type CloudRecord } from './supabase';
 import type { Mutation, SyncTable } from './types';
 
@@ -272,37 +273,38 @@ export async function adoptLocalSpace(userId: string): Promise<void> {
   const state = await getSyncState();
   const d = db();
 
-  const local = state.spaceId ? await d.spaces.get(state.spaceId) : await d.spaces.toCollection().first();
+  /**
+   * Espera o aparelho terminar de se preparar antes de amarrar.
+   *
+   * A criação do espaço local e a semeadura das categorias são assíncronas. Sem
+   * esperar, o vínculo acontecia no meio do caminho e a semeadura terminava
+   * depois — gravando categorias de um espaço que já tinha sido descartado.
+   */
+  const local = (await ensureSpace()) ?? (state.spaceId ? await d.spaces.get(state.spaceId) : null);
   if (!local) throw new Error('Não encontrei o espaço local para vincular.');
 
   /**
-   * Primeiro pergunta se esta conta já tem espaço lá.
+   * Quem decide qual espaço é o certo é o servidor.
    *
-   * Sem isto, cada aparelho novo criava o próprio espaço e a conta acabava com
-   * um espaço por navegador — que é o oposto de sincronizar. O mais antigo
-   * ganha, porque é onde a vida da pessoa já está.
+   * O aparelho sugere o id que criou; se a conta já tiver espaço, volta o dela.
+   * Perguntar antes e decidir depois era uma corrida: logo após o login existe
+   * um intervalo em que a sessão já diz quem é a pessoa mas ainda não vale para
+   * a consulta, e a resposta vazia virava um segundo espaço.
    */
-  const { data: remotos, error: erroBusca } = await client
-    .from('spaces')
-    .select('id, name')
-    .is('deleted_at', null)
-    .order('created_at', { ascending: true })
-    .limit(1);
+  const { data, error } = await client
+    .rpc('create_space', { space_id: local.id, space_name: local.name })
+    .single<{ id: string; name: string }>();
 
-  if (erroBusca) throw new Error(erroBusca.message);
+  if (error) throw new Error(error.message);
 
-  const remoto = remotos?.[0];
+  const space = data;
+  if (!space) throw new Error('O servidor não devolveu o espaço da conta.');
 
-  if (remoto && remoto.id !== local.id) {
-    await joinExistingSpace(local.id, remoto.id, remoto.name ?? 'Meu dinheiro', userId);
+  if (space.id !== local.id) {
+    // a conta já tinha espaço: este aparelho entra nele
+    await joinExistingSpace(local.id, space.id, space.name ?? 'Meu dinheiro', userId);
     return;
   }
-
-  const { error } = await client.rpc('create_space', {
-    space_id: local.id,
-    space_name: local.name,
-  });
-  if (error) throw new Error(error.message);
 
   await d.spaces.put({ ...local, ownerId: userId });
   await setSyncState({ spaceId: local.id, userId });
