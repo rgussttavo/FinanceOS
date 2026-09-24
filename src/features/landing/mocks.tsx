@@ -672,3 +672,123 @@ export function MockImportar() {
     </Quadro>
   );
 }
+
+/* ---------------------------------------------------------- Celular */
+
+/**
+ * O app no bolso: o Início com a barra de baixo, e o registro rápido — quanto,
+ * onde, e a categoria que o app já sugere. São as duas telas que mais se abrem
+ * no celular.
+ */
+function Aparelho({ children, rotulo }: { children: React.ReactNode; rotulo: string }) {
+  return (
+    <div className="mx-auto w-[248px] shrink-0 rounded-[38px] border border-line-strong bg-surface-2 p-[7px] shadow-e3 sm:w-[260px]">
+      <div
+        role="img"
+        aria-label={rotulo}
+        className="relative h-[520px] overflow-hidden rounded-[31px] bg-canvas sm:h-[540px]"
+      >
+        <div aria-hidden className="flex h-7 items-center justify-between px-6 pt-1 text-[10px] font-semibold text-ink-2">
+          <span>9:41</span>
+          <span className="h-[18px] w-[76px] rounded-full bg-surface-2" />
+          <span>100%</span>
+        </div>
+        <div aria-hidden>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+const NAV = ['Início', 'Movimentos', 'Planejamento', 'Patrimônio', 'Mais'] as const;
+
+export function MockCelularInicio() {
+  return (
+    <Aparelho rotulo="O Início do FinanceOS no celular: disponível até o salário, as próximas contas e a barra de navegação.">
+      <div className="px-4 pt-2">
+        <p className="text-[10px] text-ink-3">24 de setembro</p>
+        <p className="font-display text-[22px] leading-tight text-ink">Bom dia, Ana.</p>
+
+        <div className="mt-3 rounded-[16px] border border-line bg-surface p-3">
+          <div className="grid grid-cols-3 gap-0.5 rounded-[9px] bg-surface-2 p-0.5 text-center text-[9px] font-medium">
+            <span className="rounded-[7px] bg-ink py-1 text-canvas">Até o salário</span>
+            <span className="py-1 text-ink-3">Agora</span>
+            <span className="py-1 text-ink-3">Fim do mês</span>
+          </div>
+          <p className="mt-2.5 text-[10px] text-ink-3">Disponível até o salário</p>
+          <p className="amount text-[28px] leading-none text-ink">R$ 875,00</p>
+          <p className="mt-1.5 text-[10px] text-ink-3">Salário em 6 dias · 30 de set</p>
+        </div>
+
+        <div className="mt-3 rounded-[16px] border border-line bg-surface px-3 py-2">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-ink-3">O que vem por aí</p>
+          {[
+            ['26 set', 'Fatura Nubank', '−R$ 1.846,00'],
+            ['27 set', 'Spotify', '−R$ 21,90'],
+            ['30 set', 'Salário', '+R$ 4.200,00'],
+          ].map(([dia, nome, valor], i) => (
+            <div key={nome} className={cn('flex items-center gap-2 py-1.5', i < 2 && 'border-b border-line')}>
+              <span className="w-9 text-[9px] font-semibold uppercase text-ink-3">{dia}</span>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-ink">{nome}</span>
+              <span className={cn('tnum text-[11px] font-semibold', valor.startsWith('+') ? 'text-in' : 'text-ink-2')}>{valor}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 flex items-start gap-2 rounded-[12px] border border-warn/30 bg-warn-soft px-2.5 py-2">
+          <span className="text-[11px]">⚠️</span>
+          <p className="text-[10px] leading-snug text-ink">A fatura do dia 26 leva 59% do que você tem hoje.</p>
+        </div>
+      </div>
+
+      <span className="absolute bottom-[62px] right-4 grid size-11 place-items-center rounded-full bg-accent text-[22px] leading-none text-accent-ink shadow-e2">
+        +
+      </span>
+      <div className="absolute inset-x-0 bottom-0 grid grid-cols-5 border-t border-line bg-canvas/95 px-1 pb-3 pt-1.5">
+        {NAV.map((item, i) => (
+          <span key={item} className="flex flex-col items-center gap-1">
+            <span className={cn('h-[3px] w-6 rounded-full', i === 0 ? 'bg-accent' : 'bg-transparent')} />
+            <span className={cn('size-[15px] rounded-[5px] border-[1.5px]', i === 0 ? 'border-accent' : 'border-ink-3')} />
+            <span className={cn('whitespace-nowrap text-[7px] tracking-tight', i === 0 ? 'text-accent' : 'text-ink-3')}>{item}</span>
+          </span>
+        ))}
+      </div>
+    </Aparelho>
+  );
+}
+
+export function MockCelularRegistro() {
+  return (
+    <Aparelho rotulo="O registro rápido no celular: valor, onde foi e a categoria sugerida pelo app.">
+      <div className="px-4 pt-2 opacity-40">
+        <p className="text-[10px] text-ink-3">24 de setembro</p>
+        <p className="font-display text-[22px] leading-tight text-ink">Bom dia, Ana.</p>
+        <div className="mt-3 h-[120px] rounded-[16px] border border-line bg-surface" />
+      </div>
+      <div className="absolute inset-0 bg-black/45" />
+      <div className="absolute inset-x-0 bottom-0 rounded-t-[22px] border-t border-line-strong bg-surface px-4 pb-5 pt-2">
+        <span className="mx-auto block h-1 w-9 rounded-full bg-line-strong" />
+        <p className="mt-3 text-[13px] font-semibold text-ink">Registrar gasto</p>
+
+        <p className="mt-3 text-[10px] text-ink-3">Quanto?</p>
+        <p className="amount text-[34px] leading-tight text-ink">R$ 89,90</p>
+
+        <p className="mt-2 text-[10px] text-ink-3">Onde? O que foi?</p>
+        <p className="mt-1 rounded-[10px] border border-accent/60 bg-surface-2 px-3 py-2 text-[12px] text-ink">Uber</p>
+
+        <div className="mt-2.5 flex items-center gap-2">
+          <span className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-medium text-ink">🚗 Transporte</span>
+          <span className="text-[9px] text-ink-3">sugerida · confiança alta</span>
+        </div>
+
+        <p className="mt-3 text-[10px] text-ink-3">Quando?</p>
+        <div className="mt-1 flex gap-1.5 text-[10px]">
+          <span className="rounded-full border border-accent/60 bg-accent-soft px-2.5 py-1 text-ink">Hoje</span>
+          <span className="rounded-full border border-line px-2.5 py-1 text-ink-3">Ontem</span>
+          <span className="rounded-full border border-line px-2.5 py-1 text-ink-3">📅 outra data</span>
+        </div>
+
+        <p className="mt-4 rounded-[12px] bg-accent py-2.5 text-center text-[12px] font-semibold text-accent-ink">Registrar</p>
+      </div>
+    </Aparelho>
+  );
+}

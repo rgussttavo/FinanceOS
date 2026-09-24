@@ -15,16 +15,16 @@ import { cn } from '@/lib/cn';
 
 /* ------------------------------------------------------------------- topo */
 
-/** as paradas do mês, na mesma ordem da página */
+/** as seções da página, na mesma ordem */
 const SECOES = [
-  ['dia-1', 'Dia 1 · Importar extrato'],
-  ['dia-5', 'Dia 5 · Calendário'],
-  ['dia-8', 'Dia 8 · Assinaturas'],
-  ['dia-12', 'Dia 12 · Cartões'],
-  ['dia-18', 'Dia 18 · Rateio'],
-  ['dia-22', 'Dia 22 · Dívidas'],
-  ['dia-26', 'Dia 26 · Metas'],
-  ['dia-30', 'Dia 30 · Patrimônio'],
+  ['problema', 'O problema'],
+  ['como-funciona', 'Como funciona'],
+  ['mes', 'Um mês por dentro'],
+  ['inteligencia', 'Inteligência'],
+  ['privacidade', 'Privacidade'],
+  ['funcionalidades', 'Funcionalidades'],
+  ['celular', 'No celular'],
+  ['perguntas', 'Perguntas'],
 ] as const;
 
 /** fora do componente: um array novo a cada render refaria o observador sempre */
@@ -56,12 +56,20 @@ export function TopBar() {
           <span className="text-[15px] font-semibold tracking-tight text-ink">{BRAND.name}</span>
         </Link>
 
-        <Link
-          href="/app"
-          className="inline-flex h-10 items-center rounded-field bg-accent px-5 text-[14px] font-medium text-accent-ink transition-[filter,transform] duration-[var(--t-fast)] hover:brightness-110 active:scale-[0.98]"
-        >
-          Começar agora
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/demo"
+            className="hidden h-10 items-center rounded-field px-4 text-[14px] text-ink-2 transition-colors duration-[var(--t-fast)] hover:bg-surface-2 hover:text-ink sm:inline-flex"
+          >
+            Explorar sem cadastro
+          </Link>
+          <Link
+            href="/app"
+            className="inline-flex h-10 items-center rounded-field bg-accent px-5 text-[14px] font-medium text-accent-ink transition-[filter,transform] duration-[var(--t-fast)] hover:brightness-110 active:scale-[0.98]"
+          >
+            Começar agora
+          </Link>
+        </div>
       </div>
 
       <span
