@@ -39,9 +39,23 @@ export function supabase(): SupabaseClient | null {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        // a sessão volta da URL depois do login com Google
+        // a sessão volta da URL depois do login por link ou pelo Google
         detectSessionInUrl: true,
         storageKey: 'financecs-auth',
+        /**
+         * PKCE em vez do fluxo implícito.
+         *
+         * No fluxo antigo, o link do e-mail vale por si só — e é de uso único.
+         * Servidor de e-mail costuma "pré-visitar" links para gerar
+         * pré-visualização, e ao fazer isso GASTA o link: quando a pessoa
+         * clica, já expirou. Foi exatamente o que aconteceu aqui.
+         *
+         * No PKCE o link traz um código que só vira sessão junto com um
+         * segredo guardado neste navegador, no momento em que o login foi
+         * pedido. Scanner nenhum consegue completar a troca, então o link
+         * continua valendo para quem de fato pediu.
+         */
+        flowType: 'pkce',
       },
     });
   }

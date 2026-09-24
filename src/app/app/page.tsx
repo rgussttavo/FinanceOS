@@ -5,7 +5,13 @@ import { Drawer, TabBar, TopBar } from '@/components/shell';
 import { NewEntrySheet } from '@/components/entries';
 import { Panel } from '@/components/ui';
 import { AssinaturasView } from '@/features/assinaturas';
-import { AccountPanel, SignInSheet, useCloudSync, useSession } from '@/features/auth';
+import {
+  AccountPanel,
+  SignInSheet,
+  useAuthRedirectError,
+  useCloudSync,
+  useSession,
+} from '@/features/auth';
 import { BuscaView } from '@/features/busca';
 import { CartoesView } from '@/features/cartoes';
 import { ComprovantesView } from '@/features/comprovantes';
@@ -71,6 +77,7 @@ export default function AppPage() {
 
   const { session } = useSession();
   const cloud = useCloudSync(session);
+  const authError = useAuthRedirectError();
 
   const categories = useCategories(spaceId);
   const settings = useSettings(spaceId);
@@ -170,6 +177,22 @@ export default function AppPage() {
         className="col pt-1"
         style={{ paddingBottom: 'calc(var(--tabbar-h) + var(--sa-bottom) + 64px)' }}
       >
+        {authError.message && (
+          <div className="mb-3 mt-2 rounded-card border border-out/30 bg-out-soft px-4 py-3">
+            <p className="text-[13px] leading-relaxed text-ink">{authError.message}</p>
+            <button
+              type="button"
+              onClick={() => {
+                authError.dismiss();
+                setSignInOpen(true);
+              }}
+              className="mt-2 text-[13px] font-medium text-accent underline-offset-2 hover:underline"
+            >
+              Pedir um novo link
+            </button>
+          </div>
+        )}
+
         {isTab(view) && <MonthStrip month={month} onChange={setMonth} />}
 
         <div key={view} className="motion-safe:animate-[rise-in_var(--t-base)_var(--ease-out)]">

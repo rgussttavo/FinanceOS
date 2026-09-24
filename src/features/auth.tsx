@@ -71,19 +71,46 @@ export function useCloudSync(session: Session | null): {
   const [syncing, setSyncing] = React.useState(false);
   const running = React.useRef(false);
 
+  /**
+   * Garante o vínculo antes de tentar sincronizar.
+   *
+   * Nem todo login passa pelo código digitado: Google e link mágico voltam por
+   * redirecionamento, e a sessão simplesmente aparece. Amarrar o espaço aqui,
+   * olhando o estado em vez do caminho percorrido, faz os três funcionarem —
+   * antes, quem entrasse pelo Google ficava autenticado e sem espaço no
+   * servidor, e o sync falhava sem dizer por quê.
+   */
+  const ensureLinked = React.useCallback(async (userId: string) => {
+    const state = await getSyncState();
+    if (state.userId === userId) return;
+    await adoptLocalSpace(userId);
+  }, []);
+
   const sync = React.useCallback(async () => {
     if (running.current) return;
     running.current = true;
     setSyncing(true);
     try {
+      const client = supabase();
+      const user = client ? (await client.auth.getUser()).data.user : null;
+      if (user) await ensureLinked(user.id);
+
       const result = await runSync();
       setReport(result);
       setPending(await pendingCount());
+    } catch (err: unknown) {
+      setReport({
+        phase: 'error',
+        pushed: 0,
+        pulled: 0,
+        error: err instanceof Error ? err.message : 'Falha ao vincular a conta.',
+        at: new Date().toISOString(),
+      });
     } finally {
       running.current = false;
       setSyncing(false);
     }
-  }, []);
+  }, [ensureLinked]);
 
   React.useEffect(() => {
     if (!session) return;
@@ -156,6 +183,48 @@ function explainAuthError(raw: string): string {
   return raw;
 }
 
+/**
+ * O erro que o Supabase devolve na própria URL quando o link falha.
+ *
+ * Ele volta como `#error=access_denied&error_code=otp_expired&...`. Sem ler
+ * isso, a pessoa clica no link do e-mail, cai numa tela normal e não faz ideia
+ * do que deu errado — foi o que aconteceu na primeira tentativa aqui.
+ *
+ * A URL é limpa depois de lida: recarregar a página não deve ressuscitar um
+ * aviso de um problema que já passou.
+ */
+export function useAuthRedirectError(): { message: string | null; dismiss: () => void } {
+  const [message, setMessage] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const run = async () => {
+      await Promise.resolve();
+
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const query = new URLSearchParams(window.location.search);
+      const code = hash.get('error_code') ?? query.get('error_code');
+      const description = hash.get('error_description') ?? query.get('error_description');
+      if (!code && !description) return;
+
+      setMessage(explainRedirectError(code, description));
+      window.history.replaceState(null, '', window.location.pathname);
+    };
+    void run();
+  }, []);
+
+  return { message, dismiss: () => setMessage(null) };
+}
+
+function explainRedirectError(code: string | null, description: string | null): string {
+  if (code === 'otp_expired' || /expired/i.test(description ?? '')) {
+    return 'Esse link já não vale mais. Links de entrada são de uso único e expiram rápido — peça um novo e abra assim que chegar.';
+  }
+  if (code === 'access_denied') {
+    return 'O acesso foi negado. Peça um novo link e abra neste mesmo navegador.';
+  }
+  return description?.replace(/\+/g, ' ') ?? 'Não consegui completar a entrada.';
+}
+
 /* -------------------------------------------------------------- entrada */
 
 type Step = 'email' | 'code';
@@ -174,6 +243,7 @@ export function SignInSheet({
   const [code, setCode] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [showCodeField, setShowCodeField] = React.useState(false);
 
   async function sendCode() {
     const client = supabase();
@@ -185,7 +255,13 @@ export function SignInSheet({
     try {
       const { error: err } = await client.auth.signInWithOtp({
         email: email.trim(),
-        options: { shouldCreateUser: true },
+        options: {
+          shouldCreateUser: true,
+          // o link precisa voltar para /app: é lá que o app roda e consegue
+          // trocar o código por sessão. A raiz é só a vitrine, e não tem
+          // cliente do Supabase montado para completar a troca.
+          emailRedirectTo: `${window.location.origin}/app`,
+        },
       });
       if (err) throw new Error(err.message);
       setStep('code');
@@ -248,8 +324,13 @@ export function SignInSheet({
           </Button>
         ) : (
           <div className="grid gap-2">
-            <Button variant="primary" size="lg" className="w-full" onClick={verify} disabled={busy}>
-              {busy ? 'Conferindo…' : 'Entrar'}
+            {showCodeField && (
+              <Button variant="primary" size="lg" className="w-full" onClick={verify} disabled={busy}>
+                {busy ? 'Conferindo…' : 'Entrar com o código'}
+              </Button>
+            )}
+            <Button variant={showCodeField ? 'quiet' : 'ghost'} className="w-full" onClick={sendCode} disabled={busy}>
+              {busy ? 'Enviando…' : 'Reenviar e-mail'}
             </Button>
             <Button variant="quiet" className="w-full" onClick={() => setStep('email')}>
               Usar outro e-mail
@@ -291,21 +372,42 @@ export function SignInSheet({
             </Button>
           </>
         ) : (
-          <Field
-            label="Código"
-            htmlFor="auth-code"
-            hint={`Enviado para ${email.trim()}. Chega em alguns segundos.`}
-          >
-            <Input
-              id="auth-code"
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              className="tnum text-center text-[22px] tracking-[0.4em]"
-              placeholder="000000"
-            />
-          </Field>
+          <div className="grid gap-4">
+            <div className="rounded-card border border-accent/30 bg-accent-soft p-4">
+              <p className="text-[15px] font-semibold text-ink">Abra o e-mail e clique em entrar</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-ink-2">
+                Enviamos para <strong className="font-semibold">{email.trim()}</strong>. Abra{' '}
+                <strong className="font-semibold">neste mesmo navegador</strong> — o link só vira
+                sessão aqui, onde o pedido começou.
+              </p>
+            </div>
+
+            {/* o código de 6 dígitos só existe quando o projeto tem SMTP
+                próprio e o modelo de e-mail imprime o token; sem isso o
+                Supabase manda só o link, e insistir no campo de código
+                deixaria a pessoa esperando um número que não vem */}
+            {showCodeField ? (
+              <Field label="Código de 6 dígitos" htmlFor="auth-code">
+                <Input
+                  id="auth-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  className="tnum text-center text-[22px] tracking-[0.4em]"
+                  placeholder="000000"
+                />
+              </Field>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowCodeField(true)}
+                className="text-left text-[13px] text-accent underline-offset-2 hover:underline"
+              >
+                O e-mail veio com um código de 6 dígitos?
+              </button>
+            )}
+          </div>
         )}
 
         {error && <p className="text-[13px] text-out">{error}</p>}
