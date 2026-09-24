@@ -137,6 +137,13 @@ const CARD_PAYMENT = /pagamento (de |da )?fatura|pgto fatura|pagamento recebido|
 
 
 /**
+ * Crédito na fatura que é pagamento, com a palavra que o banco usar. Os
+ * outros créditos (estorno, cancelamento, reembolso) entram e abatem a
+ * fatura — antes ficavam de fora, e a fatura do app passava da do banco.
+ */
+const CARD_CREDIT_PAYMENT = /pagamento|pgto|pagto|pag fat|debito automatico/;
+
+/**
  * A conta de uma fatura importada: o que o arquivo cobra e o que vai entrar.
  *
  * É o que responde "a minha fatura é 829 e o app diz 594": compras que
@@ -147,18 +154,16 @@ export function invoiceReconciliation(rows: ReviewRow[]) {
   const charges = rows.filter((r) => r.kind !== 'in' && r.status !== 'transfer');
   const credits = rows.filter((r) => r.kind === 'in' && !r.billPayment);
   const sum = (list: ReviewRow[]) => list.reduce((s, r) => s + r.amount, 0);
-  const entering = charges.filter((r) => r.include);
   const left = charges.filter((r) => !r.include && r.status !== 'imported');
-  const already = charges.filter((r) => r.status === 'imported');
   return {
     charges: sum(charges),
     credits: sum(credits),
     /** o total que o banco cobra: compras menos estornos */
     fileTotal: sum(charges) - sum(credits),
-    entering: sum(entering),
+    entering: sum(charges.filter((r) => r.include)) - sum(credits.filter((r) => r.include)),
     left,
     leftTotal: sum(left),
-    alreadyTotal: sum(already),
+    alreadyTotal: sum(charges.filter((r) => r.status === 'imported')) - sum(credits.filter((r) => r.status === 'imported')),
   };
 }
 const INTERNAL = /transferencia entre contas|mesma titularidade|conta propria|entre suas contas|resgate|transf.*propria/;
@@ -246,8 +251,8 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       match = { entryId: `sub:${sub.id}`, occurrenceKey: '', description: sub.name };
     } else if (INTERNAL.test(plainDesc)) {
       status = 'internal';
-    } else if (target.type === 'card' && (!outflow || CARD_PAYMENT.test(fullDesc))) {
-      // crédito na fatura (pagamento, estorno) somaria na fatura em vez de abater
+    } else if (target.type === 'card' && (CARD_PAYMENT.test(fullDesc) || (!outflow && CARD_CREDIT_PAYMENT.test(fullDesc)))) {
+      // o pagamento da fatura anterior não é compra nem estorno: fica de fora
       status = 'transfer';
     } else {
       const hit = findMatch(occurrences, taken, row.date, amount, outflow, installment);
@@ -276,7 +281,10 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       include: status === 'new' || status === 'settle',
       match,
       installment: installment ? { index: installment.index, total: installment.total } : null,
-      billPayment: CARD_PAYMENT.test(fullDesc) || (target.type === 'account' && outflow && ACCOUNT_CARD_BILL.test(plainDesc)),
+      billPayment:
+        CARD_PAYMENT.test(fullDesc) ||
+        (target.type === 'card' && !outflow && CARD_CREDIT_PAYMENT.test(fullDesc)) ||
+        (target.type === 'account' && outflow && ACCOUNT_CARD_BILL.test(plainDesc)),
     };
   }
 }
@@ -366,7 +374,7 @@ export interface ImportResult {
  */
 export async function commitReview(
   rows: ReviewRow[],
-  opts: { spaceId: string; target: ImportTarget; source: EntrySource },
+  opts: { spaceId: string; target: ImportTarget; source: EntrySource; invoiceMonth?: string | null },
 ): Promise<ImportResult> {
   const chosen = rows.filter((r) => r.include);
   const today = todayIso();
@@ -386,7 +394,8 @@ export async function commitReview(
   const card = cardId ? await db().cards.get(cardId) : null;
   const purchases = rows.filter((r) => r.kind !== 'in' && r.status !== 'transfer');
   const lastPurchase = purchases.reduce<string>((max, r) => (r.date > max ? r.date : max), '');
-  const invoiceMonth = card && lastPurchase ? invoiceMonthOf(card, lastPurchase) : null;
+  // quem sabe qual é a fatura é a pessoa (pelo vencimento); sem isso, o palpite pelo ciclo
+  const invoiceMonth = card ? opts.invoiceMonth || (lastPurchase ? invoiceMonthOf(card, lastPurchase) : null) : null;
   const pinFor = (r: ReviewRow) => (invoiceMonth ? addMonthsToKey(invoiceMonth, -((r.installment?.index ?? 1) - 1)) : null);
 
   for (const r of chosen) {

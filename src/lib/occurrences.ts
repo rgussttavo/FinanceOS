@@ -218,6 +218,11 @@ export function summarizeMonth(
       s.opening += o.kind === 'in' ? o.amount : -o.amount;
       continue;
     }
+    // estorno no cartão não é renda: é gasto que voltou
+    if (o.kind === 'in' && o.cardId) {
+      s.expense -= o.amount;
+      continue;
+    }
     if (o.kind === 'in') {
       s.income += o.amount;
       if (isSettled(o)) s.settledIncome += o.amount;

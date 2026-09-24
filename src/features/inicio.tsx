@@ -32,6 +32,7 @@ import {
   Panel,
   SectionTitle,
   Sheet,
+  SignToggle,
   Skeleton,
   toast,
 } from '@/components/ui';
@@ -338,6 +339,7 @@ function AdjustBalanceSheet({
   base: FinanceBase;
 }) {
   const [text, setText] = React.useState('');
+  const [negativeSign, setNegativeSign] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const currentOpening = React.useMemo(() => {
@@ -347,7 +349,7 @@ function AdjustBalanceSheet({
 
   async function save() {
     const trimmed = text.trim();
-    const negative = /^-|^−/.test(trimmed);
+    const negative = negativeSign || /^-|^−/.test(trimmed);
     const parsed = parseMoney(trimmed.replace(/^[-−]/, ''));
     if (parsed === null) return setError('Digite o saldo, por exemplo 1.250,00 ou -80,00.');
     const real = negative ? -parsed : parsed;
@@ -378,6 +380,7 @@ function AdjustBalanceSheet({
         }}
         className="grid gap-3"
       >
+        <SignToggle negative={negativeSign} onChange={setNegativeSign} />
         <Field label="Saldo hoje" htmlFor="adjust-balance" error={error} hint={`Hoje o app calcula ${formatMoney(cash.balanceNow)}.`}>
           <Input
             id="adjust-balance"

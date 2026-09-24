@@ -320,7 +320,8 @@ function toLine(o: Occurrence, subscription: boolean): InvoiceLine {
   return {
     id: `${o.entryId}:${o.key}`,
     description: o.description,
-    amount: o.amount,
+    // estorno no cartão abate a fatura, como no banco
+    amount: o.kind === 'in' ? -o.amount : o.amount,
     date: o.date,
     categoryId: o.categoryId,
     installment: o.installment,
@@ -363,7 +364,7 @@ export function cardUsage(
       const remaining = Math.max(0, total - paid);
       used += remaining * entry.amount;
     } else {
-      for (const o of occurrencesOf(entry, month, today)) used += o.amount;
+      for (const o of occurrencesOf(entry, month, today)) used += o.kind === 'in' ? -o.amount : o.amount;
     }
   }
 

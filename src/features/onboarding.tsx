@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { ArrowLeft, ArrowRight, FileUp, PenLine, ShieldCheck } from 'lucide-react';
 import { BrandMark } from '@/components/shell';
-import { Button, Field, Input, Money } from '@/components/ui';
+import { Button, Field, Input, Money, SignToggle } from '@/components/ui';
 import type { CashSnapshot } from '@/lib/cashflow';
 import { normalize } from '@/lib/categories';
 import { cn } from '@/lib/cn';
@@ -317,6 +317,7 @@ function Manual({
   onDone: () => void;
 }) {
   const [balance, setBalance] = React.useState('');
+  const [negativeSign, setNegativeSign] = React.useState(false);
   const [income, setIncome] = React.useState('');
   const [day, setDay] = React.useState('5');
   const [errors, setErrors] = React.useState<{ balance?: string; income?: string; day?: string }>({});
@@ -325,7 +326,7 @@ function Manual({
   async function save() {
     const next: typeof errors = {};
     const balanceText = balance.trim();
-    const negative = /^[-−]/.test(balanceText);
+    const negative = negativeSign || /^[-−]/.test(balanceText);
     const balanceValue = balanceText ? parseMoney(balanceText.replace(/^[-−]/, '')) : null;
     const incomeValue = income.trim() ? parseMoney(income.trim()) : null;
     const dayValue = Number.parseInt(day, 10);
@@ -381,10 +382,13 @@ function Manual({
         <Field
           label="Quanto você tem hoje na conta?"
           htmlFor="onb-balance"
-          hint="Some as contas do dia a dia. Se estiver no negativo, comece com um sinal de menos."
+          hint="Some as contas do dia a dia. Está no cheque especial? Marque Negativo."
           error={errors.balance}
         >
-          <MoneyInput id="onb-balance" value={balance} onChange={setBalance} autoFocus />
+          <div className="grid gap-2">
+            <SignToggle negative={negativeSign} onChange={setNegativeSign} />
+            <MoneyInput id="onb-balance" value={balance} onChange={setBalance} autoFocus aria-describedby="onb-balance-desc" />
+          </div>
         </Field>
 
         <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
@@ -562,11 +566,12 @@ function Ready({
  */
 function BalanceNow({ spaceId, cash }: { spaceId: string; cash: CashSnapshot }) {
   const [text, setText] = React.useState('');
+  const [negativeSign, setNegativeSign] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   async function save() {
     const trimmed = text.trim();
-    const negative = /^[-−]/.test(trimmed);
+    const negative = negativeSign || /^[-−]/.test(trimmed);
     const parsed = parseMoney(trimmed.replace(/^[-−]/, ''));
     if (parsed === null) return setError('Digite o saldo, como 1.250,00 ou -80,00.');
     // o saldo anterior é o que faz o saldo de hoje bater com o valor informado
@@ -587,6 +592,7 @@ function BalanceNow({ spaceId, cash }: { spaceId: string; cash: CashSnapshot }) 
         hint="Com ele, o saldo e a previsão abaixo batem com o banco."
         error={error}
       >
+        <SignToggle negative={negativeSign} onChange={setNegativeSign} className="mb-2" />
         <div className="flex gap-2">
           <MoneyInput id="onb-now" value={text} onChange={setText} className="min-w-0 flex-1" aria-describedby="onb-now-desc" />
           <Button type="submit" variant="primary" className="shrink-0">

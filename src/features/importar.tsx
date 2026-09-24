@@ -4,7 +4,7 @@ import * as React from 'react';
 import { ArrowRight, Check, ChevronDown, CreditCard, FileUp, Lock, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { Badge, Button, Chip, Field, Input, Meter, Panel, SectionTitle, Segmented, Select, toast } from '@/components/ui';
-import { BANKS, bankInText, cardOfBank, matchBank, type BankInfo } from '@/lib/cards';
+import { BANKS, bankInText, cardOfBank, dueDateOf, invoiceMonthOf, matchBank, type BankInfo } from '@/lib/cards';
 import { cn } from '@/lib/cn';
 import { addMonthsToKey, formatDayShort, formatMonthLabel } from '@/lib/dates';
 import {
@@ -26,7 +26,7 @@ import {
   type ParsedStatement,
 } from '@/lib/statement';
 import { createCard, rememberCategory, useAllSubscriptions, useCards } from '@/lib/store';
-import type { Category, Cents, EntrySource, MonthKey } from '@/lib/types';
+import type { Card, Category, Cents, EntrySource, MonthKey } from '@/lib/types';
 
 /**
  * Importar extrato.
@@ -104,6 +104,8 @@ export function ImportarView({
   /** fatura escolhida antes de haver cartão: segue sozinha assim que o cartão existir */
   const [pendingFile, setPendingFile] = React.useState<File | null>(null);
   const [payments, setPayments] = React.useState<ReviewRow[]>([]);
+  /** a fatura que o arquivo é, escolhida pelo vencimento; null = o palpite pelo ciclo */
+  const [invoicePick, setInvoicePick] = React.useState<MonthKey | null>(null);
   const [parsed, setParsed] = React.useState<ParsedStatement | null>(null);
   const [invert, setInvert] = React.useState(false);
   const [rows, setRows] = React.useState<ReviewRow[]>([]);
@@ -174,6 +176,7 @@ export function ImportarView({
       spaceId,
       target,
       source: SOURCE_BY_FORMAT[parsed.format],
+      invoiceMonth: target.type === 'card' ? invoicePick : null,
     });
     setParsed(null);
     setRows([]);
@@ -184,6 +187,7 @@ export function ImportarView({
   function reset() {
     setParsed(null);
     setRows([]);
+    setInvoicePick(null);
     setInvert(false);
     setPendingFile(null);
     setPhase({ step: 'pick', error: null });
@@ -286,6 +290,9 @@ export function ImportarView({
             void review(parsed, v, fileName);
           }}
           targetType={targetType}
+          card={targetType === 'card' ? (cards.find((c) => c.id === chosenCard) ?? null) : null}
+          invoicePick={invoicePick}
+          setInvoicePick={setInvoicePick}
           saving={phase.step === 'saving'}
           onRemap={(map) => {
             const next = remapTable(parsed, map);
@@ -522,11 +529,17 @@ function Review({
   invert,
   setInvert,
   targetType,
+  card,
+  invoicePick,
+  setInvoicePick,
   saving,
   onRemap,
   onCancel,
   onCommit,
 }: {
+  card: Card | null;
+  invoicePick: MonthKey | null;
+  setInvoicePick: (m: MonthKey | null) => void;
   name: string;
   parsed: ParsedStatement;
   rows: ReviewRow[];
@@ -576,6 +589,9 @@ function Review({
     setRows((list) => list.map((r) => (groupOf(r) === group && r.categoryId ? { ...r, confidence: 'alta', unsure: false, include: true } : r)));
 
   const recon = targetType === 'card' ? invoiceReconciliation(rows) : null;
+  // o palpite de qual fatura é o arquivo: a da compra mais recente, pelo ciclo do cartão
+  const lastPurchase = rows.filter((r) => r.kind !== 'in' && r.status !== 'transfer').reduce((max, r) => (r.date > max ? r.date : max), '');
+  const invoiceGuess = card && lastPurchase ? invoiceMonthOf(card, lastPurchase) : null;
   // fatura já importada: reimportar não cria nada, mas põe as compras antigas na fatura certa
   const refit = targetType === 'card' && rows.some((r) => r.status === 'imported');
   const includeLeft = () => {
@@ -588,6 +604,28 @@ function Review({
       {recon ? (
         <Panel className={cn('p-5', recon.left.length ? 'border-warn/40' : 'border-in/30')}>
           <SectionTitle>Confere com a fatura do banco?</SectionTitle>
+          {card && invoiceGuess ? (
+            <div className="mb-3">
+              <p className="mb-2 text-[13px] text-ink-2">Qual fatura é este arquivo? Pelo vencimento:</p>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Vencimento da fatura">
+                {[-1, 0, 1].map((d) => {
+                  const m = addMonthsToKey(invoiceGuess, d);
+                  const active = (invoicePick ?? invoiceGuess) === m;
+                  return (
+                    <Chip key={m} active={active} onClick={() => setInvoicePick(m === invoiceGuess ? null : m)}>
+                      vence {formatDayShort(dueDateOf(card, m))}
+                    </Chip>
+                  );
+                })}
+              </div>
+              {invoicePick && invoicePick !== invoiceGuess ? (
+                <p className="mt-2 text-[12px] leading-relaxed text-ink-3">
+                  Pelo fechamento cadastrado (dia {card.closingDay}), o app achou outra fatura. Se o banco fecha em outro dia, ajuste o
+                  cartão em Cartões para as próximas compras caírem certo.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <dl className="grid grid-cols-2 gap-2">
             <div className="rounded-field bg-surface-2 px-3 py-2">
               <dt className="text-[12px] text-ink-3">Total da fatura no arquivo</dt>
@@ -606,9 +644,7 @@ function Review({
               {recon.credits ? ` menos ${formatMoney(recon.credits, { hidden })} em estornos e créditos` : ''}. O pagamento da fatura anterior não
               entra na conta.
             </li>
-            {recon.credits ? (
-              <li>Estornos abatem a fatura no banco, mas no app ficam de fora: é por isso que o app mostra um pouco mais.</li>
-            ) : null}
+
             {recon.alreadyTotal ? <li>{formatMoney(recon.alreadyTotal, { hidden })} já estavam no app de uma importação anterior.</li> : null}
           </ul>
           {recon.left.length ? (

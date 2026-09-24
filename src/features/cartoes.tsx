@@ -282,7 +282,9 @@ function InvoicePanel({
                     {line.subscription ? ' · assinatura' : ''}
                   </span>
                 </span>
-                <span className="tnum shrink-0 text-[15px] font-semibold text-ink">{formatMoney(line.amount, { hidden })}</span>
+                <span className={cn('tnum shrink-0 text-[15px] font-semibold', line.amount < 0 ? 'text-in' : 'text-ink')}>
+                  {formatMoney(line.amount, { hidden })}
+                </span>
               </li>
             );
           })}

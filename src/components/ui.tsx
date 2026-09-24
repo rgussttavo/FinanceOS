@@ -269,6 +269,27 @@ const TONE_ACTIVE: Record<string, string> = {
   accent: 'bg-accent-soft text-accent',
 };
 
+/**
+ * Positivo ou negativo, para saldo.
+ *
+ * O teclado numérico do iPhone não tem sinal de menos: quem estava no
+ * vermelho não conseguia dizer isso. O sinal digitado continua valendo.
+ */
+export function SignToggle({ negative, onChange, className }: { negative: boolean; onChange: (negative: boolean) => void; className?: string }) {
+  return (
+    <Segmented
+      label="Sinal do saldo"
+      value={negative ? 'neg' : 'pos'}
+      onChange={(v) => onChange(v === 'neg')}
+      options={[
+        { value: 'pos', label: 'Positivo', tone: 'in' },
+        { value: 'neg', label: 'Negativo', tone: 'out' },
+      ]}
+      className={className}
+    />
+  );
+}
+
 export function Segmented<T extends string>({
   options,
   value,
