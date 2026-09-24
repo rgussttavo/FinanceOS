@@ -276,6 +276,8 @@ export interface ViewContext {
   toggleHidden: () => void;
   onToggleOccurrence: (o: Occurrence) => void;
   history: MonthSummary[];
+  /** atalho para o import de extrato, oferecido quando o mês está vazio */
+  onImport: () => void;
 }
 
 export function InicioView(ctx: ViewContext) {
@@ -325,7 +327,12 @@ export function InicioView(ctx: ViewContext) {
         ) : (
           <EmptyState
             title="O mês está em branco"
-            description="Comece pelo que você já sabe: o aluguel, o salário, a assinatura que cai todo dia 12."
+            description="Comece pelo que você já sabe: o aluguel, o salário, a assinatura que cai todo dia 12. Ou traga o mês inteiro de uma vez pelo extrato do banco."
+            action={
+              <Button variant="ghost" size="sm" onClick={ctx.onImport}>
+                Importar extrato
+              </Button>
+            }
           />
         )}
       </Panel>

@@ -17,6 +17,7 @@ import { CartoesView } from '@/features/cartoes';
 import { ComprovantesView } from '@/features/comprovantes';
 import { DividasView } from '@/features/dividas';
 import { IAView } from '@/features/ia';
+import { ImportarView } from '@/features/importar';
 import { MetasView } from '@/features/metas';
 import { MercadoView } from '@/features/mercado';
 import { OrcamentoView } from '@/features/orcamento';
@@ -64,7 +65,7 @@ const subscribeTheme = (fn: () => void) => {
 };
 
 /** ferramentas que já têm tela própria; o resto ainda cai no aviso de obra */
-const BUILT = new Set<ViewId>(['news', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento', 'comprovantes', 'patrimonio', 'busca', 'perfil', 'ia']);
+const BUILT = new Set<ViewId>(['news', 'importar', 'cartoes', 'assinaturas', 'metas', 'dividas', 'rateio', 'orcamento', 'comprovantes', 'patrimonio', 'busca', 'perfil', 'ia']);
 
 export default function AppPage() {
   const { spaceId, ready, error } = useBootstrap();
@@ -159,6 +160,7 @@ export default function AppPage() {
     toggleHidden,
     onToggleOccurrence,
     history,
+    onImport: () => go('importar'),
   };
 
   return (
@@ -201,6 +203,17 @@ export default function AppPage() {
           {view === 'despesas' && <DespesasView {...ctx} />}
           {view === 'investimentos' && <InvestimentosView {...ctx} />}
           {view === 'news' && <MercadoView />}
+          {view === 'importar' && (
+            <ImportarView
+              spaceId={spaceId}
+              categories={categories}
+              hidden={hidden}
+              onOpenMonth={(m) => {
+                setMonth(m);
+                go('inicio');
+              }}
+            />
+          )}
           {view === 'cartoes' && (
             <CartoesView spaceId={spaceId} month={month} categories={categories} hidden={hidden} />
           )}

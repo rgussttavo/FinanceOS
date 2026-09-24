@@ -8,6 +8,7 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  FileUp,
   Home,
   Landmark,
   Menu as MenuIcon,
@@ -37,6 +38,7 @@ const TAB_ICONS: Record<TabId, LucideIcon> = {
 
 const TOOL_ICONS: Record<ToolId, LucideIcon> = {
   news: Newspaper,
+  importar: FileUp,
   assinaturas: Repeat,
   cartoes: CreditCard,
   metas: Target,

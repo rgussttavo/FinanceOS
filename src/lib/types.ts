@@ -148,7 +148,7 @@ export interface Entry extends SyncFields {
   attachmentIds: string[];
 }
 
-export type EntrySource = 'manual' | 'ofx' | 'csv' | 'boleto' | 'pix' | 'recurring' | 'card';
+export type EntrySource = 'manual' | 'ofx' | 'csv' | 'qif' | 'xlsx' | 'boleto' | 'pix' | 'recurring' | 'card';
 
 /* -------------------------------------------------------------- assinatura */
 

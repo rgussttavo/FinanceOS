@@ -12,6 +12,7 @@ export type TabId = 'inicio' | 'receitas' | 'despesas' | 'investimentos';
 
 export type ToolId =
   | 'news'
+  | 'importar'
   | 'assinaturas'
   | 'cartoes'
   | 'metas'
@@ -40,6 +41,7 @@ export const TABS: NavItem<TabId>[] = [
 
 export const TOOLS: NavItem<ToolId>[] = [
   { id: 'news', label: 'News', title: 'News', description: 'Manchetes, indicadores do Banco Central, moedas e cripto' },
+  { id: 'importar', label: 'Importar extrato', title: 'Importar extrato', description: 'OFX, CSV, XLS ou XLSX do seu banco, revisado antes de entrar' },
   { id: 'assinaturas', label: 'Assinaturas', title: 'Assinaturas', description: 'O que se repete todo mês' },
   { id: 'cartoes', label: 'Cartões', title: 'Cartões', description: 'Faturas, limite e compras parceladas' },
   { id: 'metas', label: 'Metas', title: 'Metas', description: 'Quanto falta e quanto guardar por mês' },

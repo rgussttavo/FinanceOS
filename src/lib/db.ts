@@ -165,6 +165,37 @@ export async function putRecord<T extends Syncable>(table: SyncTable, record: T)
 }
 
 /**
+ * Varios registros da mesma tabela numa transacao so — o import de extrato.
+ *
+ * Centenas de linhas gravadas uma a uma deixariam a base pela metade se a aba
+ * fechasse no meio. Aqui ou entra o extrato inteiro, ou nada.
+ */
+export async function putRecords<T extends Syncable>(table: SyncTable, records: T[]): Promise<T[]> {
+  if (!records.length) return [];
+  const d = db();
+  const at = nowInstant();
+  const stamped = records.map((r) => ({ ...r, updatedAt: at }) as T);
+  const target = d[SYNC_TABLES[table]] as unknown as Table<T, string>;
+
+  await d.transaction('rw', target, d.mutations, async () => {
+    await target.bulkPut(stamped);
+    await d.mutations.bulkAdd(
+      stamped.map((r) => ({
+        table,
+        op: 'put' as const,
+        recordId: r.id,
+        payload: r as unknown as Record<string, unknown>,
+        queuedAt: at,
+        attempts: 0,
+        lastError: null,
+      })),
+    );
+  });
+
+  return stamped;
+}
+
+/**
  * Exclusao e marca, nao remocao.
  *
  * O registro fica na base com `deletedAt` preenchido. Sem isso, um aparelho que
