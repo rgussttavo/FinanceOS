@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Search, X } from 'lucide-react';
+import { Search, Sparkles, X } from 'lucide-react';
+import { searchAnswer, type AssistantContext } from '@/lib/assistant';
 import { Input } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { normalize } from '@/lib/categories';
@@ -148,14 +149,18 @@ export function BuscaView({
   month,
   hidden,
   onGo,
+  assistant,
 }: {
   spaceId: string;
   month: MonthKey;
   hidden: boolean;
   onGo: (route: Route) => void;
+  assistant: AssistantContext;
 }) {
   const [query, setQuery] = React.useState('');
   const hits = useSearch(spaceId, month, query);
+  const deferred = React.useDeferredValue(query);
+  const answer = React.useMemo(() => (deferred.trim().length >= 3 ? searchAnswer(deferred, assistant) : null), [deferred, assistant]);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
@@ -180,8 +185,8 @@ export function BuscaView({
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar em tudo"
-          aria-label="Buscar"
+          placeholder="Buscar no FinanceOS…"
+          aria-label="Buscar no FinanceOS"
           className="h-12 pl-10 pr-10 text-[16px]"
         />
         {query && (
@@ -196,13 +201,56 @@ export function BuscaView({
         )}
       </div>
 
+      {answer ? (
+        <section aria-label="Resposta" className="rounded-panel border border-accent/30 bg-accent-soft p-4">
+          <p className="flex items-center gap-2 text-[12px] font-medium uppercase tracking-wider text-accent">
+            <Sparkles size={13} aria-hidden /> Resposta
+          </p>
+          <p className="mt-1.5 text-[15px] leading-snug text-ink">{hidden ? answer.text.replace(/R\$\s?[\d.,]+/g, '••••') : answer.text}</p>
+          {answer.list?.length ? (
+            <ul className="mt-3 divide-y divide-line border-t border-line">
+              {answer.list.map((row, i) => (
+                <li key={`${row.label}-${i}`} className="flex items-baseline gap-3 py-2">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] text-ink">{row.label}</span>
+                    <span className="block truncate text-[11px] text-ink-3">{row.detail}</span>
+                  </span>
+                  <span className="tnum shrink-0 text-[13px] font-semibold text-ink-2">{hidden ? '••••' : row.value}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            {answer.basis ? <p className="text-[11px] text-ink-3">Dados usados: {answer.basis}</p> : <span />}
+            {answer.link ? (
+              <button type="button" onClick={() => onGo(answer.link!.route)} className="h-8 text-[12.5px] font-medium text-accent hover:underline">
+                {answer.link.label} →
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       {query.trim().length < 2 ? (
-        <p className="px-1 py-8 text-center text-[14px] leading-relaxed text-ink-3">
-          Procure por lançamento, assinatura, cartão, meta, dívida, rateio, bem ou comprovante.
-          <br />
-          Acento e maiúscula não fazem diferença.
-        </p>
-      ) : !hits.length ? (
+        <div className="px-1 py-6 text-center">
+          <p className="text-[14px] leading-relaxed text-ink-3">
+            Procure por lançamento, categoria, assinatura, cartão, meta, dívida, rateio, bem ou comprovante. Com um mês ou uma
+            categoria, a busca também responde.
+          </p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {['mercado agosto', 'uber', 'restaurante', 'netflix'].map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => setQuery(q)}
+                className="h-9 rounded-full border border-line px-3.5 text-[13px] text-ink-2 hover:border-accent hover:text-accent"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : !hits.length && !answer ? (
         <p className="px-1 py-8 text-center text-[14px] text-ink-3">
           Nada encontrado para &quot;{query.trim()}&quot;.
         </p>

@@ -378,3 +378,36 @@ export function logoCandidates(domain: string): string[] {
     `https://www.google.com/s2/favicons?domain=${d}&sz=128`,
   ];
 }
+
+/* ----------------------------------------------------------- parcelas futuras */
+
+export interface FutureLine {
+  id: string;
+  description: string;
+  perInstallment: Cents;
+  /** parcelas que ainda não caíram em fatura nenhuma */
+  left: number;
+  total: number;
+  /** a parcela que está na fatura aberta */
+  current: number;
+}
+
+/**
+ * As parcelas que ainda vão cair, depois da fatura aberta.
+ *
+ * É o número que a fatura esconde: a compra de dez vezes aparece só como
+ * "R$ 420" hoje, mas ainda prende R$ 2.520 dos próximos meses.
+ */
+export function futureInstallments(card: Card, entries: Entry[], openMonth: MonthKey): FutureLine[] {
+  const out: FutureLine[] = [];
+  for (const e of entries) {
+    if (e.cardId !== card.id || e.deletedAt || e.repeat.kind !== 'installments') continue;
+    const total = Math.max(1, Math.trunc(e.repeat.count ?? 1));
+    const first = invoiceMonthOf(card, e.date);
+    const current = monthsSince(first, openMonth) + 1;
+    const left = total - Math.max(0, current);
+    if (left <= 0) continue;
+    out.push({ id: e.id, description: e.description, perInstallment: e.amount, left, total, current: Math.max(0, current) });
+  }
+  return out.sort((a, b) => b.perInstallment * b.left - a.perInstallment * a.left);
+}

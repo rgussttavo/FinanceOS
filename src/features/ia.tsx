@@ -1,20 +1,11 @@
 'use client';
 
 import * as React from 'react';
-import { ArrowUp, Sparkles } from 'lucide-react';
+import { ArrowRight, ArrowUp, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { todayIso } from '@/lib/dates';
 import { SUGGESTIONS, ask, greeting, type AssistantContext } from '@/lib/assistant';
 import { useMarket } from '@/lib/market';
-import type { MonthSummary, Occurrence, DayPoint } from '@/lib/occurrences';
-import {
-  useAllSubscriptions,
-  useCards,
-  useDebts,
-  useEntriesUpTo,
-  useGoals,
-} from '@/lib/store';
-import type { Category, MonthKey } from '@/lib/types';
+import type { Route } from '@/lib/nav';
 
 interface Message {
   id: string;
@@ -22,6 +13,8 @@ interface Message {
   text: string;
   highlight?: { label: string; value: string };
   list?: { label: string; detail: string; value: string }[];
+  basis?: string;
+  link?: { label: string; route: Route };
   at: string;
 }
 
@@ -32,35 +25,21 @@ const clock = (d = new Date()) =>
  * A conversa com o assistente.
  *
  * As respostas saem de regras sobre os seus próprios dados — nada é enviado
- * para fora do aparelho, e nenhuma resposta é inventada. Quando a pergunta
- * sai do que ele sabe, ele diz que não sabe e lista o que sabe, em vez de
- * chutar um número: num app de dinheiro, um palpite convincente é pior do
- * que um "não sei".
+ * para fora do aparelho, e nenhuma resposta é inventada. Cada resposta diz de
+ * onde veio o número e leva para a tela onde ele mora. Quando a pergunta sai
+ * do que ele sabe, ele diz que não sabe e lista o que sabe, em vez de chutar
+ * um número: num app de dinheiro, um palpite convincente é pior do que um
+ * "não sei".
  */
 export function IAView({
   name,
-  month,
-  summary,
-  occurrences,
-  projection,
-  history,
-  categories,
-  spaceId,
+  context,
+  onGo,
 }: {
   name: string;
-  month: MonthKey;
-  summary: MonthSummary;
-  occurrences: Occurrence[];
-  projection: DayPoint[];
-  history: MonthSummary[];
-  categories: Category[];
-  spaceId: string;
+  context: AssistantContext;
+  onGo: (route: Route) => void;
 }) {
-  const cards = useCards(spaceId);
-  const subscriptions = useAllSubscriptions(spaceId);
-  const goals = useGoals(spaceId);
-  const debts = useDebts(spaceId);
-  const entries = useEntriesUpTo(spaceId, month);
   const { data: market } = useMarket();
 
   const [messages, setMessages] = React.useState<Message[]>(() => [
@@ -71,23 +50,12 @@ export function IAView({
 
   const ctx: AssistantContext = React.useMemo(
     () => ({
-      month,
-      entries,
-      today: todayIso(),
-      summary,
-      occurrences,
-      projection,
-      history,
-      categories,
-      cards,
-      subscriptions,
-      goals,
-      debts,
+      ...context,
       market: market
         ? { indicators: market.indicators, currencies: market.currencies, crypto: market.crypto }
         : null,
     }),
-    [month, entries, summary, occurrences, projection, history, categories, cards, subscriptions, goals, debts, market],
+    [context, market],
   );
 
   // a conversa rola para o fim a cada resposta, como qualquer chat
@@ -112,6 +80,8 @@ export function IAView({
           text: answer.text,
           highlight: answer.highlight,
           list: answer.list,
+          basis: answer.basis,
+          link: answer.link,
           at,
         },
       ]);
@@ -165,6 +135,21 @@ export function IAView({
                     ))}
                   </ul>
                 )}
+
+                {m.basis || m.link ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2.5">
+                    {m.basis ? <p className="text-[11px] text-ink-3">Dados usados: {m.basis}</p> : <span />}
+                    {m.link ? (
+                      <button
+                        type="button"
+                        onClick={() => onGo(m.link!.route)}
+                        className="inline-flex h-8 items-center gap-1 rounded-full bg-accent-soft px-3 text-[12px] font-medium text-accent hover:bg-accent/20"
+                      >
+                        {m.link.label} <ArrowRight size={12} />
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <p
                   className={cn(

@@ -1,8 +1,14 @@
 import { normalize } from './categories';
 import { MONTHS_PT, addMonthsToKey, formatDayShort, formatMonthLabel, monthKeyParts } from './dates';
 import { formatMoney, formatPercent, ratio } from './money';
+import { buildInvoice, futureInstallments, invoiceMonthOf } from './cards';
+import type { CashSnapshot } from './cashflow';
+import { goalProgress } from './goals';
+import { parseMoney } from './money';
+import type { Route } from './nav';
 import { firstNegativeDay, occurrencesInMonth, summarizeMonth, type DayPoint, type MonthSummary, type Occurrence } from './occurrences';
-import type { Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscription } from './types';
+import type { Asset, Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscription } from './types';
+import { wealthHistory } from './wealth';
 
 /**
  * Assistente de regras.
@@ -44,6 +50,15 @@ export interface AssistantContext {
     crypto: { id: string; label: string; price: number | null; changePercent: number | null }[];
   } | null;
   today: string;
+  /**
+   * Expande um mês qualquer do mesmo jeito que as telas: lançamentos mais
+   * assinaturas e parcelas de dívida. Sem isso, o assistente somaria um mês
+   * diferente do que a pessoa vê em Movimentos.
+   */
+  expand?: (month: MonthKey) => Occurrence[];
+  assets?: Asset[];
+  /** a régua do caixa, a mesma do Início: quando presente, "cruza o zero" sai dela */
+  cash?: CashSnapshot;
 }
 
 export interface Answer {
@@ -51,6 +66,10 @@ export interface Answer {
   highlight?: { label: string; value: string };
   /** linhas de detalhe, quando a resposta é uma lista */
   list?: { label: string; detail: string; value: string }[];
+  /** de onde a resposta saiu: "12 lançamentos de agosto" */
+  basis?: string;
+  /** a tela onde a pessoa vê e mexe no que foi respondido */
+  link?: { label: string; route: Route };
 }
 
 /* -------------------------------------------------------------- sinônimos */
@@ -264,8 +283,16 @@ const categoryName = (ctx: AssistantContext, id: string | null): string =>
 /** as ocorrências de um mês qualquer, expandidas na hora */
 function occurrencesOfMonth(ctx: AssistantContext, month: MonthKey): Occurrence[] {
   if (month === ctx.month) return ctx.occurrences;
-  return occurrencesInMonth(ctx.entries, month, ctx.today);
+  return ctx.expand ? ctx.expand(month) : occurrencesInMonth(ctx.entries, month, ctx.today);
 }
+
+const MOV_PARAM: Record<Kind, string> = { out: 'saidas', in: 'entradas', invest: 'investimentos' };
+
+/** "12 lançamentos de agosto", o rodapé que diz de onde veio o número */
+const basisOf = (rows: Occurrence[], slots: Slots) =>
+  `${rows.length} ${rows.length === 1 ? 'lançamento' : 'lançamentos'} de ${monthName(slots.month)}`;
+
+const movLink = (slots: Slots) => ({ label: 'Ver em Movimentos', route: { view: 'movimentos', param: MOV_PARAM[slots.kind ?? 'out'] } as Route });
 
 function summaryOfMonth(ctx: AssistantContext, month: MonthKey): MonthSummary {
   if (month === ctx.month) return ctx.summary;
@@ -359,6 +386,8 @@ function answerList(ctx: AssistantContext, slots: Slots, rows: Occurrence[]): An
 
   return {
     text: intro + tail,
+    basis: basisOf(rows, slots),
+    link: movLink(slots),
     highlight: { label: `Total em ${monthName(slots.month)}`, value: formatMoney(total) },
     list: shown.map((o) => ({
       label: o.description,
@@ -385,17 +414,27 @@ function answerTotal(ctx: AssistantContext, slots: Slots, rows: Occurrence[]): A
     return { text: `Não encontrei ${noun.many}${scope} em ${monthName(slots.month)}.` };
   }
 
-  const settled = rows.filter((o) => o.settlement !== null);
+  // compra no cartão não tem baixa própria: quem se paga é a fatura
+  const payable = rows.filter((o) => !o.cardId || o.virtual);
+  const settled = payable.filter((o) => o.settlement !== null);
   const extra =
-    kind !== 'out' || slots.onlyPending || slots.onlySettled || settled.length === rows.length
+    kind !== 'out' || slots.onlyPending || slots.onlySettled || !payable.length || settled.length === payable.length
       ? ''
       : settled.length === 0
         ? ' Nenhum deles foi baixado como pago ainda.'
         : ` Desses, ${formatMoney(sum(settled))} já foram pagos.`;
 
+  const ordered = [...rows].sort((a, b) => b.amount - a.amount);
   return {
     text: `Em ${monthName(slots.month)}${scope ? '' : ''} ${noun.verb} ${formatMoney(total)}${scope} em ${rows.length} ${rows.length === 1 ? 'lançamento' : 'lançamentos'}.${extra}`,
     highlight: { label: scope.trim() || `${noun.many} de ${monthName(slots.month)}`, value: formatMoney(total) },
+    basis: basisOf(rows, slots),
+    link: movLink(slots),
+    list: ordered.slice(0, 8).map((o) => ({
+      label: o.description,
+      detail: [categoryName(ctx, o.categoryId), formatDayShort(o.date)].join(' · '),
+      value: formatMoney(o.amount),
+    })),
   };
 }
 
@@ -408,6 +447,8 @@ function answerCount(slots: Slots, rows: Occurrence[]): Answer {
       ? `São ${rows.length} ${rows.length === 1 ? noun.one : noun.many}${scope} em ${monthName(slots.month)}, somando ${formatMoney(sum(rows))}.`
       : `Nenhum ${noun.one}${scope} em ${monthName(slots.month)}.`,
     highlight: rows.length ? { label: 'Quantidade', value: String(rows.length) } : undefined,
+    basis: rows.length ? basisOf(rows, slots) : undefined,
+    link: movLink(slots),
   };
 }
 
@@ -425,6 +466,8 @@ function answerExtreme(ctx: AssistantContext, slots: Slots, rows: Occurrence[], 
   return {
     text: `O ${want === 'max' ? 'maior' : 'menor'} ${noun.one}${scope} de ${monthName(slots.month)} foi ${pick.description}, de ${formatMoney(pick.amount)}, em ${formatDayShort(pick.date)} — categoria ${categoryName(ctx, pick.categoryId)}.`,
     highlight: { label: pick.description, value: formatMoney(pick.amount) },
+    basis: basisOf(rows, slots),
+    link: movLink(slots),
   };
 }
 
@@ -436,6 +479,8 @@ function answerAverage(slots: Slots, rows: Occurrence[]): Answer {
   return {
     text: `A média por ${noun.one} em ${monthName(slots.month)} é de ${formatMoney(media)}, em ${rows.length} lançamentos.`,
     highlight: { label: 'Média', value: formatMoney(media) },
+    basis: basisOf(rows, slots),
+    link: movLink(slots),
   };
 }
 
@@ -453,7 +498,14 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
       if (!s.count) {
         return { text: `Ainda não há nada lançado em ${monthName(slots.month)}. Assim que você registrar o primeiro valor eu consigo te responder de verdade.` };
       }
-      const negativo = slots.month === ctx.month ? firstNegativeDay(ctx.projection) : null;
+      const negativo =
+        slots.month !== ctx.month
+          ? null
+          : ctx.cash
+            ? ctx.cash.negative[0]
+              ? { date: ctx.cash.negative[0].from, balance: ctx.cash.negative[0].lowest }
+              : null
+            : firstNegativeDay(ctx.projection);
       const parts = [
         `Em ${monthName(slots.month)} entraram ${formatMoney(s.income)} e saíram ${formatMoney(s.expense)}.`,
         s.invested > 0 ? `Você investiu ${formatMoney(s.invested)}.` : '',
@@ -519,7 +571,11 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
     id: 'vai-dar',
     test: (p) => p.tags.has('CONSEGUIR') && /\bpagar|contas|mes\b/.test(p.raw),
     answer: (ctx) => {
-      const negativo = firstNegativeDay(ctx.projection);
+      const negativo = ctx.cash
+        ? ctx.cash.negative[0]
+          ? { date: ctx.cash.negative[0].from, balance: ctx.cash.negative[0].lowest }
+          : null
+        : firstNegativeDay(ctx.projection);
       if (!negativo) {
         return { text: `Pelo que está lançado, sim. O saldo não fica negativo em nenhum dia de ${monthName(ctx.month)}, e sobram ${formatMoney(ctx.summary.balance)} no fim.` };
       }
@@ -616,6 +672,116 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
       }
       if (!lines.length) return { text: 'Ainda não tenho gasto suficiente registrado para apontar onde cortar.' };
       return { text: lines.join(' ') };
+    },
+  },
+  {
+    id: 'parcelas-futuras',
+    test: (p) =>
+      /\bparcelas?\b/.test(p.raw) &&
+      /\bfutur|faltam|que vem|restam|ainda\b/.test(p.raw) &&
+      !/\bdivida|financiamento|emprestimo|consignado\b/.test(p.raw),
+    answer: (ctx) => {
+      const lines = ctx.cards.flatMap((card) =>
+        futureInstallments(card, ctx.entries, invoiceMonthOf(card, ctx.today)).map((f) => ({ card, f })),
+      );
+      if (!lines.length) return { text: 'Você não tem compra parcelada com parcelas por vir nos cartões.' };
+      const total = lines.reduce((t, { f }) => t + f.perInstallment * f.left, 0);
+      return {
+        text: `Você tem ${formatMoney(total)} em parcelas futuras, depois das faturas abertas, em ${lines.length} ${lines.length === 1 ? 'compra' : 'compras'}.`,
+        highlight: { label: 'Parcelas futuras', value: formatMoney(total) },
+        list: lines.map(({ card, f }) => ({
+          label: f.description,
+          detail: `${card.name || card.institution} · faltam ${f.left}× de ${formatMoney(f.perInstallment)}`,
+          value: formatMoney(f.perInstallment * f.left),
+        })),
+        basis: 'compras parceladas nos seus cartões',
+        link: { label: 'Ver cartões', route: { view: 'cartoes' } },
+      };
+    },
+  },
+  {
+    id: 'cartao-proximo',
+    test: (p) => /\bcartao|cartoes|fatura|faturas\b/.test(p.raw) && /\bmes que vem|proximo mes|proxima fatura|mes seguinte|vou gastar|vou pagar\b/.test(p.raw),
+    answer: (ctx) => {
+      if (!ctx.cards.length) return { text: 'Você ainda não cadastrou cartão nenhum.' };
+      const next = addMonthsToKey(ctx.month, 1);
+      const invoices = ctx.cards.map((c) => ({ c, inv: buildInvoice(c, ctx.entries, ctx.subscriptions, next, ctx.today) }));
+      const total = invoices.reduce((t, { inv }) => t + inv.total, 0);
+      return {
+        text: `As faturas de ${monthName(next)} somam ${formatMoney(total)} até agora — parcelas, assinaturas e o que já foi comprado depois do fechamento. Compras novas até o próximo fechamento ainda entram.`,
+        highlight: { label: `Faturas de ${monthName(next)}`, value: formatMoney(total) },
+        list: invoices.map(({ c, inv }) => ({
+          label: c.name || c.institution,
+          detail: `vence ${formatDayShort(inv.dueOn)} · ${inv.lines.length} ${inv.lines.length === 1 ? 'linha' : 'linhas'}`,
+          value: formatMoney(inv.total),
+        })),
+        basis: `faturas de ${monthName(next)} dos seus cartões`,
+        link: { label: 'Ver cartões', route: { view: 'cartoes' } },
+      };
+    },
+  },
+  {
+    id: 'meta-guardar',
+    test: (p) => /\bse (eu )?(guardar|juntar|poupar|aportar|investir)\b/.test(p.raw) && /\d/.test(p.raw),
+    answer: (ctx) => {
+      const raw = ctx.goals.length ? pickGoal(ctx) : null;
+      if (!raw) return { text: 'Crie uma meta primeiro e eu digo quando você chega nela.' };
+      const amount = parseMoney((lastQuestion.match(/(\d[\d.,]*)/) ?? [])[1] ?? '');
+      if (!amount) return { text: 'Diga quanto quer guardar por mês, por exemplo: "se eu guardar 500 por mês".' };
+      const p = goalProgress(raw, ctx.entries, ctx.month, ctx.today);
+      if (p.reached) return { text: `${raw.name} já foi batida.` };
+      const months = Math.ceil(p.missing / amount);
+      const when = addMonthsToKey(ctx.month, months);
+      return {
+        text: `Guardando ${formatMoney(amount)} por mês, faltam ${formatMoney(p.missing)} para ${raw.name}: você chega em ${formatMonthLabel(when)}, daqui a ${months} ${months === 1 ? 'mês' : 'meses'}.${
+          raw.deadline ? (when <= raw.deadline.slice(0, 7) ? ' Dentro do prazo.' : ` Depois do prazo, que é ${formatMonthLabel(raw.deadline.slice(0, 7))}.`) : ''
+        }`,
+        highlight: { label: raw.name, value: formatMonthLabel(when) },
+        basis: `meta ${raw.name}: ${formatMoney(p.current)} de ${formatMoney(p.target)}`,
+        link: { label: 'Ver metas', route: { view: 'metas' } },
+      };
+    },
+  },
+  {
+    id: 'meta-falta',
+    test: (p) =>
+      /\bfalta|faltam|chegar|atingir\b/.test(p.raw) &&
+      /\bmeta|metas|objetivo|para (a |o |minha |meu )?\w{4,}/.test(p.raw) &&
+      !/\bpagar|conta|contas|boleto|mes\b/.test(p.raw),
+    answer: (ctx) => {
+      const goal = pickGoal(ctx);
+      if (!goal) return { text: 'Você não tem meta cadastrada ainda.' };
+      const p = goalProgress(goal, ctx.entries, ctx.month, ctx.today);
+      if (p.reached) return { text: `${goal.name} já foi batida: ${formatMoney(p.current)} de ${formatMoney(p.target)}.` };
+      return {
+        text: `Faltam ${formatMoney(p.missing)} para ${goal.name} — você tem ${formatMoney(p.current)} de ${formatMoney(p.target)}.${
+          p.perMonth != null && p.monthsLeft != null && p.monthsLeft > 0 ? ` Para chegar no prazo, são ${formatMoney(p.perMonth)} por mês.` : ''
+        }`,
+        highlight: { label: 'Falta', value: formatMoney(p.missing) },
+        basis: `meta ${goal.name}`,
+        link: { label: 'Ver metas', route: { view: 'metas' } },
+      };
+    },
+  },
+  {
+    id: 'patrimonio',
+    test: (p) => /\bpatrimonio\b/.test(p.raw),
+    answer: (ctx) => {
+      const { m } = monthKeyParts(ctx.month);
+      const months = m + 1;
+      const history = wealthHistory({ assets: ctx.assets ?? [], entries: ctx.entries, debts: ctx.debts, today: ctx.today }, months + 1);
+      const first = history[0]?.net ?? 0;
+      const last = history[history.length - 1]?.net ?? 0;
+      const delta = last - first;
+      return {
+        text:
+          delta === 0
+            ? 'Seu patrimônio (investimentos, bens e dívidas) não mudou este ano, pelo que está registrado.'
+            : `Seu patrimônio ${delta > 0 ? 'cresceu' : 'diminuiu'} ${formatMoney(Math.abs(delta))} este ano: de ${formatMoney(first)} para ${formatMoney(last)}, contando investimentos, bens e dívidas.`,
+        highlight: { label: delta >= 0 ? 'Cresceu no ano' : 'Diminuiu no ano', value: formatMoney(Math.abs(delta)) },
+        basis: 'aportes, bens e saldo das dívidas, mês a mês',
+        link: { label: 'Ver patrimônio', route: { view: 'patrimonio' } },
+      };
     },
   },
   {
@@ -745,6 +911,42 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
   },
 ];
 
+/** para onde cada tema leva, quando a resposta não diz */
+const NAMED_LINKS: Record<string, { label: string; route: Route }> = {
+  resumo: { label: 'Ver o Início', route: { view: 'inicio' } },
+  saldo: { label: 'Ver o Início', route: { view: 'inicio' } },
+  'contas-pendentes': { label: 'Ver despesas', route: { view: 'movimentos', param: 'saidas' } },
+  'vai-dar': { label: 'Ver o mês dia a dia', route: { view: 'calendario' } },
+  compara: { label: 'Ver movimentos', route: { view: 'movimentos' } },
+  'categoria-top': { label: 'Ver despesas', route: { view: 'movimentos', param: 'saidas' } },
+  'por-categoria': { label: 'Ver despesas', route: { view: 'movimentos', param: 'saidas' } },
+  'mes-caro': { label: 'Ver movimentos', route: { view: 'movimentos' } },
+  economizar: { label: 'Ver assinaturas', route: { view: 'assinaturas' } },
+  assinaturas: { label: 'Ver assinaturas', route: { view: 'assinaturas' } },
+  cartoes: { label: 'Ver cartões', route: { view: 'cartoes' } },
+  metas: { label: 'Ver metas', route: { view: 'metas' } },
+  dividas: { label: 'Ver dívidas', route: { view: 'dividas' } },
+  reserva: { label: 'Ver metas', route: { view: 'metas' } },
+  moedas: { label: 'Ver News', route: { view: 'news' } },
+  cripto: { label: 'Ver News', route: { view: 'news' } },
+  indicadores: { label: 'Ver News', route: { view: 'news' } },
+};
+
+/** a pergunta crua da vez; os temas que precisam de número leem daqui */
+let lastQuestion = '';
+
+/** a meta citada pelo nome; sem nome, a primeira ativa */
+function pickGoal(ctx: AssistantContext): Goal | null {
+  const raw = normalize(lastQuestion);
+  const active = ctx.goals.filter((g) => !g.archivedAt && !g.pausedAt);
+  const named = active.find((g) =>
+    normalize(g.name)
+      .split(' ')
+      .some((w) => w.length >= 4 && raw.includes(w)),
+  );
+  return named ?? active[0] ?? null;
+}
+
 /* -------------------------------------------------------------- glossário */
 
 interface GlossaryEntry {
@@ -811,6 +1013,7 @@ const FALLBACK = [
  * certo e completamente inútil.
  */
 export function ask(rawQuestion: string, ctx: AssistantContext): Answer {
+  lastQuestion = rawQuestion;
   const parsed = parse(rawQuestion);
   if (parsed.raw.length < 2) {
     return { text: 'Pode perguntar. Comece por "como estou?" ou toque numa das sugestões.' };
@@ -826,7 +1029,9 @@ export function ask(rawQuestion: string, ctx: AssistantContext): Answer {
 
   // 2. temas com resposta própria
   for (const named of NAMED) {
-    if (named.test(parsed)) return named.answer(ctx, slots);
+    if (!named.test(parsed)) continue;
+    const answer = named.answer(ctx, slots);
+    return answer.link || !NAMED_LINKS[named.id] ? answer : { ...answer, link: NAMED_LINKS[named.id] };
   }
 
   // 3. composição por partes: forma × tipo × período × filtro
@@ -840,6 +1045,11 @@ export function ask(rawQuestion: string, ctx: AssistantContext): Answer {
         return answerCount(slots, rows);
       case 'max':
       case 'min':
+        // "maiores despesas", no plural, pede a lista e não um item só
+        if (/\b(maiores|menores)\b/.test(parsed.raw)) {
+          const sorted = [...rows].sort((a, b) => (slots.form === 'max' ? b.amount - a.amount : a.amount - b.amount)).slice(0, 8);
+          return answerList(ctx, slots, sorted);
+        }
         return answerExtreme(ctx, slots, rows, slots.form);
       case 'avg':
         return answerAverage(slots, rows);
@@ -863,6 +1073,12 @@ export function ask(rawQuestion: string, ctx: AssistantContext): Answer {
 /** as sugestões que aparecem em cima do campo */
 export const SUGGESTIONS = [
   'Como estou?',
+  'Quanto vou gastar com cartão mês que vem?',
+  'Quanto tenho em parcelas futuras?',
+  'Quanto falta para minha meta?',
+  'Se eu guardar R$ 500 por mês, quando atinjo minha meta?',
+  'Quanto meu patrimônio cresceu este ano?',
+  'Quais são minhas maiores despesas?',
   'Quais foram meus gastos do mês?',
   'Quais foram minhas receitas?',
   'Quanto gastei esse mês?',
@@ -886,5 +1102,31 @@ export const SUGGESTIONS = [
 export function greeting(name: string, date = new Date()): string {
   const h = date.getHours();
   const hello = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
-  return `${hello}, ${name}. Pergunte sobre o seu dinheiro — eu respondo com os seus próprios números, sem enviar nada para lugar nenhum.`;
+  const who = name && name !== 'você' ? `, ${name}` : '';
+  return `${hello}${who}. Pergunte sobre o seu dinheiro — eu respondo com os seus próprios números, sem enviar nada para lugar nenhum.`;
+}
+
+/**
+ * A busca que responde.
+ *
+ * "mercado agosto" não é uma pergunta, mas quer uma resposta: quanto foi para
+ * mercado em agosto. Quando a busca cita uma categoria ou um mês, ela vira a
+ * pergunta equivalente e volta com o total e os lançamentos que o formaram.
+ * Texto solto ("uber") só responde se houver lançamento com ele no mês.
+ */
+export function searchAnswer(query: string, ctx: AssistantContext): Answer | null {
+  lastQuestion = query;
+  const parsed = parse(query);
+  if (parsed.raw.length < 3) return null;
+  const slots = extractSlots(parsed, ctx);
+  if (!slots.category && !slots.monthExplicit && !slots.kind) {
+    // só texto: responde se houver lançamentos com ele no mês
+    if (slots.term.length < 3) return null;
+  }
+  const kind: Kind = slots.kind ?? slots.category?.kind ?? 'out';
+  const filled: Slots = { ...slots, kind, form: slots.form ?? 'total' };
+  const rows = select(ctx, filled);
+  if (!rows.length) return null;
+  if (filled.form === 'list') return answerList(ctx, filled, rows);
+  return answerTotal(ctx, filled, rows);
 }

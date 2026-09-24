@@ -15,7 +15,8 @@ import { DEMO_DB, db, putRecord, selectDatabase } from '@/lib/db';
 import { currentMonthKey } from '@/lib/dates';
 import type { MovFilter, SubId, ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
-import { useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
+import type { AssistantContext } from '@/lib/assistant';
+import { monthOccurrences, useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
 import { toggleSettled, useBootstrap, useCategories, useSettings } from '@/lib/store';
 import { detachCloud } from '@/lib/sync';
 import type { MonthKey } from '@/lib/types';
@@ -116,6 +117,29 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
 
   const hidden = settings?.privateMode ?? false;
   const displayName = settings?.displayName.trim() || 'você';
+
+  // o assistente e a busca respondem com a mesma régua das telas
+  const assistant = React.useMemo<AssistantContext>(
+    () => ({
+      month: current,
+      entries: base.entries,
+      summary: todayPicture.summary,
+      occurrences: todayPicture.occurrences,
+      projection: todayPicture.projection,
+      history: todayHistory,
+      categories,
+      cards: base.cards,
+      subscriptions: base.subscriptions,
+      goals: base.goals,
+      debts: base.debts.filter((d) => !d.settledAt),
+      market: null,
+      today: cash.today,
+      expand: (m) => monthOccurrences(base, m),
+      assets: base.assets,
+      cash,
+    }),
+    [current, base, todayPicture, todayHistory, categories, cash],
+  );
 
   const toggleHidden = React.useCallback(async () => {
     if (!settings) return;
@@ -345,20 +369,11 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       content = <SimuladoresView base={base} month={current} />;
       break;
     case 'busca':
-      content = <BuscaView spaceId={spaceId} month={month} hidden={hidden} onGo={go} />;
+      content = <BuscaView spaceId={spaceId} month={month} hidden={hidden} onGo={go} assistant={assistant} />;
       break;
     case 'ia':
       content = (
-        <IAView
-          name={displayName}
-          month={current}
-          summary={todayPicture.summary}
-          occurrences={todayPicture.occurrences}
-          projection={todayPicture.projection}
-          history={todayHistory}
-          categories={categories}
-          spaceId={spaceId}
-        />
+        <IAView name={displayName} context={assistant} onGo={go} />
       );
       break;
     case 'categorias':
@@ -414,7 +429,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           onToggleHidden={() => void toggleHidden()}
           onBack={back}
           onGo={go}
-          greeting={`${greetingFor()}, ${displayName}`}
+          greeting={displayName === 'você' ? greetingFor() : `${greetingFor()}, ${displayName}`}
         />
 
         <main

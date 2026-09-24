@@ -26,17 +26,18 @@ import {
   buildInvoice,
   cardLook,
   cardUsage,
+  futureInstallments,
   invoiceMonthOf,
   matchBank,
   type Invoice,
 } from '@/lib/cards';
 import { cn } from '@/lib/cn';
-import { addMonthsToKey, diffDays, formatDayShort, formatMonthLabel, monthKeyOf, monthKeyParts, todayIso } from '@/lib/dates';
+import { addMonthsToKey, diffDays, formatDayShort, formatMonthLabel, monthKeyOf, todayIso } from '@/lib/dates';
 import { restoreRecord } from '@/lib/db';
 import type { FinanceBase } from '@/lib/picture';
 import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
 import { createCard, createEntry, removeCard, updateCard } from '@/lib/store';
-import type { Card, Category, Cents, Entry, MonthKey } from '@/lib/types';
+import type { Card, Category, MonthKey } from '@/lib/types';
 
 /* --------------------------------------------------------------- bandeiras */
 
@@ -299,43 +300,6 @@ function InvoicePanel({
 }
 
 /* ------------------------------------------------------------------- tela */
-
-interface FutureLine {
-  id: string;
-  description: string;
-  perInstallment: Cents;
-  /** parcelas que ainda não caíram em fatura nenhuma */
-  left: number;
-  total: number;
-  /** a parcela que está na fatura aberta */
-  current: number;
-}
-
-/**
- * As parcelas que ainda vão cair, depois da fatura aberta.
- *
- * É o número que a fatura esconde: a compra de dez vezes aparece só como
- * "R$ 420" hoje, mas ainda prende R$ 2.520 dos próximos meses.
- */
-function futureInstallments(card: Card, entries: Entry[], openMonth: MonthKey): FutureLine[] {
-  const out: FutureLine[] = [];
-  for (const e of entries) {
-    if (e.cardId !== card.id || e.deletedAt || e.repeat.kind !== 'installments') continue;
-    const total = Math.max(1, Math.trunc(e.repeat.count ?? 1));
-    const first = invoiceMonthOf(card, e.date);
-    const current = monthsBetween(first, openMonth) + 1;
-    const left = total - Math.max(0, current);
-    if (left <= 0) continue;
-    out.push({ id: e.id, description: e.description, perInstallment: e.amount, left, total, current: Math.max(0, current) });
-  }
-  return out.sort((a, b) => b.perInstallment * b.left - a.perInstallment * a.left);
-}
-
-function monthsBetween(from: MonthKey, to: MonthKey): number {
-  const a = monthKeyParts(from);
-  const b = monthKeyParts(to);
-  return (b.y - a.y) * 12 + (b.m - a.m);
-}
 
 type Which = 'anterior' | 'atual' | 'proxima';
 
