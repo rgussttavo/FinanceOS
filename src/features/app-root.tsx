@@ -222,7 +222,8 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
 
   // "novo" na URL é um pedido de uma vez: a tela abre a folha e o endereço volta ao normal
   React.useEffect(() => {
-    if (route.param === 'novo') navigate({ view: route.view }, { replace: true });
+    // na importação, "novo" é lido pela tela (que carrega sob demanda) e fica no endereço
+    if (route.param === 'novo' && route.view !== 'importar') navigate({ view: route.view }, { replace: true });
   }, [route]);
 
   // teclado: "/" busca, "n" registra — fora de campos de texto
@@ -410,6 +411,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           categories={categories}
           hidden={hidden}
           finishLabel={onboardingActive ? 'Ver meu mês' : undefined}
+          initialCard={route.param ?? null}
           onOpenMonth={(m) => {
             if (onboardingActive) {
               // de volta ao primeiro acesso, no passo que mostra o resultado

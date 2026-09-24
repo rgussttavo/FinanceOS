@@ -29,6 +29,7 @@ const THEMES: { value: ThemeChoice; label: string }[] = [
 
 /** os blocos do Início que dá para esconder, com o mesmo nome que têm na tela */
 const BLOCKS: { id: string; label: string; detail: string; news?: boolean }[] = [
+  { id: 'cobertura', label: 'Seu mês completo', detail: 'O que falta para os números baterem com o banco' },
   { id: 'timeline', label: 'O que vem por aí', detail: 'Entradas e saídas dos próximos dias, com o saldo' },
   { id: 'atencao', label: 'O que merece sua atenção', detail: 'Alertas com a ação para resolver' },
   { id: 'saude', label: 'Saúde do mês', detail: 'A nota do mês e o que pesa nela' },

@@ -81,6 +81,26 @@ export function matchBank(text: string): BankInfo | null {
 export const bankByKey = (key: string): BankInfo | null =>
   BANKS.find((b) => b.key === key) ?? null;
 
+/**
+ * O banco citado numa descrição de extrato: "PAGAMENTO FATURA NUBANK" é o
+ * Nubank. Procura palavra inteira, para "Inter" não casar com "internet".
+ */
+export function bankInText(text: string): BankInfo | null {
+  const words = ` ${norm(text).replace(/[^a-z0-9]+/g, ' ')} `;
+  return (
+    BANKS.find((b) => {
+      const name = norm(b.name).replace(/[^a-z0-9]+/g, ' ').trim();
+      return words.includes(` ${name} `) || words.includes(` ${b.key} `);
+    }) ?? null
+  );
+}
+
+/** o cartão cadastrado que corresponde a um banco, pelo nome ou pela instituição */
+export function cardOfBank<T extends Pick<Card, 'name' | 'institution'>>(cards: T[], bank: BankInfo | null): T | null {
+  if (!bank) return null;
+  return cards.find((c) => matchBank(c.institution)?.key === bank.key || matchBank(c.name)?.key === bank.key) ?? null;
+}
+
 /* ------------------------------------------------------------- acabamentos */
 
 export interface Finish {

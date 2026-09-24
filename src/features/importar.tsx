@@ -1,8 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { ArrowRight, Check, ChevronDown, FileUp, Lock, RefreshCw, ShieldCheck } from 'lucide-react';
-import { Badge, Button, Field, Meter, Panel, SectionTitle, Segmented, Select, toast } from '@/components/ui';
+import { ArrowRight, Check, ChevronDown, CreditCard, FileUp, Lock, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Logo } from '@/components/Logo';
+import { Badge, Button, Chip, Field, Input, Meter, Panel, SectionTitle, Segmented, Select, toast } from '@/components/ui';
+import { BANKS, bankInText, cardOfBank, matchBank, type BankInfo } from '@/lib/cards';
 import { cn } from '@/lib/cn';
 import { formatDayShort, formatMonthLabel } from '@/lib/dates';
 import {
@@ -14,7 +16,7 @@ import {
   type ReviewGroup,
   type ReviewRow,
 } from '@/lib/importer';
-import { formatMoney } from '@/lib/money';
+import { formatMoney, parseMoney } from '@/lib/money';
 import {
   StatementError,
   parseStatementFile,
@@ -22,7 +24,7 @@ import {
   type ColumnMap,
   type ParsedStatement,
 } from '@/lib/statement';
-import { rememberCategory, useAllSubscriptions, useCards } from '@/lib/store';
+import { createCard, rememberCategory, useAllSubscriptions, useCards } from '@/lib/store';
 import type { Category, Cents, EntrySource, MonthKey } from '@/lib/types';
 
 /**
@@ -80,6 +82,7 @@ export function ImportarView({
   hidden,
   onOpenMonth,
   finishLabel,
+  initialCard,
 }: {
   spaceId: string;
   categories: Category[];
@@ -87,12 +90,19 @@ export function ImportarView({
   onOpenMonth: (month: MonthKey) => void;
   /** o texto do botão final, quando a importação faz parte do primeiro acesso */
   finishLabel?: string;
+  /** abre já na fatura de um cartão ('novo' abre o cadastro rápido) */
+  initialCard?: string | null;
 }) {
   const cards = useCards(spaceId);
   const subscriptions = useAllSubscriptions(spaceId);
   const [phase, setPhase] = React.useState<Phase>({ step: 'pick', error: null });
-  const [targetType, setTargetType] = React.useState<'account' | 'card'>('account');
-  const [cardId, setCardId] = React.useState<string>('');
+  const [targetType, setTargetType] = React.useState<'account' | 'card'>(initialCard ? 'card' : 'account');
+  const [cardId, setCardId] = React.useState<string>(initialCard && initialCard !== 'novo' ? initialCard : '');
+  /** o cadastro rápido de cartão, aberto dentro da importação; o banco vem sugerido quando dá */
+  const [newCard, setNewCard] = React.useState<{ bank: BankInfo | null } | null>(initialCard === 'novo' ? { bank: null } : null);
+  /** fatura escolhida antes de haver cartão: segue sozinha assim que o cartão existir */
+  const [pendingFile, setPendingFile] = React.useState<File | null>(null);
+  const [payments, setPayments] = React.useState<ReviewRow[]>([]);
   const [parsed, setParsed] = React.useState<ParsedStatement | null>(null);
   const [invert, setInvert] = React.useState(false);
   const [rows, setRows] = React.useState<ReviewRow[]>([]);
@@ -130,7 +140,18 @@ export function ImportarView({
       // fatura em CSV costuma trazer a compra como positivo: o contrário do extrato
       const positives = result.rows.filter((r) => r.amount > 0).length;
       const cardSheet = targetType === 'card' && result.format !== 'ofx' && positives > result.rows.length / 2;
-      if (result.creditCard && cards.length) setTargetType('card');
+      /**
+       * Fatura sem cartão escolhido: as compras não teriam ciclo onde cair. Em
+       * vez de importar como conta (e contar tudo no dia errado), a importação
+       * para, pede o cartão ali mesmo e continua sozinha.
+       */
+      if ((result.creditCard && targetType !== 'card') || (targetType === 'card' && !chosenCard)) {
+        setTargetType('card');
+        setPendingFile(file);
+        if (!cards.length) setNewCard({ bank: null });
+        setPhase({ step: 'pick', error: null });
+        return;
+      }
       setInvert(cardSheet);
       setParsed(result);
       await review(result, cardSheet, file.name);
@@ -145,6 +166,8 @@ export function ImportarView({
 
   async function onCommit() {
     if (!parsed) return;
+    // pagamentos de fatura achados no extrato da conta: as compras deles moram na fatura
+    setPayments(target.type === 'account' ? rows.filter((r) => r.status === 'transfer' && r.kind === 'out') : []);
     setPhase({ step: 'saving' });
     const result = await commitReview(rows, {
       spaceId,
@@ -161,8 +184,36 @@ export function ImportarView({
     setParsed(null);
     setRows([]);
     setInvert(false);
+    setPendingFile(null);
     setPhase({ step: 'pick', error: null });
   }
+
+  /** do "Pronto" da conta para a fatura do cartão que ela pagou */
+  function importCardOf(bank: BankInfo | null) {
+    reset();
+    setPayments([]);
+    setTargetType('card');
+    const card = cardOfBank(cards, bank);
+    if (card) {
+      setCardId(card.id);
+      setNewCard(null);
+    } else {
+      setNewCard({ bank });
+    }
+  }
+
+  // a fatura que estava esperando o cartão segue assim que ele existe
+  React.useEffect(() => {
+    if (!pendingFile || targetType !== 'card' || !chosenCard || newCard) return;
+    const file = pendingFile;
+    const t = window.setTimeout(() => {
+      setPendingFile(null);
+      void onFile(file);
+    }, 0);
+    return () => window.clearTimeout(t);
+    // onFile lê o estado atual; disparar só quando o cartão aparece
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFile, targetType, chosenCard, newCard]);
 
   const steps = ['Arquivo', 'Leitura', 'Revisão', 'Pronto'];
   const stepIndex = phase.step === 'pick' ? 0 : phase.step === 'reading' ? 1 : phase.step === 'review' || phase.step === 'saving' ? 2 : 3;
@@ -187,7 +238,15 @@ export function ImportarView({
       </ol>
 
       {phase.step === 'done' ? (
-        <Done result={phase.result} onOpenMonth={onOpenMonth} onAgain={reset} finishLabel={finishLabel} />
+        <Done
+          result={phase.result}
+          onOpenMonth={onOpenMonth}
+          onAgain={reset}
+          finishLabel={finishLabel}
+          payments={payments}
+          hidden={hidden}
+          onImportCard={importCardOf}
+        />
       ) : phase.step === 'reading' ? (
         <Panel className="px-6 py-10 text-center">
           <span className="mx-auto grid size-12 place-items-center rounded-full bg-accent-soft text-accent">
@@ -239,6 +298,14 @@ export function ImportarView({
           chosenCard={chosenCard}
           setCardId={setCardId}
           onFile={onFile}
+          newCard={newCard}
+          setNewCard={setNewCard}
+          pendingFile={pendingFile}
+          onCardCreated={(id) => {
+            setCardId(id);
+            setNewCard(null);
+          }}
+          spaceId={spaceId}
         />
       )}
     </div>
@@ -255,6 +322,11 @@ function PickStep({
   chosenCard,
   setCardId,
   onFile,
+  newCard,
+  setNewCard,
+  pendingFile,
+  onCardCreated,
+  spaceId,
 }: {
   phase: Phase;
   targetType: 'account' | 'card';
@@ -263,6 +335,11 @@ function PickStep({
   chosenCard: string;
   setCardId: (id: string) => void;
   onFile: (file: File | undefined) => void;
+  newCard: { bank: BankInfo | null } | null;
+  setNewCard: (v: { bank: BankInfo | null } | null) => void;
+  pendingFile: File | null;
+  onCardCreated: (id: string) => void;
+  spaceId: string;
 }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:items-start">
@@ -283,29 +360,52 @@ function PickStep({
               { value: 'card', label: 'Fatura do cartão' },
             ]}
           />
-          {targetType === 'card' && (
-            <div className="mt-3">
-              {cards.length ? (
-                <Field label="Cartão" htmlFor="import-card">
-                  <Select id="import-card" value={chosenCard} onChange={(e) => setCardId(e.target.value)}>
-                    {cards.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name || c.institution}
-                        {c.last4 ? ` · final ${c.last4}` : ''}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
+          {targetType === 'card' ? (
+            <div className="mt-3 grid gap-3">
+              {pendingFile ? (
+                <p className="rounded-field border border-accent/40 bg-accent-soft px-3 py-2.5 text-[13px] leading-relaxed text-ink">
+                  <strong className="font-semibold">{pendingFile.name}</strong> é uma fatura de cartão.{' '}
+                  {cards.length ? 'Diga de qual cartão é' : 'Cadastre o cartão'} e a leitura continua sozinha.
+                </p>
               ) : (
                 <p className="text-[13px] leading-relaxed text-ink-3">
-                  Cadastre o cartão em Cartões antes: as compras da fatura precisam de um cartão para entrar no ciclo certo.
+                  As compras entram no dia em que foram feitas e saem da conta no vencimento da fatura, como no banco. O limite
+                  mostra quanto ainda dá para usar, contando as parcelas que vêm.
                 </p>
               )}
+              {cards.length && !newCard ? (
+                <div className="flex items-end gap-2">
+                  <div className="min-w-0 flex-1">
+                    <Field label="Cartão" htmlFor="import-card">
+                      <Select id="import-card" value={chosenCard} onChange={(e) => setCardId(e.target.value)}>
+                        {cards.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name || c.institution}
+                            {c.last4 ? ` · final ${c.last4}` : ''}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  <Button onClick={() => setNewCard({ bank: null })} className="shrink-0">
+                    <Plus size={15} /> Novo
+                  </Button>
+                </div>
+              ) : null}
+              {newCard ? (
+                <QuickCard
+                  key={newCard.bank?.key ?? 'livre'}
+                  spaceId={spaceId}
+                  initialBank={newCard.bank}
+                  onCancel={cards.length ? () => setNewCard(null) : undefined}
+                  onCreated={onCardCreated}
+                />
+              ) : null}
             </div>
-          )}
+          ) : null}
         </Panel>
 
-        <DropZone disabled={targetType === 'card' && !cards.length} onFile={onFile}>
+        <DropZone disabled={targetType === 'card' && (!chosenCard || Boolean(newCard))} onFile={onFile}>
           <span className="grid size-12 place-items-center rounded-full bg-accent-soft text-accent">
             <FileUp size={22} />
           </span>
@@ -693,6 +793,145 @@ function ReviewLine({
   );
 }
 
+/* ------------------------------------------------- cartão, sem sair daqui */
+
+const TOP_BANKS = ['nubank', 'itau', 'inter', 'bradesco', 'santander', 'bb', 'caixa', 'c6', 'mercadopago', 'picpay'];
+
+/**
+ * O cadastro de cartão que a fatura precisa, dentro da importação.
+ *
+ * Antes, quem escolhia "Fatura do cartão" sem cartão cadastrado dava de cara
+ * com um aviso para ir a outra tela. Aqui ficam só os quatro dados que mudam
+ * a conta: o banco, o limite e os dias de fechamento e vencimento — o
+ * fechamento decide em que fatura cada compra cai. Cor, bandeira e final dá
+ * para ajustar depois em Cartões.
+ */
+function QuickCard({
+  spaceId,
+  initialBank,
+  onCancel,
+  onCreated,
+}: {
+  spaceId: string;
+  initialBank: BankInfo | null;
+  onCancel?: () => void;
+  onCreated: (id: string) => void;
+}) {
+  const [bank, setBank] = React.useState<BankInfo | null>(initialBank);
+  const [other, setOther] = React.useState('');
+  const [limit, setLimit] = React.useState('');
+  const [closing, setClosing] = React.useState('');
+  const [due, setDue] = React.useState('');
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  const day = (v: string) => v.replace(/\D/g, '').slice(0, 2);
+  // quem só sabe o vencimento: a maioria dos cartões fecha uns sete dias antes
+  const closingGuess = !closing && Number(due) >= 1 && Number(due) <= 31 ? String(((Number(due) - 8 + 31) % 31) + 1) : '';
+
+  async function save() {
+    const name = bank?.name ?? other.trim();
+    const closingDay = Number(closing || closingGuess);
+    const dueDay = Number(due);
+    if (!name) return setError('Escolha o banco do cartão ou escreva o nome.');
+    if (!(dueDay >= 1 && dueDay <= 31)) return setError('Informe o dia do vencimento da fatura, entre 1 e 31.');
+    if (!(closingDay >= 1 && closingDay <= 31)) return setError('Informe o dia em que a fatura fecha, entre 1 e 31.');
+    const parsedLimit = limit.trim() ? parseMoney(limit) : 0;
+    if (parsedLimit === null) return setError('Digite o limite, como 5.000,00 — ou deixe em branco.');
+    setError(null);
+    setSaving(true);
+    try {
+      const card = await createCard({
+        spaceId,
+        name,
+        institution: bank?.name ?? other.trim(),
+        brand: 'other',
+        last4: '',
+        color: '',
+        limit: parsedLimit,
+        closingDay,
+        dueDay,
+      });
+      toast(`Cartão ${name} cadastrado.`);
+      onCreated(card.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não consegui salvar o cartão.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const banks = TOP_BANKS.map((k) => BANKS.find((b) => b.key === k)!).filter(Boolean);
+
+  return (
+    <div className="grid gap-3 rounded-card border border-line-strong bg-surface-2 p-4">
+      <p className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+        <CreditCard size={16} className="text-accent" aria-hidden /> Qual é o cartão?
+      </p>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Banco do cartão">
+        {banks.map((b) => (
+          <Chip key={b.key} active={bank?.key === b.key} onClick={() => setBank(bank?.key === b.key ? null : b)} className="pl-1.5">
+            <Logo domain={b.domain} initials={b.name.slice(0, 2)} color={b.brandColor ?? 'var(--surface-3)'} size={22} radius={11} />
+            {b.name}
+          </Chip>
+        ))}
+      </div>
+      {!bank ? (
+        <Field label="Outro banco" htmlFor="qc-other">
+          <Input
+            id="qc-other"
+            value={other}
+            onChange={(e) => {
+              setOther(e.target.value);
+              const hit = matchBank(e.target.value);
+              if (hit && hit.name.toLowerCase() === e.target.value.trim().toLowerCase()) setBank(hit);
+            }}
+            placeholder="Ex.: Sicredi, XP, Will Bank"
+            autoComplete="off"
+          />
+        </Field>
+      ) : null}
+      <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2">
+        <Field label="Limite" htmlFor="qc-limit">
+          <Input id="qc-limit" value={limit} onChange={(e) => setLimit(e.target.value)} inputMode="decimal" placeholder="5.000,00" className="tnum" />
+        </Field>
+        <Field label="Fecha dia" htmlFor="qc-closing">
+          <Input
+            id="qc-closing"
+            value={closing}
+            onChange={(e) => setClosing(day(e.target.value))}
+            inputMode="numeric"
+            placeholder={closingGuess || '—'}
+            className="tnum text-center"
+          />
+        </Field>
+        <Field label="Vence dia" htmlFor="qc-due">
+          <Input id="qc-due" value={due} onChange={(e) => setDue(day(e.target.value))} inputMode="numeric" placeholder="10" className="tnum text-center" />
+        </Field>
+      </div>
+      <p className="text-[12px] leading-relaxed text-ink-3">
+        Os dois dias estão na fatura, no app do banco. O fechamento decide em que fatura cada compra cai
+        {closingGuess ? `; sem ele, uso dia ${closingGuess}, uma semana antes do vencimento` : ''}.
+      </p>
+      {error ? (
+        <p role="alert" className="text-[12.5px] text-out">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex gap-2">
+        <Button variant="primary" onClick={() => void save()} disabled={saving} className="flex-1">
+          {saving ? 'Salvando…' : 'Salvar cartão'}
+        </Button>
+        {onCancel ? (
+          <Button variant="quiet" onClick={onCancel}>
+            Cancelar
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------- 4 · pronto */
 
 function Done({
@@ -700,14 +939,33 @@ function Done({
   onOpenMonth,
   onAgain,
   finishLabel,
+  payments,
+  hidden,
+  onImportCard,
 }: {
   result: ImportResult;
   onOpenMonth: (m: MonthKey) => void;
   onAgain: () => void;
   finishLabel?: string;
+  /** pagamentos de fatura encontrados no extrato da conta */
+  payments: ReviewRow[];
+  hidden: boolean;
+  onImportCard: (bank: BankInfo | null) => void;
 }) {
   const { created, settled, lastMonth } = result;
+
+  // um convite por banco: duas faturas do Nubank pagas no extrato são um cartão só
+  const byBank = new Map<string, { bank: BankInfo | null; total: Cents; count: number; last: string }>();
+  for (const p of payments) {
+    const bank = bankInText(p.description);
+    const key = bank?.key ?? 'desconhecido';
+    const cur = byBank.get(key) ?? { bank, total: 0, count: 0, last: p.date };
+    byBank.set(key, { bank, total: cur.total + p.amount, count: cur.count + 1, last: p.date > cur.last ? p.date : cur.last });
+  }
+  const invites = [...byBank.values()];
+
   return (
+    <div className="grid gap-4">
     <Panel className="px-6 py-10 text-center">
       <span className="mx-auto grid size-14 place-items-center rounded-full bg-in-soft text-in motion-safe:animate-[pop-in_var(--t-slow)_var(--ease-out)]">
         <Check size={26} strokeWidth={2.6} />
@@ -728,6 +986,43 @@ function Done({
         </Button>
       </div>
     </Panel>
+
+    {invites.length ? (
+      <Panel className="p-5">
+        <SectionTitle>Falta o cartão</SectionTitle>
+        <p className="text-[14px] leading-relaxed text-ink-2">
+          Este extrato pagou {invites.length === 1 ? 'uma fatura' : 'faturas'} de cartão. O pagamento ficou de fora para não contar
+          duas vezes — mas o que você comprou está na fatura. Importe-a para o mês mostrar onde esse dinheiro foi.
+        </p>
+        <ul className="mt-3 grid gap-2">
+          {invites.map((inv) => (
+            <li
+              key={inv.bank?.key ?? 'desconhecido'}
+              className="flex flex-wrap items-center gap-3 rounded-card border border-line bg-surface-2 px-3 py-3"
+            >
+              {inv.bank ? (
+                <Logo domain={inv.bank.domain} initials={inv.bank.name.slice(0, 2)} color={inv.bank.brandColor ?? 'var(--surface-3)'} size={36} radius={18} />
+              ) : (
+                <span className="grid size-9 place-items-center rounded-full bg-surface-3 text-ink-2" aria-hidden>
+                  <CreditCard size={16} />
+                </span>
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block text-[14px] font-medium text-ink">Fatura {inv.bank ? inv.bank.name : 'do cartão'}</span>
+                <span className="block text-[12px] text-ink-3">
+                  {inv.count === 1 ? 'paga' : `${inv.count} pagamentos, o último`} em {formatDayShort(inv.last)} ·{' '}
+                  {formatMoney(inv.total, { hidden })}
+                </span>
+              </span>
+              <Button size="sm" variant="primary" onClick={() => onImportCard(inv.bank)}>
+                Importar a fatura <ArrowRight size={14} />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </Panel>
+    ) : null}
+    </div>
   );
 }
 

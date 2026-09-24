@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CalendarDays,
+  Check,
   CircleAlert,
   CreditCard,
   FileUp,
@@ -43,6 +44,7 @@ import { formatMoney, parseMoney } from '@/lib/money';
 import type { Route } from '@/lib/nav';
 import type { FinanceBase, MonthPicture } from '@/lib/picture';
 import type { MonthSummary } from '@/lib/occurrences';
+import { putRecord } from '@/lib/db';
 import { setOpeningBalance } from '@/lib/store';
 import type { Category, Cents, Settings } from '@/lib/types';
 import { wealthNow } from '@/lib/wealth';
@@ -128,6 +130,7 @@ export function InicioView(props: InicioProps) {
         <div className="grid gap-4">
           <MainCard {...props} />
           {empty ? <FirstSteps onQuick={props.onQuick} onGo={onGo} /> : null}
+          {!empty && !hiddenBlocks.has('cobertura') ? <Coverage {...props} /> : null}
           {blocks.timeline}
           <div className="grid gap-4 lg:hidden">
             {blocks.atencao}
@@ -611,6 +614,165 @@ function MonthSummaryPanel({ summary, hidden, onGo }: { summary: MonthSummary; h
           </button>
         ))}
       </dl>
+    </Panel>
+  );
+}
+
+/* ------------------------------------------------------------ mês completo */
+
+interface CoverageItem {
+  id: string;
+  title: string;
+  detail: string;
+  done: boolean;
+  action?: { label: string; run: () => void };
+  secondary?: { label: string; run: () => void };
+}
+
+/**
+ * O que falta para os números do mês serem de verdade.
+ *
+ * O saldo previsto é tão bom quanto o que entrou: sem o saldo de hoje ele
+ * parte de zero; sem a fatura, as compras do cartão não existem; sem a renda,
+ * não há "até o próximo recebimento". Cada item diz o que falta e leva direto
+ * para onde se resolve. Some sozinho quando está tudo lá.
+ */
+function Coverage({ spaceId, base, cash, settings, hidden, onGo, onQuick }: InicioProps) {
+  const [adjusting, setAdjusting] = React.useState(false);
+  const today = cash.today;
+  const since = (days: number) => addDaysIso(today, -days);
+  const live = base.entries.filter((e) => !e.deletedAt && !e.tags.includes('saldo-anterior'));
+  const cardsEnabled = settings?.cardsEnabled ?? true;
+  const cards = base.cards.filter((c) => !c.archived && !c.deletedAt);
+
+  const items: CoverageItem[] = [
+    {
+      id: 'saldo',
+      title: 'Saldo de hoje',
+      detail: cash.hasOpening ? 'Informado: o saldo parte do valor do banco.' : 'Sem ele, o saldo parte de zero e não bate com o banco.',
+      done: cash.hasOpening,
+      action: { label: 'Informar', run: () => setAdjusting(true) },
+    },
+    (() => {
+      const recent = live.filter((e) => !e.cardId && e.repeat.kind === 'once' && e.date >= since(30) && e.date <= today);
+      return {
+        id: 'conta',
+        title: 'Movimentos da conta',
+        detail: recent.length
+          ? `${recent.length} ${recent.length === 1 ? 'lançamento' : 'lançamentos'} nos últimos 30 dias.`
+          : 'Nada nos últimos 30 dias. O extrato traz o mês de uma vez.',
+        done: recent.length > 0,
+        action: { label: 'Importar extrato', run: () => onGo({ view: 'importar' }) },
+      };
+    })(),
+  ];
+
+  if (cardsEnabled && !cards.length) {
+    items.push({
+      id: 'cartao',
+      title: 'Cartão de crédito',
+      detail: 'Se você usa, cadastre para as compras caírem na fatura certa e o limite aparecer.',
+      done: false,
+      action: { label: 'Cadastrar e importar', run: () => onGo({ view: 'importar', param: 'novo' }) },
+      secondary: settings ? { label: 'Não uso', run: () => void putRecord('settings', { ...settings, cardsEnabled: false }) } : undefined,
+    });
+  }
+  if (cardsEnabled) {
+    for (const card of cards) {
+      const purchases = live.filter((e) => e.cardId === card.id && e.date >= since(35) && e.date <= today);
+      const last = purchases.reduce<string | null>((m, e) => (!m || e.date > m ? e.date : m), null);
+      const name = card.name || card.institution || 'cartão';
+      items.push({
+        id: `fatura-${card.id}`,
+        title: `Fatura do ${name}`,
+        detail: last ? `Compras até ${formatDayShort(last)}.` : 'Nenhuma compra nos últimos 35 dias. Importe a fatura atual.',
+        done: Boolean(last),
+        action: { label: 'Importar fatura', run: () => onGo({ view: 'importar', param: card.id }) },
+      });
+      if (!card.limit) {
+        items.push({
+          id: `limite-${card.id}`,
+          title: `Limite do ${name}`,
+          detail: 'Sem ele, o app não mostra quanto do limite já está comprometido.',
+          done: false,
+          action: { label: 'Informar', run: () => onGo({ view: 'cartoes' }) },
+        });
+      }
+    }
+  }
+  const income = live.some((e) => e.kind === 'in' && (e.repeat.kind !== 'once' || e.date >= since(35)));
+  items.push({
+    id: 'renda',
+    title: 'Renda do mês',
+    detail: income ? 'Registrada: o app sabe quando entra dinheiro.' : 'Sem ela, não há "até o próximo recebimento".',
+    done: income,
+    action: { label: 'Registrar', run: () => onQuick({ kind: 'in' }) },
+  });
+
+  const pending = items.filter((i) => !i.done);
+  if (!pending.length) return null;
+  const doneCount = items.length - pending.length;
+
+  const hide = () => {
+    if (!settings) return;
+    const next = new Set(settings.hiddenBlocks ?? []);
+    next.add('cobertura');
+    void putRecord('settings', { ...settings, hiddenBlocks: [...next] });
+    toast('Pronto. Dá para trazer de volta em Ajustes → O que aparece no Início.');
+  };
+
+  return (
+    <Panel className="p-5">
+      <SectionTitle
+        action={
+          <button type="button" onClick={hide} className="h-8 rounded-field px-1 text-[12.5px] font-medium text-ink-3 hover:text-ink">
+            Esconder
+          </button>
+        }
+      >
+        Seu mês completo
+      </SectionTitle>
+      <p className="text-[13px] leading-relaxed text-ink-3">
+        Os números só são tão bons quanto o que entrou. {doneCount} de {items.length} prontos.
+      </p>
+      <Meter value={doneCount / items.length} tone="in" label="Mês completo" valueText={`${doneCount} de ${items.length}`} className="mt-3" height={6} />
+      <ul className="mt-3 divide-y divide-line">
+        {[...pending, ...items.filter((i) => i.done)].map((item) => (
+          <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+            <span
+              className={cn(
+                'grid size-6 shrink-0 place-items-center rounded-full',
+                item.done ? 'bg-in text-canvas' : 'border border-dashed border-line-strong',
+              )}
+              aria-hidden
+            >
+              {item.done ? <Check size={13} strokeWidth={3} /> : null}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={cn('block text-[14px] font-medium', item.done ? 'text-ink-3' : 'text-ink')}>
+                {item.title}
+                <span className="sr-only">{item.done ? ' — pronto' : ' — falta'}</span>
+              </span>
+              <span className="block text-[12px] leading-relaxed text-ink-3">{item.detail}</span>
+            </span>
+            {!item.done ? (
+              <span className="ml-9 flex gap-1.5 sm:ml-0">
+                {item.secondary ? (
+                  <Button size="sm" variant="quiet" onClick={item.secondary.run}>
+                    {item.secondary.label}
+                  </Button>
+                ) : null}
+                {item.action ? (
+                  <Button size="sm" onClick={item.action.run}>
+                    {item.action.label}
+                  </Button>
+                ) : null}
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <AdjustBalanceSheet open={adjusting} onClose={() => setAdjusting(false)} spaceId={spaceId} cash={cash} base={base} />
     </Panel>
   );
 }
