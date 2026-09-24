@@ -6,7 +6,7 @@ import { Logo } from '@/components/Logo';
 import { Badge, Button, Chip, Field, Input, Meter, Panel, SectionTitle, Segmented, Select, toast } from '@/components/ui';
 import { BANKS, bankInText, cardOfBank, matchBank, type BankInfo } from '@/lib/cards';
 import { cn } from '@/lib/cn';
-import { formatDayShort, formatMonthLabel } from '@/lib/dates';
+import { addMonthsToKey, formatDayShort, formatMonthLabel } from '@/lib/dates';
 import {
   buildReview,
   commitReview,
@@ -247,6 +247,11 @@ export function ImportarView({
           payments={payments}
           hidden={hidden}
           onImportCard={importCardOf}
+          onAnotherInvoice={() => {
+            // mesmo cartão, próxima leitura
+            reset();
+            setTargetType('card');
+          }}
         />
       ) : phase.step === 'reading' ? (
         <Panel className="px-6 py-10 text-center">
@@ -994,6 +999,7 @@ function Done({
   payments,
   hidden,
   onImportCard,
+  onAnotherInvoice,
 }: {
   result: ImportResult;
   onOpenMonth: (m: MonthKey) => void;
@@ -1003,6 +1009,8 @@ function Done({
   payments: ReviewRow[];
   hidden: boolean;
   onImportCard: (bank: BankInfo | null) => void;
+  /** outra fatura do mesmo cartão */
+  onAnotherInvoice: () => void;
 }) {
   const { created, settled, lastMonth } = result;
 
@@ -1031,6 +1039,20 @@ function Done({
         <p className="mx-auto mt-2 max-w-[36ch] text-[13px] leading-relaxed text-ink-3">
           As compras ficaram na fatura de {formatMonthLabel(result.invoiceMonth)}, a mesma do arquivo — confira em Cartões.
         </p>
+      ) : null}
+      {result.invoiceMonth && result.previousInvoiceMissing ? (
+        <div className="mx-auto mt-5 max-w-[44ch] rounded-card border border-accent/40 bg-accent-soft p-4 text-left">
+          <p className="text-[14px] font-semibold text-ink">
+            Importe também a fatura de {formatMonthLabel(addMonthsToKey(result.invoiceMonth, -1))}
+          </p>
+          <p className="mt-1 text-[13px] leading-relaxed text-ink-2">
+            A fatura do banco inclui parcelas de compras antigas (“3 de 6”), que em geral não vêm neste arquivo. Com a fatura
+            anterior, elas entram aqui e nos meses seguintes, sem duplicar nada.
+          </p>
+          <Button size="sm" variant="primary" className="mt-3" onClick={onAnotherInvoice}>
+            Importar a fatura anterior <ArrowRight size={14} />
+          </Button>
+        </div>
       ) : null}
       <div className="mt-6 flex flex-col justify-center gap-2 sm:flex-row">
         {lastMonth ? (

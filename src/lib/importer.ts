@@ -1,6 +1,6 @@
 import { categorize, cleanDescription, type LearnedRule } from './categories';
 import { addMonthsToKey, clampDayToMonth, diffDays, monthKeyOf, monthKeyParts, nowInstant, partsToIso, todayIso } from './dates';
-import { invoiceMonthOf } from './cards';
+import { buildInvoice, invoiceMonthOf } from './cards';
 import { db, entriesUpTo, putRecords } from './db';
 import { occurrencesInMonth, type Occurrence } from './occurrences';
 import { uid } from './provision';
@@ -353,6 +353,8 @@ export interface ImportResult {
   lastMonth: string;
   /** na fatura de cartão: qual fatura o arquivo é */
   invoiceMonth?: string;
+  /** a fatura anterior do mesmo cartão está vazia no app: as parcelas antigas faltam */
+  previousInvoiceMissing?: boolean;
 }
 
 /**
@@ -464,10 +466,22 @@ export async function commitReview(
   await putRecords('entries', [...created, ...toSettle, ...repinned]);
 
   const lastMonth = chosen.reduce((max, r) => (monthKeyOf(r.date) > max ? monthKeyOf(r.date) : max), '');
+
+  /**
+   * A fatura do banco traz as parcelas de compras antigas ("3/6"); o arquivo
+   * da fatura atual, em geral, só o que foi comprado neste ciclo. A compra
+   * parcelada entra no app inteira a partir da fatura em que aparece — então,
+   * se a anterior está vazia aqui, faltam as parcelas que continuam nesta.
+   */
+  let previousInvoiceMissing = false;
+  if (card && invoiceMonth) {
+    const cardEntries = (await db().entries.where('cardId').equals(card.id).toArray()).filter((e) => !e.deletedAt);
+    previousInvoiceMissing = buildInvoice(card, cardEntries, [], addMonthsToKey(invoiceMonth, -1), today).lines.length === 0;
+  }
   return {
     created: created.length,
     settled: toSettle.reduce((n, e) => n + (settleBy.get(e.id)?.length ?? 0), 0),
     lastMonth,
-    ...(invoiceMonth ? { invoiceMonth } : null),
+    ...(invoiceMonth ? { invoiceMonth, previousInvoiceMissing } : null),
   };
 }
