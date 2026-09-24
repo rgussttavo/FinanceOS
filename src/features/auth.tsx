@@ -8,6 +8,7 @@ import { Button, Field, Input, Panel, SectionTitle, Sheet } from '@/components/u
 import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/cn';
 import { db, getSyncState } from '@/lib/db';
+import { ensureCategories } from '@/lib/provision';
 import { adoptLocalSpace, runSync, type SyncReport } from '@/lib/sync';
 import { cloudConfigured, supabase } from '@/lib/supabase';
 
@@ -96,6 +97,9 @@ export function useCloudSync(session: Session | null): {
       if (user) await ensureLinked(user.id);
 
       const result = await runSync();
+      // a conta pode ter chegado sem categorias; depois do pull dá para saber
+      const { spaceId } = await getSyncState();
+      if (result.phase === 'done' && spaceId && (await ensureCategories(spaceId))) await runSync();
       setReport(result);
     } catch (err: unknown) {
       setReport({

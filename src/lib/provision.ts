@@ -47,6 +47,7 @@ async function provision(): Promise<Space> {
     const existing = await d.spaces.get(state.spaceId);
     if (existing) {
       await consolidateDuplicates(existing.id);
+      await ensureCategories(existing.id);
       return existing;
     }
   }
@@ -116,11 +117,30 @@ async function consolidateDuplicates(keepId: string): Promise<void> {
 }
 
 
+/**
+ * Um espaço sem nenhuma categoria viva volta a ter as padrão.
+ *
+ * Nunca deveria acontecer — as de sistema não se apagam —, mas aconteceu: um
+ * espaço de conta chegou sem categorias, e o app inteiro (importação,
+ * registro rápido, gráficos) ficou sem ter onde classificar nada. Com conta,
+ * só depois de um pull completo: no meio da primeira descida, "vazio" quer
+ * dizer "ainda não chegou", e semear ali duplicaria tudo.
+ */
+export async function ensureCategories(spaceId: string): Promise<boolean> {
+  const d = db();
+  const state = await getSyncState();
+  if (state.userId && !state.pulledAt) return false;
+  const live = (await d.categories.where('spaceId').equals(spaceId).toArray()).filter((c) => !c.deletedAt);
+  if (live.length) return false;
+  for (const category of buildSeedCategories(spaceId, () => uid())) await putRecord('categories', category);
+  return true;
+}
+
 /** categorias e preferencias iniciais de um espaco recem-criado */
 async function seedSpace(spaceId: string): Promise<void> {
   const d = db();
 
-  const already = await d.categories.where('spaceId').equals(spaceId).count();
+  const already = (await d.categories.where('spaceId').equals(spaceId).toArray()).filter((c) => !c.deletedAt).length;
   if (already === 0) {
     // passa por putRecord para as sementes tambem entrarem na fila de sync:
     // quando a pessoa criar conta depois, as categorias sobem junto com o resto

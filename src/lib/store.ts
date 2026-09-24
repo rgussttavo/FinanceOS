@@ -71,7 +71,21 @@ export function useBootstrap(demo = false): Bootstrap {
     };
   }, [demo]);
 
-  return state;
+  /**
+   * O espaço pode mudar com o app aberto.
+   *
+   * Ao entrar numa conta que já tem espaço, este aparelho passa a morar nele e
+   * o id local some. Sem acompanhar isso, a tela seguia lendo o espaço antigo:
+   * categorias e lançamentos vinham vazios, e o que se gravasse ia para um
+   * espaço que ninguém lê.
+   */
+  const live = useLiveQuery(
+    async () => (demo || !state.ready ? null : ((await db().syncState.get('singleton'))?.spaceId ?? null)),
+    [demo, state.ready],
+    null,
+  );
+
+  return live && live !== state.spaceId ? { ...state, spaceId: live } : state;
 }
 
 /* ------------------------------------------------------------- consultas */
