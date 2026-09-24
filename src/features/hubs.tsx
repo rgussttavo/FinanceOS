@@ -242,7 +242,7 @@ export function MaisView({ hiddenViews, onGo }: { hiddenViews: SubId[]; onGo: (r
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-[15px] text-ink">{VIEW_META[id].title}</span>
-                          <span className="block truncate text-[12.5px] text-ink-3">{VIEW_META[id].description}</span>
+                          <span className="line-clamp-2 block text-[12.5px] leading-snug text-ink-3">{VIEW_META[id].description}</span>
                         </span>
                         <ChevronRight size={17} className="shrink-0 text-ink-3" aria-hidden />
                       </button>

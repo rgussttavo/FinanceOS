@@ -257,8 +257,8 @@ function DebtCard({
             {debt.icon}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-[15px] font-medium text-ink">{debt.name}</span>
+            <span className="flex items-start justify-between gap-2">
+              <span className="min-w-0 text-[15px] font-medium leading-snug text-ink [overflow-wrap:anywhere]">{debt.name}</span>
               <span className="tnum shrink-0 text-[15px] font-semibold text-ink">{formatMoney(d.remainingNominal, { hidden })}</span>
             </span>
             <span className="mt-0.5 block text-[12px] text-ink-3">

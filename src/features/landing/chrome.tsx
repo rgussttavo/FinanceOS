@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/cn';
 
@@ -12,6 +13,32 @@ import { cn } from '@/lib/cn';
  * motivo para mandar JavaScript junto. Só a barra do topo e o trilho lateral
  * dependem de rolagem, e são eles que moram aqui.
  */
+
+/* ------------------------------------------------------------ link do app */
+
+/**
+ * Link para o app que só baixa o app quando a pessoa mostra intenção.
+ *
+ * O padrão do Next é pré-carregar a rota assim que o link aparece na tela — e
+ * a rota do app traz a base local e o cliente da nuvem, uns 350 KB. Numa
+ * vitrine, isso sairia do plano de dados de quem só veio ler. Aqui a carga
+ * começa no hover, no toque ou no foco: ainda antes do clique, só para quem
+ * vai clicar.
+ */
+export function AppLink({ href, className, children }: { href: '/app' | '/demo'; className?: string; children: React.ReactNode }) {
+  const router = useRouter();
+  const prefetched = React.useRef(false);
+  const warm = () => {
+    if (prefetched.current) return;
+    prefetched.current = true;
+    router.prefetch(href);
+  };
+  return (
+    <Link href={href} prefetch={false} className={className} onMouseEnter={warm} onFocus={warm} onTouchStart={warm}>
+      {children}
+    </Link>
+  );
+}
 
 /* ------------------------------------------------------------------- topo */
 
@@ -57,18 +84,18 @@ export function TopBar() {
         </Link>
 
         <div className="flex items-center gap-2">
-          <Link
+          <AppLink
             href="/demo"
             className="hidden h-10 items-center rounded-field px-4 text-[14px] text-ink-2 transition-colors duration-[var(--t-fast)] hover:bg-surface-2 hover:text-ink sm:inline-flex"
           >
             Explorar sem cadastro
-          </Link>
-          <Link
+          </AppLink>
+          <AppLink
             href="/app"
             className="inline-flex h-10 items-center rounded-field bg-accent px-5 text-[14px] font-medium text-accent-ink transition-[filter,transform] duration-[var(--t-fast)] hover:brightness-110 active:scale-[0.98]"
           >
             Começar agora
-          </Link>
+          </AppLink>
         </div>
       </div>
 

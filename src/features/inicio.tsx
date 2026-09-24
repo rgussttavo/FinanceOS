@@ -220,7 +220,8 @@ function MainCard({ spaceId, base, cash, settings, hidden, onGo }: InicioProps) 
   return (
     <Panel className="overflow-hidden p-0">
       <div className="px-5 pb-5 pt-4">
-        <div className="-mx-1 mb-3 grid grid-cols-4 gap-1 rounded-full bg-surface-2 p-1" role="tablist" aria-label="O que mostrar">
+        {/* cada aba do tamanho do próprio nome: em 375 px, colunas iguais cortavam "Até receber" */}
+        <div className="-mx-1 mb-3 flex gap-1 rounded-full bg-surface-2 p-1" role="tablist" aria-label="O que mostrar">
           {MODES.map((m) => (
             <button
               key={m.id}
@@ -229,7 +230,7 @@ function MainCard({ spaceId, base, cash, settings, hidden, onGo }: InicioProps) 
               aria-selected={mode === m.id}
               onClick={() => setMode(m.id)}
               className={cn(
-                'h-8 min-w-0 truncate rounded-full px-1 text-[12px] font-medium transition-colors sm:text-[12.5px]',
+                'h-8 min-w-0 flex-auto truncate whitespace-nowrap rounded-full px-1.5 text-[12px] font-medium transition-colors max-[360px]:px-0.5 max-[360px]:text-[11px] sm:text-[12.5px]',
                 mode === m.id ? 'bg-ink text-canvas shadow-e1' : 'text-ink-3 hover:text-ink-2',
               )}
             >
@@ -570,10 +571,10 @@ function QuickActions({
             <button
               type="button"
               onClick={a.run}
-              className="flex h-12 w-full items-center gap-2.5 rounded-field border border-line px-3 text-left text-[13px] font-medium text-ink transition-colors hover:border-line-strong hover:bg-surface-2"
+              className="flex min-h-12 w-full items-center gap-2.5 rounded-field border border-line px-3 py-2 text-left text-[13px] font-medium leading-tight text-ink transition-colors hover:border-line-strong hover:bg-surface-2"
             >
               <a.icon size={16} className={cn('shrink-0', a.tone ?? 'text-accent')} aria-hidden />
-              <span className="truncate">{a.label}</span>
+              <span className="min-w-0">{a.label}</span>
             </button>
           </li>
         ))}

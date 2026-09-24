@@ -1,5 +1,4 @@
 import * as React from 'react';
-import Link from 'next/link';
 import {
   ArrowRight,
   CalendarClock,
@@ -16,7 +15,7 @@ import {
 import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/cn';
 import { WEEKDAYS_SHORT_PT } from '@/lib/dates';
-import { TopBar, Trilho } from './chrome';
+import { AppLink, TopBar, Trilho } from './chrome';
 import { HeroDemo } from './hero-demo';
 import {
   MockAssinaturas,
@@ -90,9 +89,9 @@ function Hero() {
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <Link href="/app" className={cn(botaoPrimario, 'w-full sm:w-auto')}>
+            <AppLink href="/app" className={cn(botaoPrimario, 'w-full sm:w-auto')}>
               Começar agora
-            </Link>
+            </AppLink>
             <a href="#como-funciona" className={cn(botaoSecundario, 'w-full sm:w-auto')}>
               Ver como funciona
             </a>
@@ -100,9 +99,9 @@ function Hero() {
 
           <p className="mt-5 text-[13px] text-ink-3">
             Grátis, sem cadastro para começar e sem senha de banco.{' '}
-            <Link href="/demo" className="font-medium text-accent underline-offset-4 hover:underline">
+            <AppLink href="/demo" className="font-medium text-accent underline-offset-4 hover:underline">
               Explorar {BRAND.name} com dados de exemplo →
-            </Link>
+            </AppLink>
           </p>
         </div>
 
@@ -709,12 +708,12 @@ function Fechamento() {
         </p>
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <Link href="/app" className={cn(botaoPrimario, 'w-full sm:w-auto')}>
+          <AppLink href="/app" className={cn(botaoPrimario, 'w-full sm:w-auto')}>
             Começar agora
-          </Link>
-          <Link href="/demo" className={cn(botaoSecundario, 'w-full sm:w-auto')}>
+          </AppLink>
+          <AppLink href="/demo" className={cn(botaoSecundario, 'w-full sm:w-auto')}>
             Explorar {BRAND.name} <ArrowRight size={16} className="ml-2" aria-hidden />
-          </Link>
+          </AppLink>
         </div>
         <p className="mt-4 text-[13px] text-ink-3">O exemplo abre sem cadastro, com dados fictícios. Instala como aplicativo pelo navegador — sem loja.</p>
       </div>
