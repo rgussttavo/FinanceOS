@@ -5,7 +5,7 @@ import { Landing } from '@/features/landing';
 export const metadata: Metadata = {
   title: `${BRAND.name}: ${BRAND.tagline}`,
   description:
-    'Contas, cartões, metas e investimentos no mesmo lugar. Funciona offline, instala como aplicativo e não pede a senha do seu banco.',
+    'Importe o extrato do banco e veja o seu mês dia a dia: o que já saiu, o que ainda cai e o dia em que o saldo aperta. Grátis, funciona offline e não pede a senha do seu banco.',
 };
 
 export default function Home() {

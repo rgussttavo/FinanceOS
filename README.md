@@ -1,8 +1,9 @@
-# FinanceCS
+# FinanceOS
 
 Um PWA de finanças pessoais, local-first e sem conectar banco. Contas, cartões,
 assinaturas, metas, dívidas, rateio, orçamento, comprovantes e patrimônio — o
-mês inteiro numa tela.
+mês inteiro numa tela. O histórico entra pelo extrato do banco (OFX, CSV, XLSX,
+XLS, QIF, ODS ou TXT), lido no próprio aparelho e revisado antes de gravar.
 
 Construído a partir do estudo do [CentavOS](https://centavos.app.br): mesma
 estrutura e mesmas funcionalidades, código e identidade próprios.
@@ -59,12 +60,20 @@ Região sugerida: **South America (São Paulo)**, que é a mais perto.
 
 ### 2. Rodar a migração
 
-No painel do projeto, abra **SQL Editor** e execute os dois arquivos, nesta
-ordem:
+No painel do projeto, abra **SQL Editor**, clique em **New query**, cole o
+conteúdo de cada arquivo e aperte **Run** — um arquivo por vez, nesta ordem:
 
 1. `supabase/migrations/0001_init.sql` — tabelas, políticas de acesso e a
    função que cria o espaço. Pode rodar mais de uma vez sem quebrar nada.
 2. `supabase/migrations/0002_storage.sql` — o balde dos comprovantes.
+3. `supabase/migrations/0003_one_space_per_person.sql` — o servidor passa a
+   decidir qual é o espaço da pessoa, e um aparelho novo não cria outro.
+4. `supabase/migrations/0004_limpa_duplicados.sql` — só para projetos que já
+   estavam no ar antes da 0003: apaga espaços vazios duplicados e preferência
+   repetida. O `select` do fim mostra como ficou.
+
+Para copiar o conteúdo, abra o arquivo aqui no GitHub e use o botão de copiar,
+ou no terminal: `cat supabase/migrations/0003_one_space_per_person.sql`.
 
 Se o segundo falhar com *"must be owner of table objects"*, não tem problema:
 projetos novos do Supabase restringem mexer em `storage.objects` por SQL. O

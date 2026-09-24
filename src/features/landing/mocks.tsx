@@ -94,59 +94,7 @@ function Anel({ pct, className }: { pct: number; className?: string }) {
   );
 }
 
-/* ------------------------------------------------------------- 01 · News */
-
-export function MockNews() {
-  const cotacoes = [
-    ['Dólar', 'R$ 5,42', '+ 0,31%', 'in'],
-    ['Euro', 'R$ 6,31', '− 0,12%', 'out'],
-    ['Bitcoin', 'R$ 641.280', '+ 1,24%', 'in'],
-    ['Ethereum', 'R$ 19.840', '+ 0,86%', 'in'],
-    ['Selic', '15,00%', 'ao ano', ''],
-    ['IPCA 12m', '4,58%', 'acumulado', ''],
-  ] as const;
-
-  return (
-    <Quadro>
-      <div className="grid grid-cols-3 gap-2">
-        {cotacoes.map(([nome, valor, nota, cor]) => (
-          <div key={nome} className="rounded-field bg-surface-2 px-2.5 py-2">
-            <p className="truncate text-[11px] text-ink-3">{nome}</p>
-            <p className="tnum mt-0.5 truncate text-[13px] font-medium text-ink">{valor}</p>
-            <p
-              className={cn(
-                'tnum truncate text-[11px]',
-                cor === 'in' && 'text-in',
-                cor === 'out' && 'text-out',
-                !cor && 'text-ink-3',
-              )}
-            >
-              {nota}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-4">
-        <Linha
-          emoji="🗞️"
-          titulo="Copom mantém a Selic em 15,00% ao ano"
-          detalhe="manchetes de economia, de várias fontes"
-          valor="há 2 h"
-        />
-        <Linha
-          emoji="📅"
-          titulo="Reunião do Copom"
-          detalhe="em 5 dias · define a Selic"
-          valor="28/09"
-        />
-        <Linha emoji="📊" titulo="IPCA de setembro" detalhe="IBGE · na primeira semana" valor="09/10" last />
-      </div>
-    </Quadro>
-  );
-}
-
-/* -------------------------------------------------------- 02 · Calendário */
+/* -------------------------------------------------------- Calendário */
 
 /**
  * Setembro de 2026 — mês fixo, mas alinhado de verdade.
@@ -166,15 +114,19 @@ const GRADE = (() => {
   });
 })();
 
-export function MockCalendario() {
+/** as marcas seguem o mesmo mês da trajetória do topo: salário no 5, adiantamento no 20 */
+export function MockCalendario({ hoje = 5 }: { hoje?: number }) {
   const marcas: Record<number, string> = {
-    5: 'bg-out',
+    3: 'bg-out',
+    5: 'bg-in',
+    6: 'bg-out',
     8: 'bg-out',
-    10: 'bg-inv',
-    12: 'bg-out',
-    15: 'bg-in',
-    20: 'bg-event',
-    28: 'bg-in',
+    10: 'bg-out',
+    12: 'bg-inv',
+    15: 'bg-out',
+    20: 'bg-in',
+    24: 'bg-out',
+    28: 'bg-event',
   };
 
   return (
@@ -198,7 +150,7 @@ export function MockCalendario() {
             className={cn(
               'tnum relative grid aspect-square place-items-center rounded-[9px] text-[12px]',
               dentro ? 'bg-surface-2 text-ink-2' : 'text-ink-3/40',
-              dentro && numero === 23 && 'bg-accent-soft text-ink ring-1 ring-inset ring-accent/40',
+              dentro && numero === hoje && 'bg-accent-soft text-ink ring-1 ring-inset ring-accent/40',
             )}
           >
             {numero}
@@ -226,7 +178,7 @@ export function MockCalendario() {
   );
 }
 
-/* ---------------------------------------------------------- 03 · Cartões */
+/* ---------------------------------------------------------- Cartões */
 
 export function MockCartoes() {
   return (
@@ -303,7 +255,7 @@ export function MockCartoes() {
   );
 }
 
-/* ------------------------------------------------------ 04 · Assinaturas */
+/* ------------------------------------------------------ Assinaturas */
 
 export function MockAssinaturas() {
   const servicos = [
@@ -344,7 +296,7 @@ export function MockAssinaturas() {
   );
 }
 
-/* ------------------------------------------------------------ 05 · Metas */
+/* ------------------------------------------------------------ Metas */
 
 export function MockMetas() {
   const metas = [
@@ -374,7 +326,7 @@ export function MockMetas() {
   );
 }
 
-/* ---------------------------------------------------------- 06 · Dívidas */
+/* ---------------------------------------------------------- Dívidas */
 
 export function MockDividas() {
   const dividas = [
@@ -417,7 +369,7 @@ export function MockDividas() {
   );
 }
 
-/* ----------------------------------------------------------- 07 · Rateio */
+/* ----------------------------------------------------------- Rateio */
 
 export function MockRateio() {
   return (
@@ -470,38 +422,7 @@ export function MockRateio() {
   );
 }
 
-/* -------------------------------------------------------- 08 · Orçamento */
-
-export function MockOrcamento() {
-  return (
-    <Quadro>
-      <div className="mb-2 flex items-baseline justify-between">
-        <p className="text-[14px] font-medium text-ink">✈️ Viagem de fim de ano</p>
-        <p className="text-[12px] text-ink-3">4 pessoas</p>
-      </div>
-
-      <Linha emoji="🎟️" titulo="Passagens" detalhe="4 × R$ 890" valor="R$ 3.560" />
-      <Linha emoji="🏨" titulo="Hospedagem" detalhe="6 diárias × R$ 320" valor="R$ 1.920" />
-      <Linha emoji="🍽️" titulo="Alimentação" detalhe="6 dias × R$ 180" valor="R$ 1.080" />
-      <Linha emoji="🚕" titulo="Transporte local" detalhe="4 × R$ 120" valor="R$ 480" last />
-
-      <div className="mt-4 space-y-2 rounded-field bg-surface-2 px-3 py-3">
-        {[
-          ['Folga de 10%', 'R$ 704', 'text-ink-2'],
-          ['Total', 'R$ 7.744', 'text-ink'],
-          ['Por pessoa', 'R$ 1.936', 'text-accent'],
-        ].map(([rotulo, valor, cor]) => (
-          <div key={rotulo} className="flex items-baseline justify-between text-[13px]">
-            <span className="text-ink-3">{rotulo}</span>
-            <span className={cn('tnum font-medium', cor)}>{valor}</span>
-          </div>
-        ))}
-      </div>
-    </Quadro>
-  );
-}
-
-/* ------------------------------------------------------- 09 · Patrimônio */
+/* ------------------------------------------------------- Patrimônio */
 
 export function MockPatrimonio() {
   return (
@@ -546,140 +467,208 @@ export function MockPatrimonio() {
   );
 }
 
-/* ----------------------------------------------------- 10 · Comprovantes */
+/* ------------------------------------------------------ Trajetória (topo) */
 
-export function MockComprovantes() {
-  const pastas = [
-    ['🏠', 'Casa', 14],
-    ['🧾', 'Impostos', 9],
-    ['🩺', 'Saúde', 6],
-    ['🚗', 'Carro', 7],
-    ['🎓', 'Escola', 4],
-    ['📦', 'Outros', 2],
-  ] as const;
+/**
+ * O mês do topo da página, dia a dia.
+ *
+ * Os números não são desenhados à mão: saem de uma lista de lançamentos, como
+ * no app. Assim a curva, o dia em que cruza o zero e o saldo do fim concordam
+ * entre si — e com o calendário mais abaixo, que mostra o mesmo mês.
+ */
+const MOVIMENTOS: readonly (readonly [number, number, string])[] = [
+  [3, -310, 'Mercado'],
+  [5, 4200, 'Salário'],
+  [6, -1650, 'Aluguel'],
+  [8, -1480, 'Fatura do cartão'],
+  [10, -365, 'Luz, água e internet'],
+  [10, -290, 'Mercado'],
+  [12, -300, 'Aporte na reserva'],
+  [15, -890, 'Escola'],
+  [17, -280, 'Mercado'],
+  [20, 1800, 'Adiantamento'],
+  [24, -300, 'Mercado'],
+  [27, -120, 'Farmácia'],
+];
+
+const SALDO_INICIAL = 580;
+const HOJE = 14;
+
+const TRAJETORIA = (() => {
+  const pontos: number[] = [];
+  let saldo = SALDO_INICIAL;
+  for (let dia = 1; dia <= MES.dias; dia++) {
+    for (const [d, valor] of MOVIMENTOS) if (d === dia) saldo += valor;
+    pontos.push(saldo);
+  }
+  const zero = pontos.findIndex((v) => v < 0);
+  return { pontos, fim: pontos[pontos.length - 1], diaNoVermelho: zero >= 0 ? zero + 1 : null };
+})();
+
+const reais = (v: number) =>
+  `${v < 0 ? '−' : ''}R$ ${Math.abs(v).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
+
+export function MockTrajetoria() {
+  const W = 620;
+  const H = 170;
+  const PAD = 12;
+  const { pontos, fim, diaNoVermelho } = TRAJETORIA;
+  const max = Math.max(...pontos, 0);
+  const min = Math.min(...pontos, 0);
+  const x = (i: number) => PAD + (i / (pontos.length - 1)) * (W - PAD * 2);
+  const y = (v: number) => PAD + (1 - (v - min) / (max - min)) * (H - PAD * 2);
+
+  // degraus: o saldo muda no dia do lançamento, não aos poucos entre um e outro
+  const caminho = (ate: number) =>
+    pontos
+      .slice(0, ate)
+      .map((v, i) => (i ? `H${x(i).toFixed(1)} V${y(v).toFixed(1)}` : `M${x(0).toFixed(1)},${y(v).toFixed(1)}`))
+      .join(' ');
+  const inteiro = caminho(pontos.length);
+  const real = caminho(HOJE);
+  const area = `${inteiro} V${y(min).toFixed(1)} H${x(0).toFixed(1)} Z`;
+  const vermelho = diaNoVermelho ? diaNoVermelho - 1 : -1;
+
+  const proximos = MOVIMENTOS.filter(([d]) => d > HOJE).slice(0, 3);
 
   return (
-    <Quadro>
-      <p className="mb-3 text-[12px] text-ink-3">42 guardados · grade ou lista</p>
-
-      <div className="grid grid-cols-3 gap-2">
-        {pastas.map(([emoji, nome, n]) => (
-          <div key={nome} className="rounded-field bg-surface-2 px-3 py-3 text-center">
-            <p className="text-[20px]">{emoji}</p>
-            <p className="mt-1 truncate text-[12px] text-ink">{nome}</p>
-            <p className="tnum text-[11px] text-ink-3">{n} arquivos</p>
-          </div>
-        ))}
+    <Quadro className="p-0 sm:p-0">
+      <div className="flex items-baseline justify-between px-4 pt-4 sm:px-5 sm:pt-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+          Trajetória de setembro
+        </p>
+        <p className="tnum text-[13px] font-semibold text-ink-2">{reais(fim)} no fim</p>
       </div>
 
-      <div className="mt-3 flex items-center gap-3 rounded-field border border-line px-3 py-2.5">
-        <span className="text-[15px]">🔎</span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-[13px] text-ink">
-            Busca: <span className="text-accent">&ldquo;ipva&rdquo;</span>
-          </span>
-          <span className="block truncate text-[12px] text-ink-3">
-            IPVA 2026.pdf · achado na pasta Carro
-          </span>
-        </span>
+      <div className="px-2 pt-2 sm:px-3">
+        <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="Saldo de setembro dia a dia">
+          <defs>
+            <linearGradient id="vitrine-traj" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.22" />
+              <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path d={area} fill="url(#vitrine-traj)" />
+          <line x1={PAD} x2={W - PAD} y1={y(0)} y2={y(0)} stroke="var(--line-strong)" strokeDasharray="3 4" />
+          <path d={inteiro} fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeDasharray="4 4" opacity="0.6" />
+          <path d={real} fill="none" stroke="var(--accent)" strokeWidth="2.6" strokeLinejoin="round" />
+          <line x1={x(HOJE - 1)} x2={x(HOJE - 1)} y1={PAD} y2={H - PAD} stroke="var(--ink-3)" strokeOpacity="0.35" />
+          <text x={x(HOJE - 1) + 6} y={PAD + 10} fontSize="13" fill="var(--ink-3)">
+            hoje
+          </text>
+          {vermelho >= 0 && (
+            <>
+              <circle cx={x(vermelho)} cy={y(pontos[vermelho])} r="10" fill="var(--out)" opacity="0.18" />
+              <circle cx={x(vermelho)} cy={y(pontos[vermelho])} r="4.5" fill="var(--out)" />
+            </>
+          )}
+        </svg>
+      </div>
+
+      {diaNoVermelho ? (
+        <p className="px-4 text-[13px] text-out sm:px-5">
+          O saldo cruza o zero no dia <strong className="font-semibold">{diaNoVermelho}</strong>.
+        </p>
+      ) : null}
+
+      <div className="mt-3 border-t border-line px-4 py-3 sm:px-5">
+        <p className="text-[11px] text-ink-3">Ainda cai este mês</p>
+        {proximos.map(([dia, valor, nome], i) => (
+          <div
+            key={`${dia}-${nome}`}
+            className={cn('flex items-center gap-3 py-2', i < proximos.length - 1 && 'border-b border-line')}
+          >
+            <span className="tnum w-12 shrink-0 text-[12px] text-ink-3">dia {dia}</span>
+            <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{nome}</span>
+            <span className={cn('tnum shrink-0 text-[13px] font-medium', valor > 0 ? 'text-in' : 'text-out')}>
+              {valor > 0 ? '+' : ''}
+              {reais(valor)}
+            </span>
+          </div>
+        ))}
       </div>
     </Quadro>
   );
 }
 
-/* ---------------------------------------------------------- hero: o app */
+/* ---------------------------------------------------------- Importar */
 
 /**
- * O celular do topo.
+ * A revisão do import, com os três destinos que uma linha pode ter.
  *
- * Mostra a tela de início de verdade — mesmos blocos, mesma ordem, mesma
- * hierarquia. Uma vitrine que promete uma tela e entrega outra queima a
- * confiança no primeiro clique.
+ * É a parte que ninguém vê num "importe seu extrato" e a que mais importa: o
+ * que acontece com o aluguel que já estava lançado e com a fatura paga.
  */
-export function MockInicio() {
+export function MockImportar() {
+  const linhas = [
+    ['Salário', '05 set', '+R$ 4.200,00', 'in', true, ''],
+    ['Pix enviado · Imobiliária Sol', '06 set', '−R$ 1.650,00', 'out', true, 'marca “Aluguel” como pago'],
+    ['Pagamento de fatura', '08 set', '−R$ 1.480,00', 'out', false, 'fica de fora: as compras já contam'],
+    ['Supermercado Dia', '10 set', '−R$ 290,00', 'out', true, '🛒 Mercado'],
+    ['Aplicação RDB', '12 set', '−R$ 300,00', 'inv', true, '🛟 Reserva de emergência'],
+  ] as const;
+
   return (
-    <div className="mx-auto w-full max-w-[340px] rounded-[38px] border border-line-strong bg-canvas p-2.5 shadow-e3">
-      <div className="overflow-hidden rounded-[30px] border border-line bg-surface">
-        <div className="flex items-center justify-between px-4 pb-2 pt-4">
-          <span className="flex items-center gap-2">
-            <span className="grid size-7 place-items-center rounded-full bg-accent-soft text-[12px]">
-              🙂
-            </span>
-            <span>
-              <span className="block text-[11px] text-ink-3">Boa noite,</span>
-              <span className="block text-[13px] text-ink">você</span>
-            </span>
+    <Quadro>
+      <div className="flex items-center gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-field bg-accent-soft text-[11px] font-semibold text-accent">
+          OFX
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[14px] text-ink">extrato-setembro.ofx</span>
+          <span className="block truncate text-[12px] text-ink-3">
+            38 linhas · 12 já importadas antes
           </span>
-          <span className="tnum text-[12px] text-ink-2">‹ Setembro 2026 ›</span>
-        </div>
-
-        <div className="px-4 pb-3">
-          <p className="text-[11px] text-ink-3">Saldo do mês</p>
-          <p className="amount mt-1 text-[36px] text-ink">R$ 4.812</p>
-
-          <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-surface-3">
-            <span className="w-[62%] bg-in" />
-            <span className="w-[27%] bg-out" />
-            <span className="w-[11%] bg-inv" />
-          </div>
-
-          <div className="mt-2.5 grid grid-cols-3 gap-2 text-[11px]">
-            {[
-              ['Receitas', 'R$ 9.480', 'text-in'],
-              ['Despesas', 'R$ 4.168', 'text-out'],
-              ['Investido', 'R$ 500', 'text-inv'],
-            ].map(([rotulo, valor, cor]) => (
-              <span key={rotulo}>
-                <span className="block text-ink-3">{rotulo}</span>
-                <span className={cn('tnum block font-medium', cor)}>{valor}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-2 px-4 pb-4">
-          <div className="flex items-center gap-2.5 rounded-field bg-surface-2 px-3 py-2.5">
-            <Anel pct={38} className="size-9" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12px] text-ink">🎯 Reserva</span>
-              <span className="tnum block truncate text-[11px] text-ink-3">
-                R$ 11.400 de R$ 30.000
-              </span>
-            </span>
-            <span className="text-ink-3">›</span>
-          </div>
-
-          <div className="flex items-center gap-2.5 rounded-field bg-warn-soft px-3 py-2.5">
-            <span className="text-[15px]">⚠️</span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12px] text-ink">2 contas atrasadas</span>
-              <span className="tnum block truncate text-[11px] text-ink-3">somam R$ 1.043</span>
-            </span>
-            <span className="text-ink-3">›</span>
-          </div>
-
-          <div className="flex items-center gap-2.5 rounded-field bg-surface-2 px-3 py-2.5">
-            <span className="grid size-9 place-items-center rounded-field bg-surface-3 text-[14px]">
-              ⚡
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12px] text-ink">Conta de luz</span>
-              <span className="block truncate text-[11px] text-ink-3">vence amanhã</span>
-            </span>
-            <span className="tnum text-[12px] text-out">R$ 214</span>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between border-t border-line px-6 py-3 text-[16px] text-ink-3">
-          <span className="text-accent">⌂</span>
-          <span>≡</span>
-          <span>↑</span>
-          <span>◫</span>
-          <span className="grid size-8 place-items-center rounded-full bg-accent text-[18px] text-accent-ink">
-            +
-          </span>
-        </div>
+        </span>
       </div>
-    </div>
+
+      <div className="mt-3">
+        {linhas.map(([nome, data, valor, cor, marcada, nota], i) => (
+          <div
+            key={nome}
+            className={cn(
+              'flex items-start gap-3 py-2.5',
+              i < linhas.length - 1 && 'border-b border-line',
+              !marcada && 'opacity-60',
+            )}
+          >
+            <span
+              className={cn(
+                'mt-0.5 grid size-5 shrink-0 place-items-center rounded-[6px] border text-[11px]',
+                marcada ? 'border-accent bg-accent text-accent-ink' : 'border-line-strong',
+              )}
+              aria-hidden
+            >
+              {marcada ? '✓' : ''}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-baseline gap-2">
+                <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{nome}</span>
+                <span
+                  className={cn(
+                    'tnum shrink-0 text-[13px] font-medium',
+                    cor === 'in' && 'text-in',
+                    cor === 'out' && 'text-out',
+                    cor === 'inv' && 'text-inv',
+                  )}
+                >
+                  {valor}
+                </span>
+              </span>
+              <span className="block truncate text-[11px] text-ink-3">
+                {data}
+                {nota ? (
+                  <span className={cn(nota.startsWith('marca') && 'text-in')}> · {nota}</span>
+                ) : null}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 rounded-field bg-accent py-2.5 text-center text-[13px] font-medium text-accent-ink">
+        Importar 25 linhas
+      </div>
+    </Quadro>
   );
 }

@@ -9,23 +9,22 @@ import { cn } from '@/lib/cn';
  * As partes da vitrine que precisam do navegador.
  *
  * Tudo o mais na landing é HTML estático — o conteúdo não muda, então não há
- * motivo para mandar JavaScript junto. Só três coisas dependem de rolagem ou
- * de toque, e são elas que moram aqui.
+ * motivo para mandar JavaScript junto. Só a barra do topo e o trilho lateral
+ * dependem de rolagem, e são eles que moram aqui.
  */
 
 /* ------------------------------------------------------------------- topo */
 
+/** as paradas do mês, na mesma ordem da página */
 const SECOES = [
-  ['news', 'News'],
-  ['calendario', 'Calendário'],
-  ['cartoes', 'Cartões'],
-  ['assinaturas', 'Assinaturas'],
-  ['metas', 'Metas'],
-  ['dividas', 'Dívidas'],
-  ['rateio', 'Rateio'],
-  ['orcamento', 'Orçamento'],
-  ['patrimonio', 'Patrimônio'],
-  ['comprovantes', 'Comprovantes'],
+  ['dia-1', 'Dia 1 · Importar extrato'],
+  ['dia-5', 'Dia 5 · Calendário'],
+  ['dia-8', 'Dia 8 · Assinaturas'],
+  ['dia-12', 'Dia 12 · Cartões'],
+  ['dia-18', 'Dia 18 · Rateio'],
+  ['dia-22', 'Dia 22 · Dívidas'],
+  ['dia-26', 'Dia 26 · Metas'],
+  ['dia-30', 'Dia 30 · Patrimônio'],
 ] as const;
 
 /** fora do componente: um array novo a cada render refaria o observador sempre */
@@ -123,58 +122,6 @@ export function Trilho() {
         </a>
       ))}
     </nav>
-  );
-}
-
-/* ----------------------------------------------------------------- carrossel */
-
-/**
- * A esteira de frases que anda sozinha.
- *
- * Movimento automático sem como parar é problema de acessibilidade de verdade:
- * quem lê devagar perde a frase no meio. Daí o botão de pausar, o respeito a
- * `prefers-reduced-motion` e a parada no hover.
- */
-export function Esteira({ itens }: { itens: readonly { texto: string; fonte: string }[] }) {
-  const [parado, setParado] = React.useState(false);
-
-  return (
-    <div className="relative">
-      <div className="mb-5 flex justify-center">
-        <button
-          type="button"
-          onClick={() => setParado((p) => !p)}
-          className="rounded-field border border-line px-3 py-1.5 text-[12px] text-ink-2 transition-colors duration-[var(--t-fast)] hover:bg-surface-2"
-        >
-          {parado ? 'Continuar' : 'Pausar'}
-        </button>
-      </div>
-
-      <div
-        className="group relative overflow-hidden [mask-image:linear-gradient(90deg,transparent,#000_8%,#000_92%,transparent)]"
-        onMouseEnter={() => setParado(true)}
-        onMouseLeave={() => setParado(false)}
-      >
-        <ul
-          className="flex w-max gap-3 motion-reduce:animate-none"
-          style={{
-            animation: 'esteira 72s linear infinite',
-            animationPlayState: parado ? 'paused' : 'running',
-          }}
-        >
-          {[...itens, ...itens].map((item, i) => (
-            <li
-              key={i}
-              aria-hidden={i >= itens.length}
-              className="w-[19rem] shrink-0 rounded-card border border-line bg-surface p-4"
-            >
-              <p className="text-[14px] leading-relaxed text-ink">{item.texto}</p>
-              <p className="mt-3 text-[12px] text-ink-3">{item.fonte}</p>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
   );
 }
 

@@ -5,9 +5,9 @@
 export const BRAND = {
   name: 'FinanceOS',
   /** usado em títulos longos e no <title> das páginas */
-  tagline: 'O sistema operacional da sua vida financeira',
+  tagline: 'O fim do mês, visto do começo',
   /** frase curta do topo, aparece no onboarding e na vitrine */
-  promise: 'Seu mês inteiro numa tela. Grátis e sem conectar banco.',
+  promise: 'Saiba quanto sobra antes do mês acabar. Grátis e sem senha de banco.',
   domain: 'financeosgg.vercel.app',
   locale: 'pt-BR',
   currency: 'BRL',
