@@ -1,12 +1,13 @@
 'use client';
 
 import * as React from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { Check, CloudOff, LogOut, RefreshCw } from 'lucide-react';
 import type { Session } from '@supabase/supabase-js';
 import { Button, Field, Input, Panel, SectionTitle, Sheet } from '@/components/ui';
 import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/cn';
-import { getSyncState, pendingCount } from '@/lib/db';
+import { db, getSyncState } from '@/lib/db';
 import { adoptLocalSpace, runSync, type SyncReport } from '@/lib/sync';
 import { cloudConfigured, supabase } from '@/lib/supabase';
 
@@ -67,7 +68,6 @@ export function useCloudSync(session: Session | null): {
   sync: () => void;
 } {
   const [report, setReport] = React.useState<SyncReport | null>(null);
-  const [pending, setPending] = React.useState(0);
   const [syncing, setSyncing] = React.useState(false);
   const running = React.useRef(false);
 
@@ -97,7 +97,6 @@ export function useCloudSync(session: Session | null): {
 
       const result = await runSync();
       setReport(result);
-      setPending(await pendingCount());
     } catch (err: unknown) {
       setReport({
         phase: 'error',
@@ -136,14 +135,29 @@ export function useCloudSync(session: Session | null): {
     };
   }, [session, sync]);
 
-  // a fila cresce a cada gravação da UI; o contador acompanha sem sincronizar
+  /**
+   * A fila cresce a cada gravação da tela, e alguém precisa esvaziá-la.
+   *
+   * Sem isto, quem lançava uma despesa e fechava o app deixava a despesa presa
+   * no aparelho até a próxima vez que abrisse — foi o que aconteceu no teste.
+   * O contador é reativo, então a subida acontece sozinha logo depois de
+   * escrever.
+   *
+   * A espera de alguns segundos existe para agrupar: quem cadastra três
+   * lançamentos seguidos gera uma subida, não três.
+   */
+  const pending = useLiveQuery(() => db().mutations.count(), [], 0) ?? 0;
+
   React.useEffect(() => {
-    if (!session) return;
-    const id = setInterval(() => {
-      void pendingCount().then(setPending);
-    }, 4000);
-    return () => clearInterval(id);
-  }, [session]);
+    if (!session || pending === 0) return;
+
+    // erro recente não vira tentativa em rajada; espera bem mais antes de voltar
+    const failing = report?.phase === 'error';
+    const delay = failing ? 30_000 : 2_500;
+
+    const id = setTimeout(() => void sync(), delay);
+    return () => clearTimeout(id);
+  }, [pending, session, sync, report?.phase]);
 
   return { report, pending, syncing, sync: () => void sync() };
 }
