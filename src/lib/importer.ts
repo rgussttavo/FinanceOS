@@ -4,7 +4,8 @@ import { db, entriesUpTo, putRecords } from './db';
 import { occurrencesInMonth, type Occurrence } from './occurrences';
 import { uid } from './provision';
 import { detectInstallment, tidyDescription, type ParsedStatement, type StatementRow } from './statement';
-import type { Category, Cents, Entry, EntrySource, FlowKind, IsoDate } from './types';
+import type { Category, Cents, Entry, EntrySource, FlowKind, IsoDate, Subscription } from './types';
+import { normalize } from './categories';
 
 /**
  * Do extrato lido ao lançamento gravado.
@@ -31,7 +32,33 @@ export type RowStatus =
   /** este mesmo identificador já foi importado */
   | 'imported'
   /** pagamento de fatura, estorno no cartão: contaria em dobro */
-  | 'transfer';
+  | 'transfer'
+  /** cobrança de uma assinatura já cadastrada: ela já pesa no mês */
+  | 'subscription'
+  /** dinheiro entre contas suas ou resgate de aplicação: não é renda nem gasto */
+  | 'internal';
+
+export type Confidence = 'alta' | 'média' | 'baixa';
+
+/** como a revisão agrupa as linhas para a pessoa */
+export type ReviewGroup = 'review' | 'ready' | 'match' | 'duplicate' | 'card-payment' | 'internal';
+
+export function groupOf(row: Pick<ReviewRow, 'status' | 'confidence' | 'categoryId'>): ReviewGroup {
+  switch (row.status) {
+    case 'imported':
+      return 'duplicate';
+    case 'transfer':
+      return 'card-payment';
+    case 'internal':
+      return 'internal';
+    case 'settle':
+    case 'similar':
+    case 'subscription':
+      return 'match';
+    default:
+      return row.confidence === 'baixa' || !row.categoryId ? 'review' : 'ready';
+  }
+}
 
 export interface ReviewRow {
   /** posição no arquivo, estável entre re-leituras */
@@ -44,6 +71,8 @@ export interface ReviewRow {
   categoryId: string | null;
   /** a categoria veio de palpite fraco; a UI chama atenção */
   unsure: boolean;
+  /** o quanto a sugestão de categoria é confiável */
+  confidence: Confidence;
   externalId: string;
   status: RowStatus;
   include: boolean;
@@ -58,6 +87,10 @@ export interface ReviewOptions {
   /** inverte o sinal de tudo: fatura que traz compra como positivo */
   invert: boolean;
   categories: Category[];
+  /** assinaturas cadastradas: a cobrança delas no extrato não vira lançamento de novo */
+  subscriptions?: Subscription[];
+  /** progresso real da comparação, linha a linha */
+  onProgress?: (done: number, total: number) => void;
 }
 
 /* ------------------------------------------------------------ assinatura */
@@ -98,6 +131,7 @@ function hash(text: string): string {
 /* ------------------------------------------------------------- revisão */
 
 const CARD_PAYMENT = /pagamento (de |da )?fatura|pgto fatura|pagamento recebido|pag fatura|pagto fatura/;
+const INTERNAL = /transferencia entre contas|mesma titularidade|conta propria|entre suas contas|resgate|transf.*propria/;
 const ACCOUNT_CARD_BILL = /fatura|pagamento (de )?cartao|pgto cartao|pag cartao/;
 
 /**
@@ -131,8 +165,22 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
 
   const occurrences = await occurrencesCovering(spaceId, rows[0].date, rows[rows.length - 1].date);
   const taken = new Set<string>();
+  const subs = (opts.subscriptions ?? []).filter((s) => !s.deletedAt);
 
-  return rows.map((row, i) => {
+  const out: ReviewRow[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    // cede a vez ao navegador de tempos em tempos: a barra de progresso anda
+    // e a tela não congela num extrato de um ano
+    if (i % 40 === 0) {
+      opts.onProgress?.(i, rows.length);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    out.push(reviewOne(rows[i], i));
+  }
+  opts.onProgress?.(rows.length, rows.length);
+  return out;
+
+  function reviewOne(row: StatementRow, i: number): ReviewRow {
     const externalId = idOf.get(row) ?? `row:${i}`;
     const signed = opts.invert ? -row.amount : row.amount;
 
@@ -157,8 +205,15 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
     let status: RowStatus = 'new';
     let match: ReviewRow['match'] = null;
 
+    const sub = outflow ? matchSubscription(subs, plainDesc, amount, row.date) : null;
+
     if (already.has(externalId)) {
       status = 'imported';
+    } else if (sub) {
+      status = 'subscription';
+      match = { entryId: `sub:${sub.id}`, occurrenceKey: '', description: sub.name };
+    } else if (INTERNAL.test(plainDesc)) {
+      status = 'internal';
     } else if (target.type === 'card' && (!outflow || CARD_PAYMENT.test(plainDesc))) {
       // crédito na fatura (pagamento, estorno) somaria na fatura em vez de abater
       status = 'transfer';
@@ -183,13 +238,32 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       amount,
       categoryId: guess.categoryId,
       unsure: guess.confidence < 0.35,
+      confidence: guess.confidence >= 0.7 ? 'alta' : guess.confidence >= 0.45 ? 'média' : 'baixa',
       externalId,
       status,
       include: status === 'new' || status === 'settle',
       match,
       installment: installment ? { index: installment.index, total: installment.total } : null,
     };
-  });
+  }
+}
+
+/**
+ * A assinatura que esta linha provavelmente é: nome parecido, valor perto (o
+ * reajuste de preço acontece) e cobrança perto do dia cadastrado.
+ */
+function matchSubscription(subs: Subscription[], plainDesc: string, amount: Cents, date: IsoDate): Subscription | null {
+  const day = Number(date.slice(8));
+  for (const s of subs) {
+    if (s.canceledAt && s.canceledAt < date) continue;
+    const words = normalize(s.name).split(' ').filter((w) => w.length >= 3);
+    if (!words.length || !words.some((w) => plainDesc.includes(w))) continue;
+    if (Math.abs(amount - s.amount) > Math.max(300, s.amount * 0.15)) continue;
+    const gap = Math.abs(day - s.billingDay);
+    if (Math.min(gap, 31 - gap) > 4) continue;
+    return s;
+  }
+  return null;
 }
 
 async function occurrencesCovering(spaceId: string, from: IsoDate, to: IsoDate): Promise<Occurrence[]> {

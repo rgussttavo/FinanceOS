@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { CloudOff, Download, FolderPlus, Grid2x2, List, Plus, Search, Trash2 } from 'lucide-react';
-import { Button, EmptyState, Field, Input, Panel, SectionTitle, Select, Sheet } from '@/components/ui';
+import { Button, EmptyState, Field, Input, Panel, SectionTitle, Select, Sheet, confirmAction} from '@/components/ui';
 import { readFile } from '@/lib/db';
 import { cn } from '@/lib/cn';
 import { formatDateFull } from '@/lib/dates';
@@ -341,7 +341,7 @@ function DetailSheet({
             <Button
               variant="danger"
               onClick={async () => {
-                if (!confirm(`Apagar ${attachment.name}?`)) return;
+                if (!(await confirmAction({ title: `Apagar ${attachment.name}?`, description: 'O arquivo sai deste aparelho e da nuvem.', confirmLabel: 'Apagar', danger: true }))) return;
                 await removeAttachment(attachment.id);
                 onClose();
               }}

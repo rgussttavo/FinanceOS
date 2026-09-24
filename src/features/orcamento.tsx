@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { ChevronLeft, Minus, Plus, Trash2 } from 'lucide-react';
-import { Button, EmptyState, Field, Input, Panel, SectionTitle, Sheet } from '@/components/ui';
+import { Button, EmptyState, Field, Input, Panel, SectionTitle, Sheet, confirmAction} from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { formatMoney, parseMoney } from '@/lib/money';
 import { uid } from '@/lib/provision';
@@ -153,7 +153,7 @@ function BudgetDetail({
         <button
           type="button"
           onClick={async () => {
-            if (!confirm(`Apagar o orçamento ${budget.name}?`)) return;
+            if (!(await confirmAction({ title: `Apagar o orçamento ${budget.name}?`, description: 'Os itens do orçamento somem junto.', confirmLabel: 'Apagar', danger: true }))) return;
             await removeBudget(budget.id);
             onBack();
           }}

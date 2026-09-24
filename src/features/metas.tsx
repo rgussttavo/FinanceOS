@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Plus, Trash2 } from 'lucide-react';
+import { Check, Pause, Pencil, Play, Plus, Target, Trash2 } from 'lucide-react';
+import type { QuickAddRequest } from '@/components/quick-add';
 import {
   Button,
   EmptyState,
@@ -11,20 +12,17 @@ import {
   SectionTitle,
   Select,
   Sheet,
+  Skeleton,
+  confirmAction,
+  toast,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import { formatDateFull } from '@/lib/dates';
-import { GOAL_ICONS, goalProgress } from '@/lib/goals';
+import { currentMonthKey, formatDateFull, formatMonthLabel } from '@/lib/dates';
+import { GOAL_ICONS, goalPace, goalProgress } from '@/lib/goals';
 import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
-import {
-  createGoal,
-  depositIntoGoal,
-  removeGoal,
-  updateGoal,
-  useEntriesUpTo,
-  useGoals,
-} from '@/lib/store';
-import type { Category, Goal, GoalSource, MonthKey } from '@/lib/types';
+import type { FinanceBase } from '@/lib/picture';
+import { createGoal, depositIntoGoal, removeGoal, setGoalPaused, updateGoal } from '@/lib/store';
+import type { Category, Entry, Goal, GoalSource, MonthKey } from '@/lib/types';
 
 /* ------------------------------------------------------------------- anel */
 
@@ -74,21 +72,31 @@ function ProgressRing({
 
 /* ------------------------------------------------------------------- tela */
 
+/**
+ * Metas: o que você quer alcançar, e se está no ritmo.
+ *
+ * Cada meta mostra quanto já tem, quanto falta, quanto precisa guardar por mês
+ * para chegar no prazo e — o que motiva — quando chega mantendo o ritmo de
+ * agora. Pausar tira a meta dos alertas sem apagar nada.
+ */
 export function MetasView({
   spaceId,
-  month,
+  base,
   categories,
   hidden,
   startNew = false,
+  onQuick,
 }: {
   spaceId: string;
-  month: MonthKey;
+  base: FinanceBase;
   categories: Category[];
   hidden: boolean;
   startNew?: boolean;
+  onQuick: (request: QuickAddRequest) => void;
 }) {
-  const goals = useGoals(spaceId);
-  const entries = useEntriesUpTo(spaceId, month);
+  const month = currentMonthKey();
+  const goals = base.goals;
+  const entries = base.entries;
   const [sheet, setSheet] = React.useState<{ open: boolean; editing: Goal | null }>({
     open: false,
     editing: null,
@@ -99,13 +107,27 @@ export function MetasView({
     setSheet({ open: true, editing: null });
   }
 
+  const sheetEl = (
+    <GoalSheet state={sheet} spaceId={spaceId} categories={categories} onClose={() => setSheet({ open: false, editing: null })} />
+  );
+
+  if (!base.ready) {
+    return (
+      <div className="grid gap-4 pt-2 sm:grid-cols-2">
+        <Skeleton className="h-[260px] rounded-panel" />
+        <Skeleton className="h-[260px] rounded-panel" />
+      </div>
+    );
+  }
+
   if (!goals.length) {
     return (
       <div className="pt-2">
-        <Panel className="px-5 py-8">
+        <Panel className="px-5 py-4">
           <EmptyState
-            title="Nenhuma meta ainda"
-            description='Crie uma meta como "juntar R$ 5.000 até dezembro" e acompanhe o progresso aqui. Ligada aos aportes, ela sobe sozinha.'
+            icon={<Target size={22} />}
+            title="Ainda não existem metas"
+            description="Crie sua primeira meta e acompanhe exatamente quanto precisa guardar todos os meses. Ligada a um investimento, ela sobe sozinha a cada aporte."
             action={
               <Button variant="primary" onClick={() => setSheet({ open: true, editing: null })}>
                 <Plus size={16} />
@@ -114,98 +136,239 @@ export function MetasView({
             }
           />
         </Panel>
-        <GoalSheet
-          state={sheet}
-          spaceId={spaceId}
-          categories={categories}
-          onClose={() => setSheet({ open: false, editing: null })}
-        />
+        {sheetEl}
       </div>
     );
   }
 
+  const active = goals.filter((g) => !g.pausedAt);
+  const paused = goals.filter((g) => g.pausedAt);
+  const totals = active.reduce(
+    (acc, g) => {
+      const p = goalProgress(g, entries, month);
+      acc.current += Math.min(p.current, p.target);
+      acc.target += p.target;
+      return acc;
+    },
+    { current: 0, target: 0 },
+  );
+
   return (
     <div className="grid gap-4 pt-2">
-      <Panel className="px-5 py-4">
-        <SectionTitle
-          action={
-            <button
-              type="button"
-              aria-label="Criar meta"
-              onClick={() => setSheet({ open: true, editing: null })}
-              className="grid h-8 w-8 place-items-center rounded-full text-accent transition-colors hover:bg-accent-soft"
-            >
-              <Plus size={17} />
-            </button>
-          }
-        >
-          Suas metas
-        </SectionTitle>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <p className="text-[14px] text-ink-2">
+          {active.length ? (
+            <>
+              Você já juntou <strong className="font-semibold text-ink">{formatMoney(totals.current, { hidden })}</strong> de{' '}
+              {formatMoney(totals.target, { hidden })} nas {active.length} {active.length === 1 ? 'meta ativa' : 'metas ativas'}.
+            </>
+          ) : (
+            'Todas as metas estão pausadas.'
+          )}
+        </p>
+        <Button size="sm" variant="soft" onClick={() => setSheet({ open: true, editing: null })}>
+          <Plus size={15} /> Nova meta
+        </Button>
+      </div>
 
-        <ul className="divide-y divide-line">
-          {goals.map((goal) => {
-            const p = goalProgress(goal, entries, month);
-            return (
-              <li key={goal.id}>
-                <button
-                  type="button"
-                  onClick={() => setSheet({ open: true, editing: goal })}
-                  className="flex w-full items-center gap-3.5 py-4 text-left"
-                >
-                  <ProgressRing ratio={p.ratio} icon={goal.icon} color={goal.color} />
+      <ul className="grid gap-4 md:grid-cols-2">
+        {active.map((goal) => (
+          <GoalCard
+            key={goal.id}
+            goal={goal}
+            entries={entries}
+            month={month}
+            hidden={hidden}
+            onEdit={() => setSheet({ open: true, editing: goal })}
+            onQuick={onQuick}
+          />
+        ))}
+      </ul>
 
+      {paused.length ? (
+        <Panel className="px-5 py-4">
+          <SectionTitle>Pausadas</SectionTitle>
+          <ul className="divide-y divide-line">
+            {paused.map((goal) => {
+              const p = goalProgress(goal, entries, month);
+              return (
+                <li key={goal.id} className="flex items-center gap-3 py-2.5">
+                  <span className="text-[20px]" aria-hidden>
+                    {goal.icon}
+                  </span>
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-[15px] font-medium text-ink">{goal.name}</span>
-                      <span
-                        className={cn(
-                          'tnum shrink-0 text-[13px] font-semibold',
-                          p.reached ? 'text-in' : 'text-ink-2',
-                        )}
-                      >
-                        {formatPercent(p.ratio)}
-                      </span>
-                    </span>
-
-                    <span className="mt-0.5 block truncate text-[12px] text-ink-3">
-                      {formatMoney(p.current, { hidden, compact: true })} de{' '}
-                      {formatMoney(p.target, { hidden, compact: true })}
-                    </span>
-
-                    <span className="mt-0.5 block truncate text-[12px]">
-                      {p.reached ? (
-                        <span className="inline-flex items-center gap-1 text-in">
-                          <Check size={12} strokeWidth={2.6} />
-                          meta batida
-                        </span>
-                      ) : p.late ? (
-                        <span className="text-out">prazo vencido · faltam {formatMoney(p.missing, { hidden, compact: true })}</span>
-                      ) : p.perMonth != null ? (
-                        <span className="text-ink-3">
-                          {formatMoney(p.perMonth, { hidden, compact: true })} por mês
-                          {p.monthsLeft ? ` · faltam ${p.monthsLeft} ${p.monthsLeft === 1 ? 'mês' : 'meses'}` : ''}
-                        </span>
-                      ) : goal.source === 'manual' ? (
-                        <span className="text-ink-3">sem prazo</span>
-                      ) : (
-                        <span className="text-inv">sobe sozinha a cada aporte</span>
-                      )}
+                    <span className="block truncate text-[14px] text-ink">{goal.name}</span>
+                    <span className="block text-[12px] text-ink-3">
+                      {formatMoney(p.current, { hidden })} de {formatMoney(p.target, { hidden })}
                     </span>
                   </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </Panel>
+                  <Button
+                    size="sm"
+                    variant="soft"
+                    onClick={async () => {
+                      await setGoalPaused(goal, false);
+                      toast(`${goal.name} retomada.`);
+                    }}
+                  >
+                    <Play size={14} /> Retomar
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        </Panel>
+      ) : null}
 
-      <GoalSheet
-        state={sheet}
-        spaceId={spaceId}
-        categories={categories}
-        onClose={() => setSheet({ open: false, editing: null })}
-      />
+      {sheetEl}
     </div>
+  );
+}
+
+function GoalCard({
+  goal,
+  entries,
+  month,
+  hidden,
+  onEdit,
+  onQuick,
+}: {
+  goal: Goal;
+  entries: Entry[];
+  month: MonthKey;
+  hidden: boolean;
+  onEdit: () => void;
+  onQuick: (request: QuickAddRequest) => void;
+}) {
+  const p = goalProgress(goal, entries, month);
+  const pace = goalPace(goal, entries, month);
+  const [depositText, setDepositText] = React.useState('');
+  const [depositing, setDepositing] = React.useState(false);
+  const maxBar = Math.max(1, ...pace.history.map((h) => h.amount));
+  const deadlineMonth = goal.deadline ? goal.deadline.slice(0, 7) : null;
+  const onTrack = pace.projected && deadlineMonth ? pace.projected <= deadlineMonth : null;
+
+  async function deposit() {
+    const amount = parseMoney(depositText);
+    if (!amount || amount <= 0) return;
+    await depositIntoGoal(goal, amount);
+    setDepositText('');
+    setDepositing(false);
+    const after = p.current + amount;
+    toast(after >= p.target ? `Meta ${goal.name} batida! 🎉` : `${formatMoney(amount)} guardados em ${goal.name}.`);
+  }
+
+  return (
+    <li>
+      <Panel className="h-full p-5">
+        <div className="flex items-start gap-4">
+          <ProgressRing ratio={p.ratio} icon={goal.icon} color={goal.color || 'var(--accent)'} size={76} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[17px] font-semibold text-ink">{goal.name}</p>
+            <p className="tnum mt-0.5 text-[14px] text-ink-2">
+              {formatMoney(p.current, { hidden })} <span className="text-ink-3">/ {formatMoney(p.target, { hidden })}</span>
+            </p>
+            <p className={cn('mt-1 text-[14px] font-medium', p.reached ? 'text-in' : p.late ? 'text-out' : 'text-ink')}>
+              {p.reached ? (
+                <span className="inline-flex items-center gap-1">
+                  <Check size={14} strokeWidth={2.6} /> Meta batida
+                </span>
+              ) : (
+                <>
+                  {formatPercent(p.ratio)} · faltam {formatMoney(p.missing, { hidden })}
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {!p.reached ? (
+          <div className="mt-4 grid gap-1.5 rounded-card bg-surface-2 px-4 py-3 text-[13px] leading-snug">
+            {pace.pace > 0 && pace.projected ? (
+              <p className="text-ink">
+                Guardando {formatMoney(pace.pace, { hidden })}/mês → chega em{' '}
+                <strong className="font-semibold">{formatMonthLabel(pace.projected)}</strong>
+                {onTrack === true ? <span className="text-in"> · dentro do prazo</span> : onTrack === false ? <span className="text-warn"> · depois do prazo</span> : null}
+              </p>
+            ) : (
+              <p className="text-ink-2">Ainda sem aportes nos últimos meses para calcular o ritmo.</p>
+            )}
+            {p.late ? (
+              <p className="text-out">O prazo ({formatDateFull(goal.deadline!)}) passou. Ajuste o prazo ou o valor.</p>
+            ) : p.perMonth != null && goal.deadline ? (
+              <p className="text-ink-3">
+                Para chegar até {formatMonthLabel(goal.deadline.slice(0, 7))}: {formatMoney(p.perMonth, { hidden })} por mês.
+              </p>
+            ) : goal.source !== 'manual' ? (
+              <p className="text-inv">Sobe sozinha a cada aporte em {goal.source === 'category' ? 'uma categoria' : 'investimentos'}.</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="mt-4">
+          <p className="text-[11px] uppercase tracking-wider text-ink-3">Aportes dos últimos 6 meses</p>
+          <div className="mt-2 flex h-12 items-end gap-1.5" role="img" aria-label={`Aportes: ${pace.history.map((h) => `${formatMonthLabel(h.month, { short: true })} ${formatMoney(h.amount)}`).join(', ')}`}>
+            {pace.history.map((h) => (
+              <span key={h.month} className="flex h-full flex-1 flex-col justify-end" title={`${formatMonthLabel(h.month)}: ${formatMoney(h.amount)}`}>
+                <span
+                  className={cn('w-full rounded-t-[3px]', h.amount > 0 ? 'bg-accent' : 'bg-surface-3')}
+                  style={{ height: `${h.amount > 0 ? Math.max(8, (h.amount / maxBar) * 100) : 6}%` }}
+                />
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {depositing ? (
+          <form
+            className="mt-4 flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void deposit();
+            }}
+          >
+            <Input
+              value={depositText}
+              onChange={(e) => setDepositText(e.target.value)}
+              inputMode="decimal"
+              placeholder="Quanto guardou?"
+              aria-label={`Quanto guardou em ${goal.name}`}
+              className="tnum"
+              autoFocus
+            />
+            <Button type="submit" variant="primary">
+              Guardar
+            </Button>
+          </form>
+        ) : null}
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {!p.reached ? (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => (goal.source === 'manual' ? setDepositing((v) => !v) : onQuick({ kind: 'goal' }))}
+            >
+              <Plus size={14} /> {goal.source === 'manual' ? 'Guardar' : 'Registrar aporte'}
+            </Button>
+          ) : null}
+          <Button size="sm" onClick={onEdit}>
+            <Pencil size={14} /> Prazo e valor
+          </Button>
+          <Button
+            size="sm"
+            variant="quiet"
+            onClick={async () => {
+              await setGoalPaused(goal, true);
+              toast(`${goal.name} pausada. Ela sai dos alertas até você retomar.`, {
+                action: { label: 'Desfazer', onClick: () => void setGoalPaused(goal, false) },
+              });
+            }}
+          >
+            <Pause size={14} /> Pausar
+          </Button>
+        </div>
+      </Panel>
+    </li>
   );
 }
 
@@ -284,6 +447,7 @@ function GoalSheet({
       };
       if (editing) await updateGoal(editing, payload);
       else await createGoal(payload);
+      toast(editing ? 'Meta atualizada.' : 'Meta criada. Agora é acompanhar o ritmo.');
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não consegui salvar.');
@@ -309,8 +473,9 @@ function GoalSheet({
               variant="danger"
               className="w-full"
               onClick={async () => {
-                if (!confirm(`Apagar a meta ${editing.name}?`)) return;
+                if (!(await confirmAction({ title: `Apagar a meta ${editing.name}?`, description: 'O que já foi guardado continua nos seus investimentos; só a meta some.', confirmLabel: 'Apagar', danger: true }))) return;
                 await removeGoal(editing.id);
+                toast('Meta apagada.');
                 onClose();
               }}
             >

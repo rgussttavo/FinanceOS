@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { ArrowRight, Check, ChevronLeft, Copy, Plus, Trash2, UserPlus } from 'lucide-react';
-import { Button, EmptyState, Field, Input, Panel, SectionTitle, Select, Sheet } from '@/components/ui';
+import { Button, EmptyState, Field, Input, Panel, SectionTitle, Select, Sheet, confirmAction} from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { formatDayShort } from '@/lib/dates';
 import { formatMoney, parseMoney } from '@/lib/money';
@@ -150,7 +150,7 @@ function SplitDetail({
         <button
           type="button"
           onClick={async () => {
-            if (!confirm(`Apagar o rateio ${split.name}?`)) return;
+            if (!(await confirmAction({ title: `Apagar o rateio ${split.name}?`, description: 'Os itens e os acertos somem junto.', confirmLabel: 'Apagar', danger: true }))) return;
             await removeSplit(split.id);
             onBack();
           }}

@@ -98,3 +98,52 @@ export const GOAL_ICONS = [
   '🩺', '💒', '🐱', '🏗️', '🏍️', '⛵', '📷', '🎸',
   '🏋️', '🧳', '📚', '🛡️', '🦷', '🌿', '🎮', '🛋️',
 ] as const;
+
+/* ---------------------------------------------------------------- ritmo */
+
+export interface GoalPace {
+  /** aportes dos últimos meses, do mais antigo ao mês corrente */
+  history: { month: MonthKey; amount: Cents }[];
+  /** média mensal dos últimos três meses com a meta existindo */
+  pace: Cents;
+  /** no ritmo atual, em que mês chega; null sem ritmo ou já batida */
+  projected: MonthKey | null;
+  /** meses até chegar no ritmo atual */
+  monthsToGoal: number | null;
+}
+
+/**
+ * O ritmo de uma meta: quanto entrou nela por mês e, mantido esse ritmo,
+ * quando ela chega.
+ *
+ * Meta manual conta os aportes registrados nela; meta ligada a investimento
+ * conta os aportes lançados na categoria. É a diferença entre "faltam R$ 3
+ * mil" e "guardando o que você tem guardado, chega em dezembro".
+ */
+export function goalPace(goal: Goal, entries: Entry[], month: MonthKey, today = todayIso(), months = 6): GoalPace {
+  const history: { month: MonthKey; amount: Cents }[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const key = shiftMonth(month, -i);
+    let amount = 0;
+    if (goal.source === 'manual') {
+      for (const d of goal.deposits ?? []) if (d.at.slice(0, 7) === key) amount += d.amount;
+    } else {
+      const relevant = entries.filter((e) => e.kind === 'invest' && !e.deletedAt);
+      for (const o of occurrencesInMonth(relevant, key, today)) {
+        if (goal.source === 'category' && o.categoryId !== goal.categoryId) continue;
+        amount += o.amount;
+      }
+    }
+    history.push({ month: key, amount });
+  }
+
+  // a média ignora os meses antes de a meta existir
+  const born = goal.createdAt.slice(0, 7);
+  const window = history.slice(-3).filter((h) => h.month >= born || goal.source !== 'manual');
+  const pace = window.length ? Math.round(window.reduce((t, h) => t + h.amount, 0) / window.length) : 0;
+
+  const p = goalProgress(goal, entries, month, today);
+  if (p.reached || pace <= 0) return { history, pace, projected: null, monthsToGoal: null };
+  const monthsToGoal = Math.ceil(p.missing / pace);
+  return { history, pace, projected: shiftMonth(month, monthsToGoal), monthsToGoal };
+}

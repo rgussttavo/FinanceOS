@@ -177,7 +177,7 @@ export function buildDemoData(today: IsoDate): DemoData {
   entry('out', 'iFood', 6450, day(prev, 25), 'alimentacao', { cardId: nubank.id });
   entry('out', 'Uber', 3140, day(month, Math.max(1, todayDay - 2)), 'transporte', { cardId: nubank.id });
   entry('out', 'Livraria', 11990, day(month, Math.max(1, todayDay - 4)), 'educacao', { cardId: nubank.id });
-  entry('out', 'Tênis de corrida', 45990, day(prev, 16), 'compras', {
+  entry('out', 'Tênis de corrida', 9198, day(prev, 16), 'compras', {
     cardId: itau.id,
     repeat: { kind: 'installments', count: 5 },
   });

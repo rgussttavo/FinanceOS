@@ -7,12 +7,17 @@ import {
   Button,
   EmptyState,
   Field,
+  IconButton,
   Input,
+  Meter,
   Panel,
   SectionTitle,
   Segmented,
   Select,
   Sheet,
+  Skeleton,
+  confirmAction,
+  toast,
 } from '@/components/ui';
 import {
   BANKS,
@@ -21,20 +26,17 @@ import {
   buildInvoice,
   cardLook,
   cardUsage,
+  invoiceMonthOf,
   matchBank,
   type Invoice,
 } from '@/lib/cards';
 import { cn } from '@/lib/cn';
-import { addMonthsToKey, formatDayShort, formatMonthLabel, todayIso } from '@/lib/dates';
+import { addMonthsToKey, diffDays, formatDayShort, formatMonthLabel, monthKeyOf, monthKeyParts, todayIso } from '@/lib/dates';
+import { restoreRecord } from '@/lib/db';
+import type { FinanceBase } from '@/lib/picture';
 import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
-import {
-  createCard,
-  createEntry,
-  removeCard,
-  updateCard,
-  useCardsData,
-} from '@/lib/store';
-import type { Card, Category, MonthKey } from '@/lib/types';
+import { createCard, createEntry, removeCard, updateCard } from '@/lib/store';
+import type { Card, Category, Cents, Entry, MonthKey } from '@/lib/types';
 
 /* --------------------------------------------------------------- bandeiras */
 
@@ -229,104 +231,131 @@ function CardStack({
 
 function InvoicePanel({
   invoice,
-  card,
   categories,
   hidden,
+  today,
   onAddPurchase,
 }: {
   invoice: Invoice;
-  card: Card;
   categories: Category[];
   hidden: boolean;
+  today: string;
   onAddPurchase: () => void;
 }) {
   const byId = React.useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const open = today <= invoice.closesOn;
+  const dueIn = diffDays(today, invoice.dueOn);
 
   return (
-    <Panel className="px-5 py-4">
-      <SectionTitle
-        action={
-          <span className={cn('text-[12px]', invoice.closed ? 'text-warn' : 'text-ink-3')}>
-            {invoice.closed ? 'fechada' : `fecha ${formatDayShort(invoice.closesOn)}`}
-          </span>
-        }
-      >
-        Fatura de {formatMonthLabel(invoice.month).replace(/ de \d{4}$/, '')}
-      </SectionTitle>
-
+    <div>
       <div className="flex items-end justify-between gap-3">
-        <p className="amount text-[34px] text-ink">
-          {hidden ? '••••' : formatMoney(invoice.total)}
-        </p>
-        <p className="pb-1 text-right text-[12px] text-ink-3">
-          vence
-          <br />
-          <span className="text-ink-2">{formatDayShort(invoice.dueOn)}</span>
-        </p>
+        <div>
+          <p className="amount text-[36px] text-ink">{formatMoney(invoice.total, { hidden })}</p>
+          <p className="mt-1 text-[13px] text-ink-3">
+            {open ? `aberta · fecha ${formatDayShort(invoice.closesOn)}` : 'fechada'}
+          </p>
+        </div>
+        <div className="pb-1 text-right text-[13px]">
+          <p className="text-ink-3">vence</p>
+          <p className={cn('font-medium', dueIn >= 0 && dueIn <= 3 ? 'text-warn' : 'text-ink-2')}>
+            {formatDayShort(invoice.dueOn)}
+            {dueIn >= 0 && dueIn <= 30 ? ` · ${dueIn === 0 ? 'hoje' : dueIn === 1 ? 'amanhã' : `em ${dueIn} dias`}` : ''}
+          </p>
+        </div>
       </div>
 
-      {card.limit > 0 && (
-        <p className="mt-3 border-t border-line pt-3 text-[13px] text-ink-3">
-          Limite de {formatMoney(card.limit, { hidden, compact: true })}
-        </p>
-      )}
-
       {invoice.lines.length ? (
-        <ul className="mt-2 divide-y divide-line">
+        <ul className="mt-3 divide-y divide-line border-t border-line">
           {invoice.lines.map((line) => {
             const category = line.categoryId ? byId.get(line.categoryId) : null;
             return (
-              <li key={line.id} className="flex items-center gap-3 py-3">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-surface-2 text-[15px]">
+              <li key={line.id} className="flex items-center gap-3 py-2.5">
+                <span className="grid size-9 shrink-0 place-items-center rounded-full bg-surface-2 text-[15px]" aria-hidden>
                   {line.subscription ? '\u{1F501}' : (category?.icon ?? '\u{1F4B3}')}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[15px] text-ink">{line.description}</span>
                   <span className="block text-[12px] text-ink-3">
                     {formatDayShort(line.date)}
-                    {line.installment ? ` · ${line.installment.index}/${line.installment.total}` : ''}
+                    {line.installment ? ` · parcela ${line.installment.index}/${line.installment.total}` : ''}
                     {line.subscription ? ' · assinatura' : ''}
                   </span>
                 </span>
-                <span className="tnum shrink-0 text-[15px] font-semibold text-ink">
-                  {formatMoney(line.amount, { hidden })}
-                </span>
+                <span className="tnum shrink-0 text-[15px] font-semibold text-ink">{formatMoney(line.amount, { hidden })}</span>
               </li>
             );
           })}
         </ul>
       ) : (
-        <p className="py-6 text-center text-[14px] text-ink-3">
-          Sem compras nesta fatura.
-        </p>
+        <p className="py-6 text-center text-[14px] text-ink-3">Sem compras nesta fatura.</p>
       )}
 
-      <Button variant="ghost" size="md" className="mt-3 w-full" onClick={onAddPurchase}>
+      <Button variant="ghost" className="mt-3 w-full" onClick={onAddPurchase}>
         <Plus size={16} />
         Lançar compra no cartão
       </Button>
-    </Panel>
+    </div>
   );
 }
 
 /* ------------------------------------------------------------------- tela */
 
+interface FutureLine {
+  id: string;
+  description: string;
+  perInstallment: Cents;
+  /** parcelas que ainda não caíram em fatura nenhuma */
+  left: number;
+  total: number;
+  /** a parcela que está na fatura aberta */
+  current: number;
+}
+
+/**
+ * As parcelas que ainda vão cair, depois da fatura aberta.
+ *
+ * É o número que a fatura esconde: a compra de dez vezes aparece só como
+ * "R$ 420" hoje, mas ainda prende R$ 2.520 dos próximos meses.
+ */
+function futureInstallments(card: Card, entries: Entry[], openMonth: MonthKey): FutureLine[] {
+  const out: FutureLine[] = [];
+  for (const e of entries) {
+    if (e.cardId !== card.id || e.deletedAt || e.repeat.kind !== 'installments') continue;
+    const total = Math.max(1, Math.trunc(e.repeat.count ?? 1));
+    const first = invoiceMonthOf(card, e.date);
+    const current = monthsBetween(first, openMonth) + 1;
+    const left = total - Math.max(0, current);
+    if (left <= 0) continue;
+    out.push({ id: e.id, description: e.description, perInstallment: e.amount, left, total, current: Math.max(0, current) });
+  }
+  return out.sort((a, b) => b.perInstallment * b.left - a.perInstallment * a.left);
+}
+
+function monthsBetween(from: MonthKey, to: MonthKey): number {
+  const a = monthKeyParts(from);
+  const b = monthKeyParts(to);
+  return (b.y - a.y) * 12 + (b.m - a.m);
+}
+
+type Which = 'anterior' | 'atual' | 'proxima';
+
 export function CartoesView({
   spaceId,
-  month,
+  base,
   categories,
   hidden,
   startNew = false,
 }: {
   spaceId: string;
-  month: MonthKey;
+  base: FinanceBase;
   categories: Category[];
   hidden: boolean;
   /** veio do "novo cartão" de outra tela: abre o cadastro direto */
   startNew?: boolean;
 }) {
-  const { cards, subscriptions, entries } = useCardsData(spaceId, addMonthsToKey(month, 1));
+  const { cards, subscriptions, entries } = base;
   const [activeId, setActiveId] = React.useState('');
+  const [which, setWhich] = React.useState<Which>('atual');
   const [cardSheet, setCardSheet] = React.useState<{ open: boolean; editing: Card | null }>({
     open: false,
     editing: null,
@@ -340,32 +369,56 @@ export function CartoesView({
 
   const active = cards.find((c) => c.id === activeId) ?? cards[0] ?? null;
   const today = todayIso();
+  const month = monthKeyOf(today);
 
   const usageById = React.useMemo(() => {
     const map = new Map<string, number>();
-    for (const card of cards) {
-      map.set(card.id, cardUsage(card, entries, subscriptions, month, today).ratio);
-    }
+    for (const card of cards) map.set(card.id, cardUsage(card, entries, subscriptions, month, today).ratio);
     return map;
   }, [cards, entries, subscriptions, month, today]);
 
-  const invoice = React.useMemo(
-    () => (active ? buildInvoice(active, entries, subscriptions, month, today) : null),
-    [active, entries, subscriptions, month, today],
+  const data = React.useMemo(() => {
+    if (!active) return null;
+    // a fatura "atual" é a que recebe uma compra feita hoje
+    const openMonth = invoiceMonthOf(active, today);
+    const invoices = {
+      anterior: buildInvoice(active, entries, subscriptions, addMonthsToKey(openMonth, -1), today),
+      atual: buildInvoice(active, entries, subscriptions, openMonth, today),
+      proxima: buildInvoice(active, entries, subscriptions, addMonthsToKey(openMonth, 1), today),
+    };
+    const usage = cardUsage(active, entries, subscriptions, month, today);
+    const future = futureInstallments(active, entries, openMonth);
+    const futureTotal = future.reduce((t, f) => t + f.perInstallment * f.left, 0);
+    const subs = subscriptions.filter((s) => s.cardId === active.id && !s.canceledAt && !s.deletedAt);
+    return { openMonth, invoices, usage, future, futureTotal, subs };
+  }, [active, entries, subscriptions, month, today]);
+
+  const sheets = (
+    <>
+      <CardSheet state={cardSheet} spaceId={spaceId} onClose={() => setCardSheet({ open: false, editing: null })} />
+      {active ? (
+        <PurchaseSheet open={purchaseOpen} onClose={() => setPurchaseOpen(false)} spaceId={spaceId} card={active} categories={categories} />
+      ) : null}
+    </>
   );
 
-  const usage = React.useMemo(
-    () => (active ? cardUsage(active, entries, subscriptions, month, today) : null),
-    [active, entries, subscriptions, month, today],
-  );
+  if (!base.ready) {
+    return (
+      <div className="grid gap-4 pt-2 lg:grid-cols-2">
+        <Skeleton className="aspect-[1.586/1] rounded-[18px]" />
+        <Skeleton className="h-[320px] rounded-panel" />
+      </div>
+    );
+  }
 
   if (!cards.length) {
     return (
       <div className="pt-2">
-        <Panel className="px-5 py-8">
+        <Panel className="px-5 py-4">
           <EmptyState
-            title="Nenhum cartão ainda"
-            description="Cadastre um cartão para acompanhar o limite, lançar compras parceladas e ver a fatura se montar sozinha."
+            icon={<CreditCard size={22} />}
+            title="Ainda não há cartões"
+            description="Cadastre um cartão e a fatura se monta sozinha: compra depois do fechamento cai na seguinte, parcela aparece em cada mês e o limite conta o que ainda vem."
             action={
               <Button variant="primary" onClick={() => setCardSheet({ open: true, editing: null })}>
                 <Plus size={16} />
@@ -374,117 +427,161 @@ export function CartoesView({
             }
           />
         </Panel>
-        <CardSheet
-          state={cardSheet}
-          spaceId={spaceId}
-          onClose={() => setCardSheet({ open: false, editing: null })}
-        />
+        {sheets}
       </div>
     );
   }
 
-  return (
-    <div className="grid gap-4 pt-2">
-      <CardStack
-        cards={cards}
-        activeId={active?.id ?? ''}
-        onPick={setActiveId}
-        usageById={usageById}
-      />
+  const monthName = (m: MonthKey) => formatMonthLabel(m).replace(/ de \d{4}$/, '');
 
-      {active && usage && (
-        <Panel className="p-5">
-          <SectionTitle
-            action={
-              <span className="flex gap-1">
-                <button
-                  type="button"
-                  aria-label="Editar cartão"
-                  onClick={() => setCardSheet({ open: true, editing: active })}
-                  className="grid h-8 w-8 place-items-center rounded-full text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
-                >
-                  <Pencil size={15} />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Remover cartão"
-                  onClick={() => {
-                    if (confirm(`Remover o cartão ${active.name || active.institution}?`)) {
-                      void removeCard(active.id);
+  return (
+    <div className="grid gap-4 pt-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] lg:items-start lg:gap-6">
+      <div className="grid gap-4">
+        <CardStack cards={cards} activeId={active?.id ?? ''} onPick={setActiveId} usageById={usageById} />
+
+        {active && data ? (
+          <Panel className="p-5">
+            <SectionTitle
+              action={
+                <span className="flex gap-1">
+                  <IconButton label="Editar cartão" onClick={() => setCardSheet({ open: true, editing: active })}>
+                    <Pencil size={15} />
+                  </IconButton>
+                  <IconButton
+                    label="Remover cartão"
+                    onClick={async () => {
+                      const ok = await confirmAction({
+                        title: `Remover ${active.name || active.institution}?`,
+                        description: 'As compras lançadas nele continuam no histórico, mas deixam de formar fatura.',
+                        confirmLabel: 'Remover',
+                        danger: true,
+                      });
+                      if (!ok) return;
+                      await removeCard(active.id);
                       setActiveId('');
-                    }
-                  }}
-                  className="grid h-8 w-8 place-items-center rounded-full text-ink-3 transition-colors hover:bg-out-soft hover:text-out"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </span>
-            }
-          >
-            Limite
-          </SectionTitle>
+                      toast('Cartão removido.', { action: { label: 'Desfazer', onClick: () => void restoreRecord('cards', active.id) } });
+                    }}
+                  >
+                    <Trash2 size={15} />
+                  </IconButton>
+                </span>
+              }
+            >
+              Limite utilizado
+            </SectionTitle>
 
-          <dl className="grid grid-cols-3 gap-3">
-            <Stat label="Disponível" value={formatMoney(usage.available, { hidden, compact: true })} tone="in" />
-            <Stat label="Usado" value={formatMoney(usage.used, { hidden, compact: true })} tone="out" />
-            <Stat label="Total" value={formatMoney(active.limit, { hidden, compact: true })} />
-          </dl>
+            {active.limit > 0 ? (
+              <>
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="tnum text-[15px] text-ink-2">
+                    <strong className="text-[17px] font-semibold text-ink">{formatMoney(data.usage.used, { hidden })}</strong> de{' '}
+                    {formatMoney(active.limit, { hidden })}
+                  </p>
+                  <p className={cn('tnum text-[15px] font-semibold', data.usage.ratio >= 0.8 ? 'text-warn' : 'text-ink-2')}>
+                    {formatPercent(data.usage.ratio)}
+                  </p>
+                </div>
+                <Meter
+                  value={data.usage.ratio}
+                  tone={data.usage.ratio >= 0.9 ? 'out' : data.usage.ratio >= 0.8 ? 'warn' : 'accent'}
+                  label="Limite utilizado"
+                  valueText={`${formatPercent(data.usage.ratio)} do limite`}
+                  className="mt-2"
+                />
+                <p className="mt-2 text-[13px] text-ink-3">
+                  Disponível: <span className="font-medium text-in">{formatMoney(data.usage.available, { hidden })}</span> · conta as parcelas que ainda vêm, não só a fatura do mês.
+                </p>
+              </>
+            ) : (
+              <p className="text-[13px] text-ink-3">Informe o limite no cadastro para ver quanto ainda está livre.</p>
+            )}
 
-          <p className="mt-4 text-[12px] leading-relaxed text-ink-3">
-            O limite usado conta todas as parcelas ainda em aberto, não só a fatura do mês.
-          </p>
-        </Panel>
-      )}
+            <dl className="mt-4 grid grid-cols-2 gap-2 text-[13px]">
+              <div className="rounded-field bg-surface-2 px-3 py-2">
+                <dt className="text-ink-3">Fecha</dt>
+                <dd className="font-medium text-ink">todo dia {active.closingDay}</dd>
+              </div>
+              <div className="rounded-field bg-surface-2 px-3 py-2">
+                <dt className="text-ink-3">Vence</dt>
+                <dd className="font-medium text-ink">todo dia {active.dueDay}</dd>
+              </div>
+            </dl>
+          </Panel>
+        ) : null}
 
-      {active && invoice && (
-        <InvoicePanel
-          invoice={invoice}
-          card={active}
-          categories={categories}
-          hidden={hidden}
-          onAddPurchase={() => setPurchaseOpen(true)}
-        />
-      )}
+        {data && data.futureTotal > 0 ? (
+          <Panel className="p-5">
+            <SectionTitle>Comprometimento futuro</SectionTitle>
+            <p className="text-[15px] leading-snug text-ink">
+              Você tem <strong className="font-semibold">{formatMoney(data.futureTotal, { hidden })}</strong> em parcelas que ainda vão cair,
+              depois da fatura de {monthName(data.openMonth)}.
+            </p>
+            <ul className="mt-3 divide-y divide-line">
+              {data.future.map((f) => (
+                <li key={f.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <span className="min-w-0">
+                    <span className="block truncate text-[14px] text-ink">{f.description}</span>
+                    <span className="block text-[12px] text-ink-3">
+                      {f.current > 0 ? `parcela ${f.current}/${f.total} nesta fatura · ` : ''}faltam {f.left}× de {formatMoney(f.perInstallment, { hidden })}
+                    </span>
+                  </span>
+                  <span className="tnum shrink-0 text-[14px] font-semibold text-ink-2">{formatMoney(f.perInstallment * f.left, { hidden })}</span>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        ) : null}
+      </div>
 
-      <Button variant="ghost" className="w-full" onClick={() => setCardSheet({ open: true, editing: null })}>
-        <CreditCard size={16} />
-        Adicionar outro cartão
-      </Button>
+      <div className="grid gap-4">
+        {data ? (
+          <Panel className="p-5">
+            <Segmented
+              label="Qual fatura"
+              value={which}
+              onChange={setWhich}
+              options={[
+                { value: 'anterior', label: capitalize(monthName(addMonthsToKey(data.openMonth, -1))) },
+                { value: 'atual', label: `Atual · ${monthName(data.openMonth)}` },
+                { value: 'proxima', label: capitalize(monthName(addMonthsToKey(data.openMonth, 1))) },
+              ]}
+              className="mb-4"
+            />
+            <InvoicePanel invoice={data.invoices[which]} categories={categories} hidden={hidden} today={today} onAddPurchase={() => setPurchaseOpen(true)} />
+          </Panel>
+        ) : null}
 
-      <CardSheet
-        state={cardSheet}
-        spaceId={spaceId}
-        onClose={() => setCardSheet({ open: false, editing: null })}
-      />
+        {data && data.subs.length ? (
+          <Panel className="p-5">
+            <SectionTitle>Assinaturas neste cartão</SectionTitle>
+            <ul className="divide-y divide-line">
+              {data.subs.map((s) => (
+                <li key={s.id} className="flex items-center justify-between gap-3 py-2.5 text-[14px]">
+                  <span className="min-w-0 truncate text-ink">
+                    {s.name} <span className="text-ink-3">· dia {s.billingDay}</span>
+                  </span>
+                  <span className="tnum shrink-0 font-semibold text-ink-2">{formatMoney(s.amount, { hidden })}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[12px] text-ink-3">
+              Somam {formatMoney(data.subs.reduce((t, s) => t + (s.cycle === 'monthly' ? s.amount : 0), 0), { hidden })} por mês em toda fatura.
+            </p>
+          </Panel>
+        ) : null}
 
-      {active && (
-        <PurchaseSheet
-          open={purchaseOpen}
-          onClose={() => setPurchaseOpen(false)}
-          spaceId={spaceId}
-          card={active}
-          categories={categories}
-        />
-      )}
+        <Button variant="ghost" className="w-full" onClick={() => setCardSheet({ open: true, editing: null })}>
+          <CreditCard size={16} />
+          Adicionar outro cartão
+        </Button>
+      </div>
+
+      {sheets}
     </div>
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'in' | 'out' }) {
-  return (
-    <div className="min-w-0">
-      <dt className="truncate text-[11px] uppercase tracking-wider text-ink-3">{label}</dt>
-      <dd
-        className={cn(
-          'tnum mt-1 truncate text-[15px] font-semibold',
-          tone === 'in' ? 'text-in' : tone === 'out' ? 'text-out' : 'text-ink',
-        )}
-      >
-        {value}
-      </dd>
-    </div>
-  );
-}
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /* ------------------------------------------------------- folha do cartão */
 
@@ -563,6 +660,7 @@ function CardSheet({
       };
       if (editing) await updateCard(editing, payload);
       else await createCard(payload);
+      toast(editing ? 'Cartão atualizado.' : 'Cartão criado. As compras já podem ir para ele.');
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não consegui salvar.');
@@ -759,6 +857,7 @@ function PurchaseSheet({
       setInstallments('1');
       setCategoryId('');
       setError(null);
+      toast(count > 1 ? `Compra lançada em ${count}×.` : 'Compra lançada no cartão.');
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não consegui salvar.');

@@ -245,3 +245,89 @@ export const DEBT_KINDS: { key: Debt['kind']; label: string; icon: string }[] = 
   { key: 'card', label: 'Parcelado no cartão', icon: '\u{1F4B3}' },
   { key: 'other', label: 'Outra', icon: '\u{1F4E6}' },
 ];
+
+/* ------------------------------------------------------- detalhe e cenários */
+
+export interface DebtDetails {
+  paid: number;
+  remaining: number;
+  /** soma de todas as parcelas do contrato */
+  contractTotal: Cents;
+  /** soma das parcelas que faltam, sem descontar juros */
+  remainingNominal: Cents;
+  /**
+   * Saldo devedor de verdade: as parcelas que faltam trazidas a valor de
+   * hoje pela taxa. É o que o banco cobraria para quitar agora. Sem taxa
+   * informada, é igual ao nominal.
+   */
+  balance: Cents;
+  /** juros embutidos no que ainda falta pagar */
+  interestAhead: Cents;
+  /** o valor que foi emprestado, estimado pela taxa; null sem taxa */
+  principal: Cents | null;
+  lastMonth: MonthKey;
+}
+
+const pv = (installment: Cents, rate: number, n: number): Cents =>
+  rate > 0 && n > 0 ? Math.round((installment * (1 - Math.pow(1 + rate, -n))) / rate) : installment * n;
+
+export function debtDetails(debt: Debt, month: MonthKey): DebtDetails {
+  const p = debtProgress(debt, month);
+  const rate = Math.max(0, debt.monthlyRate) / 100;
+  const count = Math.max(1, Math.trunc(debt.installments));
+  const balance = pv(debt.installment, rate, p.remaining);
+  return {
+    paid: p.paid,
+    remaining: p.remaining,
+    contractTotal: p.total,
+    remainingNominal: p.outstanding,
+    balance,
+    interestAhead: Math.max(0, p.outstanding - balance),
+    principal: rate > 0 ? pv(debt.installment, rate, count) : null,
+    lastMonth: p.lastMonth,
+  };
+}
+
+export interface ExtraPaymentResult {
+  extra: Cents;
+  /** meses até quitar pagando parcela + extra, a partir do mês seguinte */
+  months: number;
+  monthsSaved: number;
+  payoffMonth: MonthKey;
+  /** quanto sai no total daqui até quitar */
+  totalPaid: Cents;
+  /** comparado a só pagar as parcelas */
+  interestSaved: Cents;
+}
+
+/**
+ * "Se eu pagar R$ 500 a mais por mês…"
+ *
+ * O extra abate o saldo devedor, e os juros do mês seguinte já incidem sobre
+ * um saldo menor — é por isso que antecipar numa dívida de 4% ao mês rende
+ * mais que qualquer investimento. Sem taxa informada, pagar a mais só adianta
+ * o fim; a tela diz isso em vez de prometer economia.
+ */
+export function simulateExtra(debt: Debt, month: MonthKey, extra: Cents): ExtraPaymentResult {
+  const d = debtDetails(debt, month);
+  const rate = Math.max(0, debt.monthlyRate) / 100;
+  const payment = debt.installment + Math.max(0, extra);
+  let balance = d.balance;
+  let months = 0;
+  let total = 0;
+  while (balance > 0 && months < 600) {
+    months += 1;
+    balance = Math.round(balance * (1 + rate));
+    const pay = Math.min(balance, payment);
+    balance -= pay;
+    total += pay;
+  }
+  return {
+    extra,
+    months,
+    monthsSaved: Math.max(0, d.remaining - months),
+    payoffMonth: addMonthsToKey(month, months),
+    totalPaid: total,
+    interestSaved: Math.max(0, d.remainingNominal - total),
+  };
+}

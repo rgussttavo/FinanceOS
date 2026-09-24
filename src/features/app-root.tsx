@@ -292,7 +292,9 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       content = <PlanejamentoView spaceId={spaceId} base={base} cash={cash} hidden={hidden} cardsEnabled={cardsEnabled} onGo={go} />;
       break;
     case 'patrimonio':
-      content = <PatrimonioView spaceId={spaceId} month={current} hidden={hidden} />;
+      content = (
+        <PatrimonioView spaceId={spaceId} base={base} cashNow={cash.balanceNow} hidden={hidden} cardsEnabled={cardsEnabled} onGo={go} />
+      );
       break;
     case 'mais':
       content = <MaisView hiddenViews={hiddenViews} onGo={go} />;
@@ -303,16 +305,16 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       );
       break;
     case 'cartoes':
-      content = <CartoesView spaceId={spaceId} month={month} categories={categories} hidden={hidden} startNew={startNew} />;
+      content = <CartoesView spaceId={spaceId} base={base} categories={categories} hidden={hidden} startNew={startNew} />;
       break;
     case 'assinaturas':
-      content = <AssinaturasView spaceId={spaceId} month={month} categories={categories} hidden={hidden} startNew={startNew} />;
+      content = <AssinaturasView spaceId={spaceId} base={base} categories={categories} hidden={hidden} startNew={startNew} />;
       break;
     case 'metas':
-      content = <MetasView spaceId={spaceId} month={month} categories={categories} hidden={hidden} startNew={startNew} />;
+      content = <MetasView spaceId={spaceId} base={base} categories={categories} hidden={hidden} startNew={startNew} onQuick={openQuick} />;
       break;
     case 'dividas':
-      content = <DividasView spaceId={spaceId} month={month} hidden={hidden} startNew={startNew} />;
+      content = <DividasView spaceId={spaceId} base={base} hidden={hidden} startNew={startNew} />;
       break;
     case 'orcamento':
       content = <OrcamentoView spaceId={spaceId} hidden={hidden} />;
@@ -455,7 +457,8 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       </div>
 
       <BottomNav view={view} onGo={(r) => go(r)} />
-      <Fab onClick={() => openQuick()} />
+      {/* telas com barra de ação própria no pé não levam o botão flutuante por cima */}
+      {view === 'importar' || view === 'ia' || view === 'busca' ? null : <Fab onClick={() => openQuick()} />}
 
       <QuickAddSheet
         open={quick !== null}

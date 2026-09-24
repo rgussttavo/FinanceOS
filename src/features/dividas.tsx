@@ -1,48 +1,64 @@
 'use client';
 
 import * as React from 'react';
-import { ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, Plus, Trash2 } from 'lucide-react';
 import {
   Button,
   EmptyState,
   Field,
   Input,
+  Meter,
   Panel,
   SectionTitle,
   Segmented,
   Select,
   Sheet,
+  Skeleton,
+  Switch,
+  confirmAction,
+  toast,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import { currentMonthKey, formatMonthLabel } from '@/lib/dates';
+import { addMonthsToKey, currentMonthKey, formatMonthLabel } from '@/lib/dates';
 import {
   DEBT_KINDS,
+  debtDetails,
   debtProgress,
+  simulateExtra,
   simulateLoan,
   simulateOverdraft,
   simulatePayoff,
+  type DebtDetails,
   type PayoffStrategy,
 } from '@/lib/debts';
 import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
-import { createDebt, removeDebt, updateDebt, useDebts } from '@/lib/store';
+import type { FinanceBase } from '@/lib/picture';
+import { createDebt, removeDebt, updateDebt } from '@/lib/store';
 import type { Debt, MonthKey } from '@/lib/types';
 
 /* ------------------------------------------------------------------- tela */
 
 type Tool = null | 'loan' | 'overdraft' | 'payoff';
 
+/**
+ * Dívidas que encolhem à vista.
+ *
+ * Cada uma mostra o que foi contratado, o que ainda falta, os juros que ainda
+ * vêm e quando acaba. E responde a pergunta que muda comportamento: "se eu
+ * pagar um pouco a mais por mês, quanto tempo e quanto dinheiro eu ganho?".
+ */
 export function DividasView({
   spaceId,
-  month,
+  base,
   hidden,
   startNew = false,
 }: {
   spaceId: string;
-  month: MonthKey;
+  base: FinanceBase;
   hidden: boolean;
   startNew?: boolean;
 }) {
-  const debts = useDebts(spaceId);
+  const month = currentMonthKey();
   const [sheet, setSheet] = React.useState<{ open: boolean; editing: Debt | null }>({
     open: false,
     editing: null,
@@ -53,147 +69,286 @@ export function DividasView({
     setSheet({ open: true, editing: null });
   }
   const [tool, setTool] = React.useState<Tool>(null);
+  const [openId, setOpenId] = React.useState<string | null>(null);
 
-  const rows = debts.map((debt) => ({ debt, progress: debtProgress(debt, month) }));
-  const outstanding = rows.reduce((sum, r) => sum + r.progress.outstanding, 0);
-  const monthly = rows.filter((r) => !r.progress.done).reduce((sum, r) => sum + r.debt.installment, 0);
+  const open = base.debts.filter((d) => !d.settledAt);
+  const rows = open
+    .map((debt) => ({ debt, d: debtDetails(debt, month) }))
+    .filter((r) => r.d.remaining > 0)
+    .sort((a, b) => b.debt.monthlyRate - a.debt.monthlyRate || b.d.remainingNominal - a.d.remainingNominal);
+  const finished = base.debts.filter((d) => d.settledAt || debtDetails(d, month).remaining === 0);
 
-  return (
-    <div className="grid gap-4 pt-2">
-      {rows.length > 0 && (
-        <Panel className="p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
-            Ainda falta pagar
-          </p>
-          <p className="amount mt-1.5 text-[38px] text-ink">
-            {hidden ? '••••' : formatMoney(outstanding)}
-          </p>
-          <dl className="mt-5 grid grid-cols-2 gap-3 border-t border-line pt-4">
-            <div>
-              <dt className="text-[11px] uppercase tracking-wider text-ink-3">Por mês</dt>
-              <dd className="tnum mt-1 text-[15px] font-semibold text-out">
-                {formatMoney(monthly, { hidden, compact: true })}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[11px] uppercase tracking-wider text-ink-3">Dívidas abertas</dt>
-              <dd className="tnum mt-1 text-[15px] font-semibold text-ink">
-                {rows.filter((r) => !r.progress.done).length}
-              </dd>
-            </div>
-          </dl>
-        </Panel>
-      )}
+  const left = rows.reduce((t, r) => t + r.d.remainingNominal, 0);
+  const monthly = rows.reduce((t, r) => t + r.debt.installment, 0);
+  const interestAhead = rows.reduce((t, r) => t + r.d.interestAhead, 0);
+  const last = rows.reduce<string | null>((max, r) => (!max || r.d.lastMonth > max ? r.d.lastMonth : max), null);
 
-      <Panel className="px-5 py-4">
-        <SectionTitle
-          action={
-            <button
-              type="button"
-              aria-label="Cadastrar dívida"
-              onClick={() => setSheet({ open: true, editing: null })}
-              className="grid h-8 w-8 place-items-center rounded-full text-accent transition-colors hover:bg-accent-soft"
-            >
-              <Plus size={17} />
-            </button>
-          }
-        >
-          Dívidas
-        </SectionTitle>
+  // estou reduzindo o passivo? o mesmo cálculo de seis meses atrás
+  const sixAgo = addMonthsToKey(month, -6);
+  const before = open
+    .filter((debt) => debt.startMonth <= sixAgo)
+    .reduce((t, debt) => t + debtDetails(debt, sixAgo).remainingNominal, 0);
+  const newSince = open.filter((debt) => debt.startMonth > sixAgo).reduce((t, debt) => t + debtDetails(debt, month).remainingNominal, 0);
 
-        {rows.length ? (
-          <ul className="divide-y divide-line">
-            {rows.map(({ debt, progress }) => (
-              <li key={debt.id}>
-                <button
-                  type="button"
-                  onClick={() => setSheet({ open: true, editing: debt })}
-                  className="flex w-full items-center gap-3 py-3.5 text-left"
-                >
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-surface-2 text-[18px]">
-                    {debt.icon}
-                  </span>
-
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-[15px] text-ink">{debt.name}</span>
-                      <span className="tnum shrink-0 text-[15px] font-semibold text-ink">
-                        {formatMoney(progress.outstanding, { hidden })}
-                      </span>
-                    </span>
-
-                    <span className="mt-1 block text-[12px] text-ink-3">
-                      {progress.paid} de {debt.installments} parcelas ·{' '}
-                      {formatMoney(debt.installment, { hidden, compact: true })} por mês
-                    </span>
-
-                    {/* as parcelas acendem uma a uma: ver o carnê encher motiva
-                        mais do que ver um número cair */}
-                    <span className="mt-2 flex gap-[3px]" aria-hidden>
-                      {Array.from({ length: Math.min(debt.installments, 24) }, (_, i) => (
-                        <span
-                          key={i}
-                          className={cn(
-                            'h-1.5 flex-1 rounded-full transition-colors',
-                            i < progress.paid ? 'bg-in' : 'bg-surface-3',
-                          )}
-                        />
-                      ))}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <EmptyState
-            title="Nenhuma dívida cadastrada"
-            description="Cadastre empréstimos, financiamentos, consignados e compras parceladas. O app acompanha as parcelas e o saldo devedor sozinho, mês a mês."
-            action={
-              <Button variant="primary" onClick={() => setSheet({ open: true, editing: null })}>
-                <Plus size={16} />
-                Cadastrar dívida
-              </Button>
-            }
-          />
-        )}
-      </Panel>
-
-      <Panel className="px-5 py-4">
-        <SectionTitle>Simuladores</SectionTitle>
-        <ul className="divide-y divide-line">
-          <ToolRow
-            title="Simulador de empréstimo"
-            detail="Parcela e custo real de um financiamento"
-            onClick={() => setTool('loan')}
-          />
-          <ToolRow
-            title="Simulador do cheque especial"
-            detail="O tamanho do estrago dos juros"
-            onClick={() => setTool('overdraft')}
-          />
-          <ToolRow
-            title="Simulador de quitação"
-            detail="Avalanche, bola de neve e aporte extra"
-            onClick={() => setTool('payoff')}
-          />
-        </ul>
-      </Panel>
-
-      <DebtSheet
-        state={sheet}
-        spaceId={spaceId}
-        month={month}
-        onClose={() => setSheet({ open: false, editing: null })}
-      />
+  const sheets = (
+    <>
+      <DebtSheet state={sheet} spaceId={spaceId} month={month} onClose={() => setSheet({ open: false, editing: null })} />
       <LoanSheet open={tool === 'loan'} onClose={() => setTool(null)} />
       <OverdraftSheet open={tool === 'overdraft'} onClose={() => setTool(null)} />
-      <PayoffSheet
-        open={tool === 'payoff'}
-        onClose={() => setTool(null)}
-        debts={debts}
-        month={month}
-      />
+      <PayoffSheet open={tool === 'payoff'} onClose={() => setTool(null)} debts={open} month={month} />
+    </>
+  );
+
+  if (!base.ready) {
+    return (
+      <div className="grid gap-4 pt-2">
+        <Skeleton className="h-[180px] rounded-panel" />
+        <Skeleton className="h-[260px] rounded-panel" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 pt-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)] lg:items-start lg:gap-6">
+      <div className="grid gap-4">
+        {rows.length > 0 ? (
+          <Panel className="p-5">
+            <p className="text-[13px] text-ink-3">Ainda falta pagar</p>
+            <p className="amount mt-1.5 text-[40px] text-ink">{formatMoney(left, { hidden })}</p>
+            <dl className="mt-4 grid grid-cols-2 gap-2 text-[13px]">
+              <div className="rounded-field bg-surface-2 px-3 py-2">
+                <dt className="text-ink-3">Por mês</dt>
+                <dd className="tnum font-semibold text-out">{formatMoney(monthly, { hidden })}</dd>
+              </div>
+              <div className="rounded-field bg-surface-2 px-3 py-2">
+                <dt className="text-ink-3">Última parcela</dt>
+                <dd className="font-semibold text-ink">{last ? formatMonthLabel(last) : '—'}</dd>
+              </div>
+              {interestAhead > 0 ? (
+                <div className="col-span-2 rounded-field bg-surface-2 px-3 py-2">
+                  <dt className="text-ink-3">Juros que ainda estão embutidos</dt>
+                  <dd className="tnum font-semibold text-ink">{formatMoney(interestAhead, { hidden })}</dd>
+                </div>
+              ) : null}
+            </dl>
+            {before > 0 ? (
+              <p className="mt-3 text-[13px] leading-snug text-ink-2">
+                {left - newSince < before ? (
+                  <>
+                    Há seis meses faltavam {formatMoney(before, { hidden })} das dívidas de então. Você reduziu{' '}
+                    <strong className="font-semibold text-in">{formatMoney(before - (left - newSince), { hidden })}</strong>.
+                  </>
+                ) : (
+                  <>O saldo das dívidas antigas não diminuiu nos últimos seis meses.</>
+                )}
+                {newSince > 0 ? ` Nesse tempo entraram ${formatMoney(newSince, { hidden })} em dívidas novas.` : ''}
+              </p>
+            ) : null}
+          </Panel>
+        ) : null}
+
+        <Panel className="px-5 py-4">
+          <SectionTitle>Simuladores</SectionTitle>
+          <ul className="divide-y divide-line">
+            <ToolRow title="Quitar dívidas" detail="Avalanche ou bola de neve, com aporte extra" onClick={() => setTool('payoff')} />
+            <ToolRow title="Empréstimo" detail="Parcela e custo real antes de assinar" onClick={() => setTool('loan')} />
+            <ToolRow title="Cheque especial" detail="O tamanho do estrago dos juros" onClick={() => setTool('overdraft')} />
+          </ul>
+        </Panel>
+      </div>
+
+      <div className="grid gap-4">
+        <Panel className="px-5 py-4">
+          <SectionTitle
+            action={
+              <Button size="sm" variant="soft" onClick={() => setSheet({ open: true, editing: null })}>
+                <Plus size={15} /> Registrar
+              </Button>
+            }
+          >
+            {rows.length ? `${rows.length} ${rows.length === 1 ? 'dívida aberta' : 'dívidas abertas'}` : 'Dívidas'}
+          </SectionTitle>
+
+          {rows.length ? (
+            <ul className="grid gap-3">
+              {rows.map(({ debt, d }) => (
+                <DebtCard
+                  key={debt.id}
+                  debt={debt}
+                  d={d}
+                  month={month}
+                  hidden={hidden}
+                  expanded={openId === debt.id}
+                  onToggle={() => setOpenId((id) => (id === debt.id ? null : debt.id))}
+                  onEdit={() => setSheet({ open: true, editing: debt })}
+                />
+              ))}
+            </ul>
+          ) : (
+            <EmptyState
+              compact
+              title="Nenhuma dívida aberta"
+              description="Registre empréstimos, financiamentos e consignados. O app acompanha parcela por parcela e mostra quanto você economiza pagando um pouco a mais."
+              action={
+                <Button variant="primary" onClick={() => setSheet({ open: true, editing: null })}>
+                  <Plus size={16} />
+                  Registrar dívida
+                </Button>
+              }
+            />
+          )}
+        </Panel>
+
+        {finished.length ? (
+          <Panel className="px-5 py-4">
+            <SectionTitle>Quitadas</SectionTitle>
+            <ul className="divide-y divide-line">
+              {finished.map((debt) => (
+                <li key={debt.id} className="flex items-center gap-3 py-2.5">
+                  <span className="grid size-8 place-items-center rounded-full bg-in-soft text-in" aria-hidden>
+                    <Check size={15} />
+                  </span>
+                  <span className="flex-1 text-[14px] text-ink-2">{debt.name}</span>
+                  <button type="button" onClick={() => setSheet({ open: true, editing: debt })} className="h-8 text-[12px] text-ink-3 hover:text-ink">
+                    Editar
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        ) : null}
+      </div>
+
+      {sheets}
+    </div>
+  );
+}
+
+const EXTRAS = [10000, 30000, 50000];
+
+function DebtCard({
+  debt,
+  d,
+  month,
+  hidden,
+  expanded,
+  onToggle,
+  onEdit,
+}: {
+  debt: Debt;
+  d: DebtDetails;
+  month: MonthKey;
+  hidden: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+}) {
+  const [customText, setCustomText] = React.useState('');
+  const custom = parseMoney(customText) ?? 0;
+  const scenarios = [...EXTRAS, ...(custom > 0 && !EXTRAS.includes(custom) ? [custom] : [])].map((extra) => simulateExtra(debt, month, extra));
+  const count = Math.max(1, Math.trunc(debt.installments));
+  const hasRate = debt.monthlyRate > 0;
+
+  return (
+    <li className="rounded-card border border-line">
+      <button type="button" onClick={onToggle} aria-expanded={expanded} className="w-full p-4 text-left">
+        <span className="flex items-start gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-surface-2 text-[18px]" aria-hidden>
+            {debt.icon}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-baseline justify-between gap-2">
+              <span className="truncate text-[15px] font-medium text-ink">{debt.name}</span>
+              <span className="tnum shrink-0 text-[15px] font-semibold text-ink">{formatMoney(d.remainingNominal, { hidden })}</span>
+            </span>
+            <span className="mt-0.5 block text-[12px] text-ink-3">
+              {d.paid} de {count} parcelas · {formatMoney(debt.installment, { hidden })}/mês · termina {formatMonthLabel(d.lastMonth)}
+            </span>
+          </span>
+        </span>
+        <Meter value={d.paid / count} tone="in" label={`${debt.name}: parcelas pagas`} valueText={`${d.paid} de ${count} parcelas`} className="mt-3" height={6} />
+      </button>
+
+      {expanded ? (
+        <div className="border-t border-line px-4 pb-4 pt-3">
+          <dl className="grid grid-cols-2 gap-2 text-[13px]">
+            <Fact label="Contrato" value={formatMoney(d.contractTotal, { hidden })} />
+            <Fact label="Juros" value={hasRate ? `${debt.monthlyRate.toLocaleString('pt-BR')}% ao mês` : 'não informado'} />
+            <Fact label="Para quitar hoje" value={formatMoney(d.balance, { hidden })} hint={hasRate ? 'saldo devedor pela taxa' : 'sem desconto de juros'} />
+            <Fact label="Juros que ainda vêm" value={hasRate ? formatMoney(d.interestAhead, { hidden }) : '—'} />
+          </dl>
+
+          <p className="mt-4 text-[13px] font-medium text-ink">Se você pagar a mais por mês…</p>
+          <div className="mt-2 overflow-hidden rounded-field border border-line">
+            <table className="w-full text-left text-[13px]">
+              <thead className="bg-surface-2 text-[11px] uppercase tracking-wider text-ink-3">
+                <tr>
+                  <th className="px-3 py-2 font-medium">A mais</th>
+                  <th className="px-3 py-2 font-medium">Termina</th>
+                  <th className="px-3 py-2 text-right font-medium">Economia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scenarios.map((sc) => (
+                  <tr key={sc.extra} className="border-t border-line">
+                    <td className="tnum px-3 py-2 text-ink">+{formatMoney(sc.extra, { hidden, compact: true })}</td>
+                    <td className="px-3 py-2 text-ink-2">
+                      {formatMonthLabel(sc.payoffMonth)}
+                      {sc.monthsSaved > 0 ? <span className="text-in"> · −{sc.monthsSaved} {sc.monthsSaved === 1 ? 'mês' : 'meses'}</span> : null}
+                    </td>
+                    <td className={cn('tnum px-3 py-2 text-right font-semibold', sc.interestSaved > 0 ? 'text-in' : 'text-ink-3')}>
+                      {hasRate ? formatMoney(sc.interestSaved, { hidden }) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <Input
+              value={customText}
+              onChange={(e) => setCustomText(e.target.value)}
+              inputMode="decimal"
+              placeholder="Outro valor, ex.: 250"
+              aria-label="Outro valor a mais por mês"
+              className="h-10 text-[14px]"
+            />
+          </div>
+          {!hasRate ? (
+            <p className="mt-2 text-[12px] leading-snug text-ink-3">
+              Sem a taxa de juros, pagar a mais só adianta o fim. Informe a taxa no cadastro para ver a economia.
+            </p>
+          ) : null}
+
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <Button size="sm" onClick={onEdit}>
+              Editar
+            </Button>
+            <Button
+              size="sm"
+              variant="soft"
+              onClick={async () => {
+                await updateDebt(debt, { settledAt: new Date().toISOString() });
+                toast(`${debt.name} quitada. Uma a menos.`, {
+                  action: { label: 'Desfazer', onClick: () => void updateDebt(debt, { settledAt: null }) },
+                });
+              }}
+            >
+              <Check size={15} /> Quitei
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-field bg-surface-2 px-3 py-2">
+      <dt className="text-ink-3">{label}</dt>
+      <dd className="tnum font-semibold text-ink">{value}</dd>
+      {hint ? <dd className="text-[11px] text-ink-3">{hint}</dd> : null}
     </div>
   );
 }
@@ -244,6 +399,8 @@ function DebtSheet({
   const [count, setCount] = React.useState('12');
   const [startMonth, setStartMonth] = React.useState(month);
   const [rate, setRate] = React.useState('');
+  const [dueDay, setDueDay] = React.useState('10');
+  const [inFlow, setInFlow] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
   const [loadedFor, setLoadedFor] = React.useState('');
@@ -256,6 +413,8 @@ function DebtSheet({
     setCount(editing ? String(editing.installments) : '12');
     setStartMonth(editing?.startMonth ?? month);
     setRate(editing ? String(editing.monthlyRate).replace('.', ',') : '');
+    setDueDay(String(editing?.dueDay ?? 10));
+    setInFlow(editing?.inFlow ?? true);
     setError(null);
   }
 
@@ -275,10 +434,15 @@ function DebtSheet({
       installments: Math.max(1, Number(count) || 1),
       startMonth,
       monthlyRate: Number(String(rate).replace(',', '.')) || 0,
-      inFlow: true,
+      inFlow,
     };
-    if (editing) await updateDebt(editing, payload);
-    else await createDebt(payload);
+    const day = Math.min(31, Math.max(1, Number(dueDay) || 10));
+    if (editing) await updateDebt(editing, { ...payload, dueDay: day });
+    else {
+      const created = await createDebt(payload);
+      await updateDebt(created, { dueDay: day });
+    }
+    toast(editing ? 'Dívida atualizada.' : 'Dívida registrada. As parcelas já entram no mês.');
     onClose();
   }
 
@@ -297,7 +461,7 @@ function DebtSheet({
               variant="danger"
               className="w-full"
               onClick={async () => {
-                if (!confirm(`Apagar ${editing.name}?`)) return;
+                if (!(await confirmAction({ title: `Apagar ${editing.name}?`, description: 'Se ela foi quitada, prefira marcar como quitada: o histórico fica.', confirmLabel: 'Apagar', danger: true }))) return;
                 await removeDebt(editing.id);
                 onClose();
               }}
@@ -366,6 +530,26 @@ function DebtSheet({
             />
           </Field>
         </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Vence todo dia" htmlFor="debt-due">
+            <Input
+              id="debt-due"
+              value={dueDay}
+              onChange={(e) => setDueDay(e.target.value.replace(/\D/g, '').slice(0, 2))}
+              inputMode="numeric"
+              className="tnum"
+            />
+          </Field>
+        </div>
+
+        <Switch
+          checked={inFlow}
+          onChange={setInFlow}
+          label="Contar a parcela nas despesas"
+          detail="Ela entra no mês, no dia do vencimento, e pesa no saldo previsto."
+          className="border-y border-line"
+        />
 
         {installmentText && count && (
           <p className="rounded-field bg-surface-2 px-3 py-2.5 text-[13px] text-ink-2">

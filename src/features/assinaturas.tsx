@@ -1,10 +1,11 @@
 'use client';
 
 import * as React from 'react';
-import { Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import {
   Button,
+  Chip,
   EmptyState,
   Field,
   Input,
@@ -13,64 +14,76 @@ import {
   Segmented,
   Select,
   Sheet,
+  Skeleton,
+  confirmAction,
+  toast,
 } from '@/components/ui';
 import { subscriptionChargeIn } from '@/lib/cards';
 import { cn } from '@/lib/cn';
-import { currentMonthKey, monthKeyOf } from '@/lib/dates';
+import { addMonthsToKey, currentMonthKey, dateInMonth, formatDayShort, formatRelativeDay, monthKeyOf, todayIso } from '@/lib/dates';
 import { formatMoney, parseMoney } from '@/lib/money';
 import { identify } from '@/lib/services';
-import {
-  cancelSubscription,
-  createSubscription,
-  removeSubscription,
-  updateSubscription,
-  useAllSubscriptions,
-  useCards,
-} from '@/lib/store';
-import type { Card, Category, MonthKey, Subscription } from '@/lib/types';
+import type { FinanceBase } from '@/lib/picture';
+import { cancelSubscription, createSubscription, removeSubscription, updateSubscription } from '@/lib/store';
+import type { Card, Category, Cents, Subscription } from '@/lib/types';
+
+/**
+ * Assinaturas: quanto custa manter seu estilo de vida digital.
+ *
+ * A tela abre com a resposta — por mês e por ano — e cada serviço diz quando
+ * cobra de novo, em qual cartão e se subiu de preço. Marcar o que é
+ * dispensável mostra quanto daria para economizar; cancelar continua sendo
+ * decisão da pessoa, feita no serviço, nunca pelo app.
+ */
+
+/** a próxima cobrança a partir de hoje, respeitando o ciclo anual */
+export function nextCharge(sub: Subscription, today = todayIso()): string | null {
+  if (sub.canceledAt) return null;
+  let month = monthKeyOf(today);
+  for (let i = 0; i < 13; i++) {
+    if (subscriptionChargeIn(sub, month)) {
+      const date = dateInMonth(month, sub.billingDay);
+      if (date >= today && date >= sub.startedAt) return date;
+    }
+    month = addMonthsToKey(month, 1);
+  }
+  return null;
+}
+
+const yearlyOf = (s: Subscription): Cents => (s.cycle === 'monthly' ? s.amount * 12 : s.amount);
+const monthlyOf = (s: Subscription): Cents => (s.cycle === 'monthly' ? s.amount : Math.round(s.amount / 12));
 
 /* ---------------------------------------------------------------- resumo */
 
-function Summary({
-  monthly,
-  yearly,
-  priciest,
-  count,
-  hidden,
-}: {
-  monthly: number;
-  yearly: number;
-  priciest: Subscription | null;
-  count: number;
-  hidden: boolean;
-}) {
+function Summary({ active, hidden }: { active: Subscription[]; hidden: boolean }) {
+  const monthly = active.reduce((t, s) => t + monthlyOf(s), 0);
+  const yearly = active.reduce((t, s) => t + yearlyOf(s), 0);
+  const dispensable = active.filter((s) => s.essential === false);
+  const saving = dispensable.reduce((t, s) => t + monthlyOf(s), 0);
+  const unrated = active.filter((s) => s.essential == null).length;
+
   return (
     <Panel className="p-5">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
-        Assinaturas do mês
+      <p className="text-[13px] text-ink-3">Quanto custa manter seu estilo de vida digital</p>
+      <p className="amount mt-1.5 text-[42px] text-ink">
+        {formatMoney(monthly, { hidden })}
+        <span className="ml-1.5 font-sans text-[15px] text-ink-3">/ mês</span>
       </p>
-      <p className="amount mt-1.5 text-[38px] text-ink">
-        {hidden ? '••••' : formatMoney(monthly)}
+      <p className="mt-1 text-[15px] text-ink-2">
+        <strong className="font-semibold text-ink">{formatMoney(yearly, { hidden })}</strong> por ano, em {active.length}{' '}
+        {active.length === 1 ? 'assinatura' : 'assinaturas'}
       </p>
 
-      <dl className="mt-5 grid grid-cols-3 gap-3 border-t border-line pt-4">
-        <div className="min-w-0">
-          <dt className="text-[11px] uppercase tracking-wider text-ink-3">Custo anual</dt>
-          <dd className="tnum mt-1 truncate text-[15px] font-semibold text-ink">
-            {formatMoney(yearly, { hidden, compact: true })}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-[11px] uppercase tracking-wider text-ink-3">Mais cara</dt>
-          <dd className="mt-1 truncate text-[15px] font-semibold text-ink">
-            {priciest ? priciest.name : '—'}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-[11px] uppercase tracking-wider text-ink-3">Ativas</dt>
-          <dd className="tnum mt-1 text-[15px] font-semibold text-ink">{count}</dd>
-        </div>
-      </dl>
+      {saving > 0 ? (
+        <p className="mt-4 rounded-card bg-in-soft px-4 py-3 text-[14px] leading-snug text-ink">
+          Você pode economizar <strong className="text-in">{formatMoney(saving, { hidden })}/mês</strong> (
+          {formatMoney(saving * 12, { hidden })} por ano) cancelando as {dispensable.length} marcadas como dispensáveis.
+        </p>
+      ) : unrated > 0 ? (
+        <p className="mt-4 rounded-card bg-surface-2 px-4 py-3 text-[13px] leading-snug text-ink-2">
+          Marque o que é essencial e o que é dispensável: eu mostro quanto daria para economizar.
+        </p>
+      ) : null}
     </Panel>
   );
 }
@@ -91,43 +104,63 @@ function SubscriptionRow({
   const identity = identify(sub.name, sub.domain, sub.color);
   const card = cards.find((c) => c.id === sub.cardId) ?? null;
   const canceled = Boolean(sub.canceledAt);
+  const next = nextCharge(sub);
+  const previous = sub.priceHistory?.[sub.priceHistory.length - 1];
+  const raise = previous ? sub.amount - previous.amount : 0;
 
   const where = canceled
-    ? 'cancelada'
+    ? `cancelada em ${formatDayShort(sub.canceledAt!)}`
     : card
-      ? `${card.institution || card.name}${card.last4 ? ` ····${card.last4}` : ''}`
-      : 'no saldo';
+      ? `${card.name || card.institution}${card.last4 ? ` ····${card.last4}` : ''}`
+      : 'débito na conta';
+
+  async function rate(value: boolean | null) {
+    await updateSubscription(sub, { essential: value });
+  }
 
   return (
-    <li>
-      <button
-        type="button"
-        onClick={onEdit}
-        className="flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-surface-2"
-      >
-        <Logo
-          domain={identity.domain}
-          initials={identity.initials}
-          color={identity.color}
-          size={40}
-          radius={11}
-          className={cn(canceled && 'opacity-40 grayscale')}
-        />
-
-        <span className="min-w-0 flex-1">
-          <span className={cn('block truncate text-[15px]', canceled ? 'text-ink-3 line-through' : 'text-ink')}>
-            {sub.name}
+    <li className="py-3">
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={onEdit} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+          <Logo
+            domain={identity.domain}
+            initials={identity.initials}
+            color={identity.color}
+            size={42}
+            radius={11}
+            className={cn(canceled && 'opacity-40 grayscale')}
+          />
+          <span className="min-w-0 flex-1">
+            <span className={cn('block truncate text-[15px]', canceled ? 'text-ink-3 line-through' : 'text-ink')}>{sub.name}</span>
+            <span className="block truncate text-[12px] text-ink-3">
+              {next ? `cobra ${formatRelativeDay(next)}` : ''}
+              {next ? ' · ' : ''}
+              {where}
+              {sub.cycle === 'yearly' ? ' · anual' : ''}
+            </span>
           </span>
-          <span className="block truncate text-[12px] text-ink-3">
-            dia {String(sub.billingDay).padStart(2, '0')} · {where}
-            {sub.cycle === 'yearly' ? ' · anual' : ''}
-          </span>
+        </button>
+        <span className="shrink-0 text-right">
+          <span className="tnum block text-[15px] font-semibold text-ink">{formatMoney(sub.amount, { hidden })}</span>
+          <span className="tnum block text-[11px] text-ink-3">{formatMoney(yearlyOf(sub), { hidden, compact: true })}/ano</span>
         </span>
+      </div>
 
-        <span className="tnum shrink-0 text-[15px] font-semibold text-ink">
-          {formatMoney(sub.amount, { hidden })}
-        </span>
-      </button>
+      {!canceled ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-[54px]">
+          <Chip active={sub.essential === true} onClick={() => void rate(sub.essential === true ? null : true)} className="h-8 px-3 text-[12px]">
+            Essencial
+          </Chip>
+          <Chip active={sub.essential === false} onClick={() => void rate(sub.essential === false ? null : false)} className="h-8 px-3 text-[12px]">
+            Dispensável
+          </Chip>
+          {raise > 0 && previous ? (
+            <span className="inline-flex items-center gap-1 text-[12px] font-medium text-warn">
+              <ArrowUpRight size={13} aria-hidden /> subiu {formatMoney(raise, { hidden })} desde {formatDayShort(previous.until)}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -136,19 +169,19 @@ function SubscriptionRow({
 
 export function AssinaturasView({
   spaceId,
-  month,
+  base,
   categories,
   hidden,
   startNew = false,
 }: {
   spaceId: string;
-  month: MonthKey;
+  base: FinanceBase;
   categories: Category[];
   hidden: boolean;
   startNew?: boolean;
 }) {
-  const all = useAllSubscriptions(spaceId);
-  const cards = useCards(spaceId);
+  const all = base.subscriptions;
+  const cards = base.cards;
   const [sheet, setSheet] = React.useState<{ open: boolean; editing: Subscription | null }>({
     open: false,
     editing: null,
@@ -158,25 +191,42 @@ export function AssinaturasView({
     setAutoOpened(true);
     setSheet({ open: true, editing: null });
   }
+  const [order, setOrder] = React.useState<'valor' | 'data'>('valor');
 
-  const active = React.useMemo(
-    () => all.filter((s) => !s.canceledAt).sort((a, b) => b.amount - a.amount),
-    [all],
-  );
+  const active = React.useMemo(() => {
+    const list = all.filter((s) => !s.canceledAt);
+    return order === 'valor'
+      ? list.sort((a, b) => monthlyOf(b) - monthlyOf(a))
+      : list.sort((a, b) => ((nextCharge(a) ?? '9') < (nextCharge(b) ?? '9') ? -1 : 1));
+  }, [all, order]);
   const canceled = React.useMemo(() => all.filter((s) => s.canceledAt), [all]);
 
-  const monthly = active.reduce((sum, s) => sum + subscriptionChargeIn(s, month), 0);
-  // o custo anual soma doze meses das mensais mais uma cobrança das anuais
-  const yearly = active.reduce((sum, s) => sum + (s.cycle === 'monthly' ? s.amount * 12 : s.amount), 0);
-  const priciest = active[0] ?? null;
+  const sheetEl = (
+    <SubscriptionSheet
+      state={sheet}
+      spaceId={spaceId}
+      cards={cards}
+      categories={categories}
+      onClose={() => setSheet({ open: false, editing: null })}
+    />
+  );
+
+  if (!base.ready) {
+    return (
+      <div className="grid gap-4 pt-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+        <Skeleton className="h-[180px] rounded-panel" />
+        <Skeleton className="h-[320px] rounded-panel" />
+      </div>
+    );
+  }
 
   if (!all.length) {
     return (
       <div className="pt-2">
-        <Panel className="px-5 py-8">
+        <Panel className="px-5 py-4">
           <EmptyState
-            title="Nenhuma assinatura ainda"
-            description="Cadastre o que se repete todo mês. Serviços conhecidos já vêm com o logotipo e a cor certos."
+            title="Ainda não há assinaturas"
+            description="Cadastre o que se repete todo mês e veja quanto custa por ano. Serviços conhecidos já vêm com logotipo e cor."
             action={
               <Button variant="primary" onClick={() => setSheet({ open: true, editing: null })}>
                 <Plus size={16} />
@@ -185,80 +235,59 @@ export function AssinaturasView({
             }
           />
         </Panel>
-        <SubscriptionSheet
-          state={sheet}
-          spaceId={spaceId}
-          cards={cards}
-          categories={categories}
-          onClose={() => setSheet({ open: false, editing: null })}
-        />
+        {sheetEl}
       </div>
     );
   }
 
   return (
-    <div className="grid gap-4 pt-2">
-      <Summary
-        monthly={monthly}
-        yearly={yearly}
-        priciest={priciest}
-        count={active.length}
-        hidden={hidden}
-      />
+    <div className="grid gap-4 pt-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] lg:items-start lg:gap-6">
+      <Summary active={active} hidden={hidden} />
 
-      <Panel className="px-5 py-4">
-        <SectionTitle
-          action={
-            <button
-              type="button"
-              aria-label="Adicionar assinatura"
-              onClick={() => setSheet({ open: true, editing: null })}
-              className="grid h-8 w-8 place-items-center rounded-full text-accent transition-colors hover:bg-accent-soft"
-            >
-              <Plus size={17} />
-            </button>
-          }
-        >
-          Da mais cara à mais barata
-        </SectionTitle>
-
-        <ul className="divide-y divide-line">
-          {active.map((sub) => (
-            <SubscriptionRow
-              key={sub.id}
-              sub={sub}
-              cards={cards}
-              hidden={hidden}
-              onEdit={() => setSheet({ open: true, editing: sub })}
-            />
-          ))}
-        </ul>
-      </Panel>
-
-      {canceled.length > 0 && (
+      <div className="grid gap-4">
         <Panel className="px-5 py-4">
-          <SectionTitle>Canceladas</SectionTitle>
+          <SectionTitle
+            action={
+              <span className="flex items-center gap-1">
+                <Segmented
+                  label="Ordenar"
+                  value={order}
+                  onChange={setOrder}
+                  options={[
+                    { value: 'valor', label: 'Valor' },
+                    { value: 'data', label: 'Próxima' },
+                  ]}
+                  className="w-[150px] p-0.5"
+                />
+                <Button size="sm" variant="soft" aria-label="Adicionar assinatura" onClick={() => setSheet({ open: true, editing: null })}>
+                  <Plus size={16} />
+                </Button>
+              </span>
+            }
+          >
+            Ativas
+          </SectionTitle>
+
           <ul className="divide-y divide-line">
-            {canceled.map((sub) => (
-              <SubscriptionRow
-                key={sub.id}
-                sub={sub}
-                cards={cards}
-                hidden={hidden}
-                onEdit={() => setSheet({ open: true, editing: sub })}
-              />
+            {active.map((sub) => (
+              <SubscriptionRow key={sub.id} sub={sub} cards={cards} hidden={hidden} onEdit={() => setSheet({ open: true, editing: sub })} />
             ))}
           </ul>
         </Panel>
-      )}
 
-      <SubscriptionSheet
-        state={sheet}
-        spaceId={spaceId}
-        cards={cards}
-        categories={categories}
-        onClose={() => setSheet({ open: false, editing: null })}
-      />
+        {canceled.length > 0 && (
+          <Panel className="px-5 py-4">
+            <SectionTitle>Canceladas</SectionTitle>
+            <ul className="divide-y divide-line">
+              {canceled.map((sub) => (
+                <SubscriptionRow key={sub.id} sub={sub} cards={cards} hidden={hidden} onEdit={() => setSheet({ open: true, editing: sub })} />
+              ))}
+            </ul>
+          </Panel>
+        )}
+      </div>
+
+      {sheetEl}
     </div>
   );
 }
@@ -334,8 +363,18 @@ function SubscriptionSheet({
         accountId: null,
         categoryId: categoryId || null,
       };
-      if (editing) await updateSubscription(editing, payload);
-      else await createSubscription(payload);
+      if (editing) {
+        // mudou o preço: o antigo vai para o histórico, e a lista mostra o reajuste
+        const history =
+          amount !== editing.amount
+            ? [...(editing.priceHistory ?? []), { amount: editing.amount, until: todayIso() }].slice(-6)
+            : editing.priceHistory;
+        await updateSubscription(editing, { ...payload, priceHistory: history });
+        toast(amount > editing.amount ? `${name.trim()} atualizada. O reajuste fica registrado.` : 'Assinatura atualizada.');
+      } else {
+        await createSubscription(payload);
+        toast('Assinatura adicionada.');
+      }
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não consegui salvar.');
@@ -362,6 +401,7 @@ function SubscriptionSheet({
                   className="flex-1"
                   onClick={async () => {
                     await updateSubscription(editing, { canceledAt: null });
+                    toast('Assinatura reativada.');
                     onClose();
                   }}
                 >
@@ -374,17 +414,28 @@ function SubscriptionSheet({
                   className="flex-1"
                   onClick={async () => {
                     await cancelSubscription(editing);
+                    toast(`${editing.name} marcada como cancelada. Lembre de cancelar no próprio serviço.`, {
+                      action: { label: 'Desfazer', onClick: () => void updateSubscription(editing, { canceledAt: null }) },
+                    });
                     onClose();
                   }}
                 >
-                  Cancelar assinatura
+                  Marcar como cancelada
                 </Button>
               )}
               <Button
                 variant="danger"
+                aria-label={`Apagar ${editing.name}`}
                 onClick={async () => {
-                  if (!confirm(`Apagar ${editing.name} do histórico?`)) return;
+                  const ok = await confirmAction({
+                    title: `Apagar ${editing.name}?`,
+                    description: 'Ela some também dos meses em que já pesou. Para parar de contar daqui para frente, use "Marcar como cancelada".',
+                    confirmLabel: 'Apagar',
+                    danger: true,
+                  });
+                  if (!ok) return;
                   await removeSubscription(editing.id);
+                  toast('Assinatura apagada.');
                   onClose();
                 }}
               >

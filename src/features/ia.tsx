@@ -182,8 +182,7 @@ export function IAView({
       </div>
 
       <div
-        className="sticky bottom-0 -mx-[18px] bg-canvas px-[18px]"
-        style={{ paddingBottom: 'calc(var(--tabbar-h) + var(--sa-bottom) + 24px)' }}
+        className="sticky bottom-0 -mx-4 bg-canvas px-4 pb-[calc(var(--nav-h)+var(--sa-bottom)+16px)] sm:-mx-6 sm:px-6 lg:pb-6"
       >
         {/* a faixa esmaecida some com a mensagem que chega por baixo, sem
             cortá-la numa linha dura */}

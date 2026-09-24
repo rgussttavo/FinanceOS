@@ -80,8 +80,8 @@ const SHEET_EXT = /\.(xlsx|xlsm|xlsb|xls|ods|numbers)$/i;
  * dentro é uma tabela HTML ou texto separado por tabulação. Por isso o que
  * decide é o conteúdo — os primeiros bytes dizem se é planilha de verdade.
  */
-export async function parseStatementFile(file: File): Promise<ParsedStatement> {
-  const buffer = new Uint8Array(await file.arrayBuffer());
+export async function parseStatementFile(file: File, onRead?: (fraction: number) => void): Promise<ParsedStatement> {
+  const buffer = await readBuffer(file, onRead);
   if (!buffer.length) throw new StatementError('O arquivo está vazio.');
 
   if (isZip(buffer) || isCompoundFile(buffer)) {
@@ -96,6 +96,23 @@ export async function parseStatementFile(file: File): Promise<ParsedStatement> {
   if (kind === 'html') return parseSpreadsheet(buffer, true);
   if (SHEET_EXT.test(file.name) && kind !== 'delimited') return parseSpreadsheet(buffer, true);
   return parseDelimited(text);
+}
+
+/** lê o arquivo avisando o quanto já leu; arquivo grande de banco passa de 10 MB */
+function readBuffer(file: File, onRead?: (fraction: number) => void): Promise<Uint8Array> {
+  if (typeof FileReader === 'undefined') return file.arrayBuffer().then((b) => new Uint8Array(b));
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onprogress = (e) => {
+      if (e.lengthComputable) onRead?.(e.loaded / e.total);
+    };
+    reader.onload = () => {
+      onRead?.(1);
+      resolve(new Uint8Array(reader.result as ArrayBuffer));
+    };
+    reader.onerror = () => reject(reader.error ?? new StatementError('Não consegui ler o arquivo.'));
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 const isZip = (b: Uint8Array) => b[0] === 0x50 && b[1] === 0x4b;
