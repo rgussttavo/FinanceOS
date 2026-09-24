@@ -55,6 +55,7 @@ export function Logo({
           height={size}
           loading="lazy"
           decoding="async"
+          referrerPolicy="no-referrer"
           onError={() => setStep((s) => s + 1)}
           className="h-full w-full object-contain"
         />

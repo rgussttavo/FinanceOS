@@ -78,14 +78,17 @@ function Overview({
   const [query, setQuery] = React.useState('');
   const slices = React.useMemo(() => categorySlices(summary, ctx.categories), [summary, ctx.categories]);
 
+  // o saldo trazido do mês anterior aparece na linha de resultado, não entre os movimentos
+  const movements = React.useMemo(() => ctx.occurrences.filter((o) => !o.opening), [ctx.occurrences]);
+
   const rows = React.useMemo(() => {
     const q = normalize(query);
-    if (q.length < 2) return ctx.occurrences;
+    if (q.length < 2) return movements;
     const names = new Map(ctx.categories.map((c) => [c.id, normalize(c.name)]));
-    return ctx.occurrences.filter(
+    return movements.filter(
       (o) => normalize(o.description).includes(q) || (o.categoryId && names.get(o.categoryId)?.includes(q)),
     );
-  }, [ctx.occurrences, ctx.categories, query]);
+  }, [movements, ctx.categories, query]);
 
   const monthName = formatMonthLabel(ctx.month).replace(/ de \d{4}$/, '');
   const tiles: { label: string; value: number; tone: string; filter: MovFilter }[] = [
@@ -105,6 +108,15 @@ function Overview({
           <p className="mt-1 text-[13px] text-ink-3">
             O que entrou menos o que saiu e o que foi investido — contando compras no cartão no dia da compra.
           </p>
+          {summary.opening !== 0 ? (
+            <p className="mt-2 text-[13px] text-ink-2">
+              O mês começou com{' '}
+              <span className={cn('tnum font-semibold', summary.opening < 0 ? 'text-out' : 'text-ink')}>
+                {formatMoney(summary.opening, { hidden, signed: summary.opening < 0 })}
+              </span>{' '}
+              do mês anterior.
+            </p>
+          ) : null}
           <dl className="mt-4 grid grid-cols-3 gap-2">
             {tiles.map((t) => (
               <button
@@ -126,7 +138,7 @@ function Overview({
           <SectionTitle action={<span className="tnum text-[12px] text-ink-3">{rows.length}</span>}>
             Todos os movimentos
           </SectionTitle>
-          {ctx.occurrences.length > 6 ? (
+          {movements.length > 6 ? (
             <div className="relative mb-2">
               <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
               <Input

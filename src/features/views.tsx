@@ -278,7 +278,8 @@ export interface ViewContext {
 /* ---------------------------------------------------------------- Receitas */
 
 export function ReceitasView(ctx: ViewContext) {
-  const incomes = ctx.occurrences.filter((o) => o.kind === 'in');
+  // o saldo trazido do mês anterior tem cartão próprio logo abaixo; não é receita
+  const incomes = ctx.occurrences.filter((o) => o.kind === 'in' && !o.opening);
   const received = ctx.summary.settledIncome;
   const toReceive = ctx.summary.income - received;
 
@@ -334,7 +335,7 @@ export function ReceitasView(ctx: ViewContext) {
 /* ---------------------------------------------------------------- Despesas */
 
 export function DespesasView(ctx: ViewContext) {
-  const expenses = ctx.occurrences.filter((o) => o.kind === 'out');
+  const expenses = ctx.occurrences.filter((o) => o.kind === 'out' && !o.opening);
   const slices = React.useMemo(
     () => categorySlices(ctx.summary, ctx.categories),
     [ctx.summary, ctx.categories],

@@ -66,12 +66,21 @@ export function parseMoney(input: string): Cents | null {
   const lastDot = cleaned.lastIndexOf('.');
   let normalized: string;
 
-  if (lastComma > lastDot) {
-    // virgula e o decimal: tira os pontos de milhar
-    normalized = cleaned.replace(/\./g, '').replace(',', '.');
-  } else if (lastDot > lastComma) {
-    // ponto e o decimal: tira as virgulas de milhar
-    normalized = cleaned.replace(/,/g, '');
+  if (lastComma >= 0 && lastDot >= 0) {
+    // os dois aparecem: o último é o decimal, o outro é milhar
+    normalized =
+      lastComma > lastDot ? cleaned.replace(/\./g, '').replace(',', '.') : cleaned.replace(/,/g, '');
+  } else if (lastDot >= 0) {
+    /**
+     * Só ponto. Em português, "5.800" são cinco mil e oitocentos — o ponto é de
+     * milhar quando se repete ou quando vem seguido de três dígitos. "12.50",
+     * com um ou dois dígitos depois, é quem digitou o decimal com ponto.
+     */
+    const thousands = (cleaned.match(/\./g) ?? []).length > 1 || /\.\d{3}$/.test(cleaned);
+    normalized = thousands ? cleaned.replace(/\./g, '') : cleaned;
+  } else if (lastComma >= 0) {
+    // só vírgula: é o decimal, a não ser que se repita ("1,250,000")
+    normalized = (cleaned.match(/,/g) ?? []).length > 1 ? cleaned.replace(/,/g, '') : cleaned.replace(',', '.');
   } else {
     normalized = cleaned;
   }

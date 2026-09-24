@@ -44,7 +44,15 @@ export interface Occurrence {
   virtual?: 'subscription' | 'debt';
   /** id da assinatura ou da dívida, quando `virtual` */
   refId?: string;
+  /**
+   * O saldo trazido do mês anterior. Compõe o saldo, mas não é dinheiro que
+   * entrou nem que saiu no mês — fica fora de entradas, saídas e categorias.
+   */
+  opening?: boolean;
 }
+
+/** marca do lançamento que carrega o saldo do mês anterior */
+export const OPENING_TAG = 'saldo-anterior';
 
 const MAX_WEEKLY_PER_MONTH = 6;
 
@@ -74,6 +82,7 @@ function buildOccurrence(
     installment,
     // compra no cartão não vence sozinha: quem vence é a fatura
     overdue: settlement === null && !entry.cardId && diffDays(today, date) < 0,
+    ...(entry.tags.includes(OPENING_TAG) ? { opening: true } : null),
   };
 }
 
@@ -170,8 +179,10 @@ export interface MonthSummary {
   income: Cents;
   expense: Cents;
   invested: Cents;
-  /** o que sobra: entrou menos saiu menos investido */
+  /** o resultado do mês: entrou menos saiu menos investido (sem o saldo anterior) */
   balance: Cents;
+  /** saldo trazido do mês anterior, com sinal; fica fora de todos os totais acima */
+  opening: Cents;
   /** ja baixado */
   settledIncome: Cents;
   settledExpense: Cents;
@@ -193,6 +204,7 @@ export function summarizeMonth(
     expense: 0,
     invested: 0,
     balance: 0,
+    opening: 0,
     settledIncome: 0,
     settledExpense: 0,
     pendingExpense: 0,
@@ -202,6 +214,10 @@ export function summarizeMonth(
   };
 
   for (const o of occurrences) {
+    if (o.opening) {
+      s.opening += o.kind === 'in' ? o.amount : -o.amount;
+      continue;
+    }
     if (o.kind === 'in') {
       s.income += o.amount;
       if (isSettled(o)) s.settledIncome += o.amount;

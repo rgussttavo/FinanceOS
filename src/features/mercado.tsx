@@ -36,9 +36,11 @@ export function NewsList({
   if (!items.length) {
     return (
       <p className="px-1 py-3 text-[13px] text-ink-3">
-        {error
-          ? 'Não consegui carregar as notícias agora. Tente de novo mais tarde.'
-          : 'Nenhuma notícia disponível.'}
+        {typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'Sem conexão agora. As notícias voltam junto com a internet.'
+          : error
+            ? 'Não consegui carregar as notícias agora. Tente de novo mais tarde.'
+            : 'Nenhuma notícia disponível.'}
       </p>
     );
   }
@@ -101,6 +103,7 @@ function NewsRow({ item }: { item: NewsItem }) {
           alt=""
           loading="lazy"
           decoding="async"
+          referrerPolicy="no-referrer"
           className="h-14 w-14 shrink-0 rounded-[10px] object-cover"
           onError={(e) => {
             e.currentTarget.style.display = 'none';

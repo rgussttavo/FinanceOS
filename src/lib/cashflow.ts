@@ -8,7 +8,7 @@ import {
   monthKeyParts,
   partsToIso,
 } from './dates';
-import { occurrencesInMonth, type Occurrence } from './occurrences';
+import { OPENING_TAG, occurrencesInMonth, type Occurrence } from './occurrences';
 import type { Card, Cents, Debt, Entry, FlowKind, IsoDate, MonthKey, Subscription } from './types';
 
 /**
@@ -46,6 +46,8 @@ export interface FlowItem {
   cardId?: string;
   debtId?: string;
   installment?: { index: number; total: number } | null;
+  /** o saldo trazido do mês anterior: move o saldo, mas não é entrada nem saída */
+  opening?: boolean;
 }
 
 export interface FlowInput {
@@ -101,6 +103,7 @@ export function buildFlows(input: FlowInput, from: IsoDate, to: IsoDate): FlowIt
         entryId: o.entryId,
         occurrenceKey: o.key,
         installment: o.installment,
+        ...(o.opening ? { opening: true } : null),
       });
     }
   }
@@ -352,7 +355,7 @@ export interface CashSnapshot {
   hasOpening: boolean;
 }
 
-export const OPENING_TAG = 'saldo-anterior';
+export { OPENING_TAG };
 
 /**
  * O retrato do dinheiro hoje — o que o Início mostra primeiro.
@@ -377,7 +380,7 @@ export function cashSnapshot(input: FlowInput): CashSnapshot {
   const balanceNow = days.find((d) => d.date === today)?.balance ?? 0;
   const endOfMonth = days[days.length - 1]?.balance ?? 0;
 
-  const nextIncome = items.find((i) => i.kind === 'in' && i.date > today && i.date <= horizon) ?? null;
+  const nextIncome = items.find((i) => i.kind === 'in' && !i.opening && i.date > today && i.date <= horizon) ?? null;
   const daysToNextIncome = nextIncome ? diffDays(today, nextIncome.date) : null;
 
   // saldo corrido de hoje até o horizonte, para achar o menor ponto
@@ -398,8 +401,8 @@ export function cashSnapshot(input: FlowInput): CashSnapshot {
   const limit = nextIncome ? nextIncome.date : addDaysIso(monthEnd, 1);
   const due = items.filter((i) => i.kind !== 'in' && i.date > today && i.date < limit);
 
-  const monthIn = monthItems.filter((i) => i.kind === 'in').reduce((s, i) => s + i.amount, 0);
-  const monthOut = monthItems.filter((i) => i.kind !== 'in').reduce((s, i) => s + i.amount, 0);
+  const monthIn = monthItems.filter((i) => i.kind === 'in' && !i.opening).reduce((s, i) => s + i.amount, 0);
+  const monthOut = monthItems.filter((i) => i.kind !== 'in' && !i.opening).reduce((s, i) => s + i.amount, 0);
 
   const hasOpening = input.entries.some(
     (e) => !e.deletedAt && e.tags.includes(OPENING_TAG) && monthKeyOf(e.date) === month,

@@ -1,5 +1,5 @@
 /**
- * Modelo de domínio do FinanceCS.
+ * Modelo de domínio do FinanceOS.
  *
  * Duas decisões valem para tudo o que está aqui:
  *

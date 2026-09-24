@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { ArrowLeftRight, Calculator, ChevronRight, Flame, Landmark, Receipt, TrendingUp, Wallet } from 'lucide-react';
+import { ArrowLeftRight, Calculator, ChevronRight, Flame, Landmark, Receipt, Smartphone, TrendingUp, Wallet } from 'lucide-react';
+import { InstallSheet, useInstallState } from '@/components/pwa';
 import { VIEW_ICONS } from '@/components/shell';
-import { Meter, Panel, SectionTitle, Skeleton } from '@/components/ui';
+import { Button, Meter, Panel, SectionTitle, Skeleton } from '@/components/ui';
 import { buildInvoice, cardUsage, subscriptionChargeIn } from '@/lib/cards';
 import type { CashSnapshot } from '@/lib/cashflow';
 import { cn } from '@/lib/cn';
@@ -200,8 +201,26 @@ const MAIS_GROUPS: { label: string; items: SubId[] }[] = [
 ];
 
 export function MaisView({ hiddenViews, onGo }: { hiddenViews: SubId[]; onGo: (route: Route) => void }) {
+  const install = useInstallState();
+  const [installing, setInstalling] = React.useState(false);
+
   return (
     <div className="grid gap-5 pt-2 lg:grid-cols-3 lg:items-start">
+      {install !== 'installed' ? (
+        <Panel className="flex items-center gap-3 p-4 lg:col-span-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-accent-soft text-accent" aria-hidden>
+            <Smartphone size={18} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[15px] font-semibold text-ink">Instale o FinanceOS</span>
+            <span className="block text-[12.5px] leading-relaxed text-ink-3">Tela cheia, atalhos no ícone e funciona sem internet.</span>
+          </span>
+          <Button size="sm" onClick={() => setInstalling(true)}>
+            Instalar
+          </Button>
+        </Panel>
+      ) : null}
+      <InstallSheet open={installing} onClose={() => setInstalling(false)} />
       {MAIS_GROUPS.map((group) => (
         <section key={group.label}>
           <SectionTitle>{group.label}</SectionTitle>

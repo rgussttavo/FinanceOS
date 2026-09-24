@@ -100,7 +100,7 @@ function parseFeed(xml: string, feed: Feed): NewsItem[] {
 async function loadFeed(feed: Feed): Promise<NewsItem[]> {
   try {
     const res = await fetch(feed.url, {
-      headers: { 'user-agent': 'FinanceCS/1.0 (+leitor de RSS)' },
+      headers: { 'user-agent': 'FinanceOS/1.0 (+leitor de RSS)' },
       next: { revalidate },
       signal: AbortSignal.timeout(6000),
     });

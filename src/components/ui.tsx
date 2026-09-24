@@ -148,20 +148,34 @@ export interface FieldProps {
   htmlFor?: string;
 }
 
+type Describable = { id?: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean };
+
 export function Field({ label, hint, error, children, htmlFor }: FieldProps) {
+  // a dica e o erro são lidos junto com o campo, não só vistos embaixo dele
+  const describedBy = htmlFor && (error || hint) ? `${htmlFor}-desc` : undefined;
+  const control =
+    htmlFor && React.isValidElement<Describable>(children) && children.props.id === htmlFor
+      ? React.cloneElement(children, {
+          'aria-describedby': describedBy ?? children.props['aria-describedby'],
+          'aria-invalid': error ? true : undefined,
+        })
+      : children;
+
   return (
-    <div className="grid gap-1.5">
+    <div className="grid content-start gap-1.5">
       <label htmlFor={htmlFor} className="text-[13px] font-medium text-ink-2">
         {label}
       </label>
-      {children}
+      {control}
       {error ? (
-        <p role="alert" className="flex items-center gap-1.5 text-[12px] text-out">
+        <p id={describedBy} role="alert" className="flex items-center gap-1.5 text-[12px] text-out">
           <AlertTriangle size={12} aria-hidden />
           {error}
         </p>
       ) : hint ? (
-        <p className="text-[12px] text-ink-3">{hint}</p>
+        <p id={describedBy} className="text-[12px] text-ink-3">
+          {hint}
+        </p>
       ) : null}
     </div>
   );
@@ -790,6 +804,8 @@ export function Toaster() {
 
 function ToastCard({ item }: { item: ToastItem }) {
   React.useEffect(() => {
+    // duração zero: fica até a pessoa agir ou fechar
+    if (!(item.duration > 0) || !Number.isFinite(item.duration)) return;
     const id = setTimeout(() => dismissToast(item.id), item.duration);
     return () => clearTimeout(id);
   }, [item.id, item.duration]);

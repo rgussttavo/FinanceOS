@@ -23,7 +23,7 @@ import type {
 import type { LearnedRule } from './categories';
 
 /**
- * Base local do FinanceCS.
+ * Base local do FinanceOS.
  *
  * A UI le e escreve SEMPRE aqui, nunca direto na rede. Cada escrita deixa uma
  * mutacao na fila `mutations`, e o sync drena essa fila quando houver conexao.
@@ -130,7 +130,7 @@ export const isDemoDatabase = (): boolean => _dbName === DEMO_DB;
  */
 export function db(): NorteDB {
   if (typeof window === 'undefined') {
-    throw new Error('A base local do FinanceCS só existe no navegador.');
+    throw new Error('A base local do FinanceOS só existe no navegador.');
   }
   if (!_db) _db = new NorteDB(_dbName);
   return _db;

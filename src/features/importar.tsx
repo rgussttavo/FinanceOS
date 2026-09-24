@@ -69,11 +69,14 @@ export function ImportarView({
   categories,
   hidden,
   onOpenMonth,
+  finishLabel,
 }: {
   spaceId: string;
   categories: Category[];
   hidden: boolean;
   onOpenMonth: (month: MonthKey) => void;
+  /** o texto do botão final, quando a importação faz parte do primeiro acesso */
+  finishLabel?: string;
 }) {
   const cards = useCards(spaceId);
   const subscriptions = useAllSubscriptions(spaceId);
@@ -174,7 +177,7 @@ export function ImportarView({
       </ol>
 
       {phase.step === 'done' ? (
-        <Done result={phase.result} onOpenMonth={onOpenMonth} onAgain={reset} />
+        <Done result={phase.result} onOpenMonth={onOpenMonth} onAgain={reset} finishLabel={finishLabel} />
       ) : phase.step === 'reading' ? (
         <Panel className="px-6 py-10 text-center">
           <span className="mx-auto grid size-12 place-items-center rounded-full bg-accent-soft text-accent">
@@ -682,7 +685,17 @@ function ReviewLine({
 
 /* -------------------------------------------------------------- 4 · pronto */
 
-function Done({ result, onOpenMonth, onAgain }: { result: ImportResult; onOpenMonth: (m: MonthKey) => void; onAgain: () => void }) {
+function Done({
+  result,
+  onOpenMonth,
+  onAgain,
+  finishLabel,
+}: {
+  result: ImportResult;
+  onOpenMonth: (m: MonthKey) => void;
+  onAgain: () => void;
+  finishLabel?: string;
+}) {
   const { created, settled, lastMonth } = result;
   return (
     <Panel className="px-6 py-10 text-center">
@@ -697,7 +710,7 @@ function Done({ result, onOpenMonth, onAgain }: { result: ImportResult; onOpenMo
       <div className="mt-6 flex flex-col justify-center gap-2 sm:flex-row">
         {lastMonth ? (
           <Button variant="primary" onClick={() => onOpenMonth(lastMonth)}>
-            Ver {formatMonthLabel(lastMonth)}
+            {finishLabel ?? `Ver ${formatMonthLabel(lastMonth)}`}
           </Button>
         ) : null}
         <Button variant="ghost" onClick={onAgain}>

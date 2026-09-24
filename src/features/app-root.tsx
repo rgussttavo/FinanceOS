@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Cloud, CloudOff, Eye, EyeOff, FlaskConical } from 'lucide-react';
 import { EntrySheet } from '@/components/entry-sheet';
+import { useServiceWorker } from '@/components/pwa';
 import { QuickAddSheet, type QuickAddRequest } from '@/components/quick-add';
 import { BottomNav, Fab, PageHeader, Sidebar, TopBar, greetingFor, navigate, useRoute } from '@/components/shell';
 import { ConfirmHost, IconButton, SkeletonList, Toaster, toast } from '@/components/ui';
@@ -12,13 +13,15 @@ import { AccountPanel, SignInSheet, useAuthRedirectError, useCloudSync, useSessi
 import { BRAND } from '@/lib/brand';
 import type { FlowItem } from '@/lib/cashflow';
 import { DEMO_DB, db, putRecord, selectDatabase } from '@/lib/db';
-import { currentMonthKey } from '@/lib/dates';
+import { currentMonthKey, nowInstant } from '@/lib/dates';
 import type { MovFilter, SubId, ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
 import type { AssistantContext } from '@/lib/assistant';
 import { monthOccurrences, useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
 import { toggleSettled, useBootstrap, useCategories, useSettings } from '@/lib/store';
+import { cloudConfigured } from '@/lib/supabase';
 import { detachCloud } from '@/lib/sync';
+import { applyTheme, useIsLight, useSystemTheme } from '@/lib/theme';
 import type { MonthKey } from '@/lib/types';
 import { AssinaturasView } from './assinaturas';
 import { CalendarioView } from './calendario';
@@ -29,6 +32,7 @@ import { MaisView, PlanejamentoView } from './hubs';
 import { InicioView } from './inicio';
 import { MetasView } from './metas';
 import { MovimentosView } from './movimentos';
+import { Onboarding, type OnboardingStep } from './onboarding';
 import { PatrimonioView } from './patrimonio';
 import { PerfilView } from './perfil';
 import type { ViewContext } from './views';
@@ -39,44 +43,32 @@ const ViewLoading = () => (
     <SkeletonList rows={5} />
   </div>
 );
-const IAView = dynamic(() => import('./ia').then((m) => m.IAView), { loading: ViewLoading });
-const RateioView = dynamic(() => import('./rateio').then((m) => m.RateioView), { loading: ViewLoading });
-const OrcamentoView = dynamic(() => import('./orcamento').then((m) => m.OrcamentoView), { loading: ViewLoading });
-const ComprovantesView = dynamic(() => import('./comprovantes').then((m) => m.ComprovantesView), { loading: ViewLoading });
-const MercadoView = dynamic(() => import('./mercado').then((m) => m.MercadoView), { loading: ViewLoading });
-const ImportarView = dynamic(() => import('./importar').then((m) => m.ImportarView), { loading: ViewLoading });
-const BuscaView = dynamic(() => import('./busca').then((m) => m.BuscaView), { loading: ViewLoading });
+/**
+ * Cada tela sob demanda tem um carregador só, usado pelo `dynamic` e pelo
+ * aquecimento do modo offline. Um `import()` escrito duas vezes vira dois
+ * pontos de carga diferentes no build, e aquecer um não serviria o outro.
+ */
+const load = {
+  ia: () => import('./ia'),
+  rateio: () => import('./rateio'),
+  orcamento: () => import('./orcamento'),
+  comprovantes: () => import('./comprovantes'),
+  mercado: () => import('./mercado'),
+  importar: () => import('./importar'),
+  busca: () => import('./busca'),
+};
+const IAView = dynamic(() => load.ia().then((m) => m.IAView), { loading: ViewLoading });
+const RateioView = dynamic(() => load.rateio().then((m) => m.RateioView), { loading: ViewLoading });
+const OrcamentoView = dynamic(() => load.orcamento().then((m) => m.OrcamentoView), { loading: ViewLoading });
+const ComprovantesView = dynamic(() => load.comprovantes().then((m) => m.ComprovantesView), { loading: ViewLoading });
+const MercadoView = dynamic(() => load.mercado().then((m) => m.MercadoView), { loading: ViewLoading });
+const ImportarView = dynamic(() => load.importar().then((m) => m.ImportarView), { loading: ViewLoading });
+const BuscaView = dynamic(() => load.busca().then((m) => m.BuscaView), { loading: ViewLoading });
 const SimuladoresView = dynamic(() => import('./hubs').then((m) => m.SimuladoresView), { loading: ViewLoading });
 
-const THEME_KEY = 'norte-theme';
-
-/**
- * O tema vive no atributo do <html>, escrito antes do primeiro paint pelo
- * script do layout. O React lê de lá em vez de guardar uma cópia — uma fonte
- * da verdade só, sem piscar na hidratação.
- */
-const themeListeners = new Set<() => void>();
-const readIsLight = () => document.documentElement.getAttribute('data-theme') === 'light';
-const subscribeTheme = (fn: () => void) => {
-  themeListeners.add(fn);
-  return () => {
-    themeListeners.delete(fn);
-  };
-};
-
-export function applyTheme(choice: 'light' | 'dark' | 'system') {
-  const root = document.documentElement;
-  const light = choice === 'light' || (choice === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
-  if (light) root.setAttribute('data-theme', 'light');
-  else root.removeAttribute('data-theme');
-  try {
-    if (choice === 'dark') localStorage.removeItem(THEME_KEY);
-    else localStorage.setItem(THEME_KEY, choice);
-  } catch {
-    // armazenamento bloqueado: o tema vale só nesta sessão
-  }
-  for (const notify of themeListeners) notify();
-}
+// notícias ficam de fora: sem rede não teriam o que mostrar
+const warmViews = () =>
+  Promise.allSettled([load.ia(), load.busca(), load.importar(), load.orcamento(), load.rateio(), load.comprovantes()]);
 
 /**
  * O app inteiro depois do login — ou sem login nenhum.
@@ -99,7 +91,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   const [openOccurrence, setOpenOccurrence] = React.useState<Occurrence | null>(null);
   const [signInOpen, setSignInOpen] = React.useState(false);
 
-  const { session: realSession } = useSession();
+  const { session: realSession, ready: sessionReady } = useSession();
   const session = demo ? null : realSession;
   const cloud = useCloudSync(session);
   const authError = useAuthRedirectError();
@@ -117,6 +109,24 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
 
   const hidden = settings?.privateMode ?? false;
   const displayName = settings?.displayName.trim() || 'você';
+
+  /**
+   * Primeiro acesso: null enquanto não dá para decidir, 'off' quando não se
+   * aplica. A decisão acontece uma vez, com a base, as preferências e a sessão
+   * carregadas — quem já tem dados, ou entrou na conta, vai direto ao app.
+   */
+  const [onboarding, setOnboarding] = React.useState<OnboardingStep | 'off' | null>(demo ? 'off' : null);
+  const [onboardingName, setOnboardingName] = React.useState('');
+  const [importedMonth, setImportedMonth] = React.useState<MonthKey | null>(null);
+  const onboardingActive = onboarding !== null && onboarding !== 'off' && !session;
+
+  const finishOnboarding = React.useCallback(async () => {
+    setOnboarding('off');
+    navigate({ view: 'inicio' }, { replace: true });
+    if (!settings) return;
+    const name = onboardingName.trim();
+    await putRecord('settings', { ...settings, onboardedAt: nowInstant(), displayName: name || settings.displayName });
+  }, [settings, onboardingName]);
 
   // o assistente e a busca respondem com a mesma régua das telas
   const assistant = React.useMemo<AssistantContext>(
@@ -146,7 +156,10 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
     await putRecord('settings', { ...settings, privateMode: !settings.privateMode });
   }, [settings]);
 
-  const isLight = React.useSyncExternalStore(subscribeTheme, readIsLight, () => false);
+  useSystemTheme();
+  // com o worker ativo, as telas sob demanda descem num momento ocioso: o app inteiro passa a abrir offline
+  useServiceWorker(warmViews);
+  const isLight = useIsLight();
   const toggleTheme = React.useCallback(() => applyTheme(isLight ? 'dark' : 'light'), [isLight]);
 
   const openQuick = React.useCallback((request: QuickAddRequest = {}) => setQuick(request), []);
@@ -238,6 +251,12 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
     return off;
   }, [settings]);
 
+  if (onboarding === null && ready && !error && base.ready && settings && sessionReady) {
+    const hasContent =
+      base.entries.length + base.cards.length + base.subscriptions.length + base.goals.length + base.debts.length + base.assets.length > 0;
+    setOnboarding(!settings.onboardedAt && !session && !hasContent ? 'hello' : 'off');
+  }
+
   if (!ready) return <BootScreen message={demo ? 'Montando o exemplo…' : 'Abrindo…'} />;
 
   if (error || !spaceId) {
@@ -251,6 +270,38 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
 
   const view: ViewId = hiddenViews.includes(route.view as SubId) ? 'inicio' : route.view;
   const startNew = route.param === 'novo';
+
+  const signInSheet = demo ? null : <SignInSheet open={signInOpen} onClose={() => setSignInOpen(false)} onSignedIn={cloud.sync} />;
+
+  // o passo "importar extrato" do primeiro acesso usa a própria tela de importação
+  if (onboardingActive && view !== 'importar') {
+    return (
+      <>
+        <Onboarding
+          step={onboarding}
+          onStep={setOnboarding}
+          spaceId={spaceId}
+          categories={categories}
+          cash={cash}
+          summary={todayPicture.summary}
+          importedMonth={importedMonth}
+          name={onboardingName}
+          onName={setOnboardingName}
+          onImport={() => go({ view: 'importar' })}
+          onSignIn={cloudConfigured() ? () => setSignInOpen(true) : undefined}
+          onOpenMonth={(m) => {
+            void finishOnboarding();
+            setMonth(m);
+            navigate({ view: 'movimentos' });
+          }}
+          onFinish={() => void finishOnboarding()}
+        />
+        {signInSheet}
+        <Toaster />
+        <ConfirmHost />
+      </>
+    );
+  }
 
   const ctx: ViewContext = {
     spaceId,
@@ -358,7 +409,15 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           spaceId={spaceId}
           categories={categories}
           hidden={hidden}
+          finishLabel={onboardingActive ? 'Ver meu mês' : undefined}
           onOpenMonth={(m) => {
+            if (onboardingActive) {
+              // de volta ao primeiro acesso, no passo que mostra o resultado
+              setImportedMonth(m);
+              setOnboarding('done');
+              navigate({ view: 'inicio' }, { replace: true });
+              return;
+            }
             setMonth(m);
             go({ view: 'movimentos' });
           }}
@@ -382,10 +441,10 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
     case 'ajustes':
       content = (
         <PerfilView
+          spaceId={spaceId}
           settings={settings}
-          onToggleTheme={toggleTheme}
-          isLight={isLight}
           demo={demo}
+          signedIn={Boolean(session)}
           onGo={go}
           account={
             demo ? null : (
@@ -488,7 +547,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
         onGo={go}
       />
       <EntrySheet occurrence={openOccurrence} onClose={() => setOpenOccurrence(null)} categories={categories} cards={base.cards} hidden={hidden} />
-      {demo ? null : <SignInSheet open={signInOpen} onClose={() => setSignInOpen(false)} onSignedIn={cloud.sync} />}
+      {signInSheet}
       <Toaster />
       <ConfirmHost />
     </div>

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Inter, Instrument_Serif } from 'next/font/google';
 import { BRAND } from '@/lib/brand';
+import { THEME_BOOT_SCRIPT } from '@/lib/theme-boot';
 import './globals.css';
 
 const inter = Inter({
@@ -16,6 +17,19 @@ const display = Instrument_Serif({
   display: 'swap',
 });
 
+/** [largura, altura, densidade] das telas de iPhone mais comuns */
+const SPLASH: [number, number, number][] = [
+  [1290, 2796, 3],
+  [1179, 2556, 3],
+  [1284, 2778, 3],
+  [1170, 2532, 3],
+  [1125, 2436, 3],
+  [1242, 2688, 3],
+  [828, 1792, 2],
+  [1242, 2208, 3],
+  [750, 1334, 2],
+];
+
 export const metadata: Metadata = {
   title: {
     default: `${BRAND.name} · ${BRAND.tagline}`,
@@ -27,7 +41,12 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: BRAND.name,
-    statusBarStyle: 'default',
+    statusBarStyle: 'black',
+    // a tela de abertura do app instalado no iPhone, no escuro da marca
+    startupImage: SPLASH.map(([w, h, ratio]) => ({
+      url: `/splash/${w}x${h}.png`,
+      media: `(device-width: ${w / ratio}px) and (device-height: ${h / ratio}px) and (-webkit-device-pixel-ratio: ${ratio}) and (orientation: portrait)`,
+    })),
   },
   formatDetection: { telephone: false },
 };
@@ -39,20 +58,11 @@ export const viewport: Viewport = {
   themeColor: '#0b0b0c',
 };
 
-/**
- * Tema aplicado antes do primeiro paint.
- *
- * O escuro é o padrão da marca, então só o claro precisa ser marcado. Sem este
- * script, quem escolheu claro veria um lampejo escuro a cada abertura — o tipo
- * de defeito que faz um app de dinheiro parecer mal-acabado.
- */
-const THEME_BOOT = `(function(){try{if(localStorage.getItem('norte-theme')==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})();`;
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR" className={`${inter.variable} ${display.variable} h-full`} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
       </head>
       <body className="min-h-full">{children}</body>
     </html>
