@@ -1,5 +1,6 @@
-import { monthKeyOf, monthKeyParts, todayIso } from './dates';
+import { daysInMonth, monthKeyOf, monthKeyParts, partsToIso, todayIso } from './dates';
 import { occurrencesInMonth } from './occurrences';
+import { investedRealized } from './wealth';
 import type { Cents, Entry, Goal, MonthKey } from './types';
 
 export interface GoalProgress {
@@ -58,23 +59,11 @@ export function goalProgress(
  * seis meses faria a barra encolher sozinha com o passar do tempo.
  */
 function investedFor(goal: Goal, entries: Entry[], month: MonthKey, today: string): Cents {
-  const relevant = entries.filter((e) => e.kind === 'invest' && !e.deletedAt);
-  if (!relevant.length) return 0;
-
-  const first = relevant.reduce((min, e) => (e.date < min ? e.date : min), relevant[0].date);
-  const start = monthKeyOf(first);
-  const span = Math.max(0, monthsUntil(month, start));
-
-  let total = 0;
-  for (let i = 0; i <= span; i++) {
-    const key = shiftMonth(start, i);
-    if (key > month) break;
-    for (const o of occurrencesInMonth(relevant, key, today)) {
-      if (goal.source === 'category' && o.categoryId !== goal.categoryId) continue;
-      total += o.amount;
-    }
-  }
-  return total;
+  // o mesmo investido do Patrimônio: só o aporte que aconteceu, menos resgate
+  const { y, m } = monthKeyParts(month);
+  const end = partsToIso(y, m, daysInMonth(y, m));
+  const cutoff = end < today ? end : today;
+  return investedRealized(entries, cutoff, today, goal.source === 'category' ? (e) => e.categoryId === goal.categoryId : undefined);
 }
 
 function monthsUntil(target: MonthKey, from: MonthKey): number {

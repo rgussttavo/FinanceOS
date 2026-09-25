@@ -23,7 +23,7 @@ import { cn } from '@/lib/cn';
 import { formatMonthLabel, nowInstant, todayIso } from '@/lib/dates';
 import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
 import type { Route } from '@/lib/nav';
-import type { FinanceBase } from '@/lib/picture';
+import { ledgerInput, type FinanceBase } from '@/lib/picture';
 import { createAsset, removeAsset, updateAsset } from '@/lib/store';
 import type { Asset, Cents, FipeRef } from '@/lib/types';
 import { wealthHistory, wealthNow } from '@/lib/wealth';
@@ -60,14 +60,12 @@ const PERIODS: { months: number; label: string; long: string }[] = [
 export function PatrimonioView({
   spaceId,
   base,
-  cashNow,
   hidden,
   cardsEnabled,
   onGo,
 }: {
   spaceId: string;
   base: FinanceBase;
-  cashNow: Cents;
   hidden: boolean;
   cardsEnabled: boolean;
   onGo: (route: Route) => void;
@@ -78,17 +76,9 @@ export function PatrimonioView({
 
   const w = React.useMemo(
     () =>
-      wealthNow({
-        assets: base.assets,
-        entries: base.entries,
-        debts: base.debts,
-        cards: base.cards,
-        subscriptions: base.subscriptions,
-        cashNow,
-        today,
-        cardsEnabled,
-      }),
-    [base, cashNow, today, cardsEnabled],
+      // o caixa daqui é o das Contas: sai do mesmo livro-caixa
+      wealthNow(ledgerInput(base, cardsEnabled, today), base.assets),
+    [base, today, cardsEnabled],
   );
   const history = React.useMemo(
     () => wealthHistory({ assets: base.assets, entries: base.entries, debts: base.debts, today }, PERIODS[period].months),

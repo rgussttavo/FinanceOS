@@ -190,6 +190,7 @@ export async function provisionDemo(): Promise<Space> {
   await d.transaction('rw', d.tables, async () => {
     for (const table of d.tables) await table.clear();
     await d.spaces.put(space);
+    await d.accounts.bulkPut(data.accounts);
     await d.categories.bulkPut(data.categories);
     await d.entries.bulkPut(data.entries);
     await d.cards.bulkPut(data.cards);

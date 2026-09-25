@@ -8,7 +8,7 @@ import { Button, Meter, Panel, SectionTitle, Skeleton } from '@/components/ui';
 import { buildInvoice, cardUsage, subscriptionChargeIn } from '@/lib/cards';
 import type { CashSnapshot } from '@/lib/cashflow';
 import { cn } from '@/lib/cn';
-import { addMonthsToKey, formatDayShort, formatRelativeDay, monthKeyOf } from '@/lib/dates';
+import { addMonthsToKey, formatDayShort, formatRelativeDay, monthKeyOf, todayIso } from '@/lib/dates';
 import { debtProgress } from '@/lib/debts';
 import { goalProgress } from '@/lib/goals';
 import { formatMoney } from '@/lib/money';
@@ -80,7 +80,7 @@ export function PlanejamentoView({
     .filter((i): i is NonNullable<typeof i> => Boolean(i));
   const invoiceTotal = invoices.reduce((t, i) => t + i.total, 0);
   const nextDue = invoices.sort((a, b) => (a.dueOn < b.dueOn ? -1 : 1))[0];
-  const usage = base.cards.map((c) => cardUsage(c, base.entries, base.subscriptions, month, today));
+  const usage = base.cards.map((c) => cardUsage(c, base.entries, base.subscriptions, month, today, base.transfers));
   const limit = base.cards.reduce((t, c) => t + c.limit, 0);
   const used = usage.reduce((t, u) => t + u.used, 0);
 
@@ -273,7 +273,8 @@ const SIMS: { id: Sim; title: string; question: string; icon: typeof Calculator 
 export function SimuladoresView({ base, month }: { base: FinanceBase; month: string }) {
   const [open, setOpen] = React.useState<Sim | null>(null);
   const invested = React.useMemo(
-    () => investedUntil(base.entries, month, `${month}-28`),
+    // o mesmo investido do Patrimônio, até hoje
+    () => investedUntil(base.entries, month, todayIso()),
     [base.entries, month],
   );
 

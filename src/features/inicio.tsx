@@ -31,6 +31,7 @@ import {
   Money,
   Panel,
   SectionTitle,
+  Select,
   Sheet,
   SignToggle,
   Skeleton,
@@ -43,10 +44,11 @@ import { holidaysBetween } from '@/lib/holidays';
 import { buildInsights, headline, monthHealth, type Insight, type Severity } from '@/lib/insights';
 import { formatMoney, parseMoney } from '@/lib/money';
 import type { Route } from '@/lib/nav';
-import type { FinanceBase, MonthPicture } from '@/lib/picture';
+import { ledgerInput, type FinanceBase, type MonthPicture } from '@/lib/picture';
 import type { MonthSummary } from '@/lib/occurrences';
 import { putRecord } from '@/lib/db';
-import { setOpeningBalance } from '@/lib/store';
+import { setBalance } from '@/lib/accounts';
+import { balancesAt } from '@/lib/ledger';
 import type { Category, Cents, Settings } from '@/lib/types';
 import { wealthNow } from '@/lib/wealth';
 import { NewsList } from './mercado';
@@ -96,6 +98,7 @@ export function InicioView(props: InicioProps) {
         debts: base.debts,
         cards: base.cards,
         subscriptions: base.subscriptions,
+        transfers: base.transfers,
         cardsEnabled,
       }),
     [cash, props.history, props.picture.occurrences, base, props.categories, cardsEnabled],
@@ -194,16 +197,7 @@ function MainCard({ spaceId, base, cash, settings, hidden, onGo }: InicioProps) 
   const wealth = React.useMemo(
     () =>
       mode === 'patrimonio'
-        ? wealthNow({
-            assets: base.assets,
-            entries: base.entries,
-            debts: base.debts,
-            cards: base.cards,
-            subscriptions: base.subscriptions,
-            cashNow: cash.balanceNow,
-            today: cash.today,
-            cardsEnabled,
-          })
+        ? wealthNow(ledgerInput(base, cardsEnabled, cash.today), base.assets)
         : null,
     [mode, base, cash, cardsEnabled],
   );
@@ -313,7 +307,7 @@ function MainCard({ spaceId, base, cash, settings, hidden, onGo }: InicioProps) 
         </button>
       </div>
 
-      <AdjustBalanceSheet open={adjusting} onClose={() => setAdjusting(false)} spaceId={spaceId} cash={cash} base={base} />
+      <AdjustBalanceSheet open={adjusting} onClose={() => setAdjusting(false)} spaceId={spaceId} cash={cash} base={base} cardsEnabled={settings?.cardsEnabled ?? true} />
     </Panel>
   );
 }
@@ -331,21 +325,26 @@ function AdjustBalanceSheet({
   spaceId,
   cash,
   base,
+  cardsEnabled,
 }: {
   open: boolean;
   onClose: () => void;
   spaceId: string;
   cash: CashSnapshot;
   base: FinanceBase;
+  cardsEnabled: boolean;
 }) {
   const [text, setText] = React.useState('');
   const [negativeSign, setNegativeSign] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [accountId, setAccountId] = React.useState<string>('');
 
-  const currentOpening = React.useMemo(() => {
-    const hit = base.entries.find((e) => !e.deletedAt && e.tags.includes('saldo-anterior') && e.date.startsWith(cash.month));
-    return hit ? (hit.kind === 'in' ? hit.amount : -hit.amount) : 0;
-  }, [base.entries, cash.month]);
+  // o saldo de cada conta hoje, pelo mesmo livro-caixa do resto do app
+  const rows = React.useMemo(
+    () => balancesAt(ledgerInput(base, cardsEnabled, cash.today), cash.today).accounts.filter((r) => !r.account.archived),
+    [base, cardsEnabled, cash.today],
+  );
+  const chosen = rows.find((r) => r.account.id === accountId) ?? rows.find((r) => r.account.primary) ?? rows[0];
 
   async function save() {
     const trimmed = text.trim();
@@ -353,9 +352,14 @@ function AdjustBalanceSheet({
     const parsed = parseMoney(trimmed.replace(/^[-−]/, ''));
     if (parsed === null) return setError('Digite o saldo, por exemplo 1.250,00 ou -80,00.');
     const real = negative ? -parsed : parsed;
-    const next = currentOpening + (real - cash.balanceNow);
-    await setOpeningBalance(spaceId, cash.month, next);
-    toast('Saldo ajustado. O mês agora parte do valor certo.');
+    const result = await setBalance({ spaceId, accountId: chosen?.account.id ?? null, balance: real, date: cash.today });
+    toast(
+      result.kind === 'opening'
+        ? 'Saldo informado. A conta parte deste valor.'
+        : result.kind === 'none'
+          ? 'Já batia: nada a ajustar.'
+          : `Ajuste de ${formatMoney(Math.abs(result.diff))} registrado para bater com o banco.`,
+    );
     setText('');
     setError(null);
     onClose();
@@ -366,10 +370,10 @@ function AdjustBalanceSheet({
       open={open}
       onClose={onClose}
       title="Quanto você tem hoje na conta?"
-      description="Some as contas que você usa no dia a dia. O saldo do mês passa a partir desse valor."
+      description="O saldo que o banco mostra agora. Se a conta já tem histórico, a diferença vira um ajuste visível — nenhum lançamento é alterado."
       footer={
         <Button variant="primary" size="lg" className="w-full" onClick={() => void save()}>
-          Ajustar saldo
+          Conferir saldo
         </Button>
       }
     >
@@ -380,8 +384,24 @@ function AdjustBalanceSheet({
         }}
         className="grid gap-3"
       >
+        {rows.length > 1 ? (
+          <Field label="Conta" htmlFor="adjust-account">
+            <Select id="adjust-account" value={chosen?.account.id ?? ''} onChange={(e) => setAccountId(e.target.value)}>
+              {rows.map((r) => (
+                <option key={r.account.id} value={r.account.id}>
+                  {r.account.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
         <SignToggle negative={negativeSign} onChange={setNegativeSign} />
-        <Field label="Saldo hoje" htmlFor="adjust-balance" error={error} hint={`Hoje o app calcula ${formatMoney(cash.balanceNow)}.`}>
+        <Field
+          label="Saldo hoje"
+          htmlFor="adjust-balance"
+          error={error}
+          hint={chosen ? `Hoje o app calcula ${formatMoney(chosen.balance)} nesta conta.` : undefined}
+        >
           <Input
             id="adjust-balance"
             value={text}
@@ -640,7 +660,7 @@ interface CoverageItem {
  * não há "até o próximo recebimento". Cada item diz o que falta e leva direto
  * para onde se resolve. Some sozinho quando está tudo lá.
  */
-function Coverage({ spaceId, base, cash, settings, hidden, onGo, onQuick }: InicioProps) {
+function Coverage({ spaceId, base, cash, settings, onGo, onQuick }: InicioProps) {
   const [adjusting, setAdjusting] = React.useState(false);
   const today = cash.today;
   const since = (days: number) => addDaysIso(today, -days);
@@ -775,7 +795,7 @@ function Coverage({ spaceId, base, cash, settings, hidden, onGo, onQuick }: Inic
           </li>
         ))}
       </ul>
-      <AdjustBalanceSheet open={adjusting} onClose={() => setAdjusting(false)} spaceId={spaceId} cash={cash} base={base} />
+      <AdjustBalanceSheet open={adjusting} onClose={() => setAdjusting(false)} spaceId={spaceId} cash={cash} base={base} cardsEnabled={settings?.cardsEnabled ?? true} />
     </Panel>
   );
 }

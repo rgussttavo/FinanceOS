@@ -16,6 +16,7 @@ import {
   todayIso,
 } from './dates';
 import { occurrencesInMonth, projectMonth, summarizeMonth, type Occurrence } from './occurrences';
+import { migrateLedger } from './migrate';
 import { ensureSpace, provisionDemo, uid } from './provision';
 import type {
   Account,
@@ -53,7 +54,12 @@ export function useBootstrap(demo = false): Bootstrap {
 
   useEffect(() => {
     let alive = true;
-    (demo ? provisionDemo() : ensureSpace())
+    // o livro-caixa precisa da conta principal, e o saldo antigo, convertido,
+    // antes de qualquer tela pintar um saldo
+    (demo ? provisionDemo() : ensureSpace().then(async (space) => {
+      await migrateLedger(space.id);
+      return space;
+    }))
       .then((space) => {
         if (alive) setState({ spaceId: space.id, ready: true, error: null });
       })

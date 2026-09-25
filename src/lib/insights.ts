@@ -6,7 +6,7 @@ import { goalProgress } from './goals';
 import { formatMoney, formatPercent } from './money';
 import type { Route } from './nav';
 import type { MonthSummary, Occurrence } from './occurrences';
-import type { Card, Category, Cents, Debt, Entry, Goal, IsoDate, Subscription } from './types';
+import type { Card, Category, Cents, Debt, Entry, Goal, IsoDate, Subscription, Transfer } from './types';
 
 /**
  * A leitura do mês, feita sem ninguém perguntar.
@@ -39,6 +39,8 @@ export interface InsightInput {
   debts: Debt[];
   cards: Card[];
   subscriptions: Subscription[];
+  /** pagamentos de fatura registrados: o limite usado é o mesmo da tela do cartão */
+  transfers?: Transfer[];
   cardsEnabled: boolean;
 }
 
@@ -335,7 +337,7 @@ export function buildInsights(input: InsightInput): Insight[] {
   if (cardsEnabled) {
     for (const card of input.cards) {
       if (card.deletedAt || card.archived || card.limit <= 0) continue;
-      const usage = cardUsage(card, input.entries, input.subscriptions, month, today);
+      const usage = cardUsage(card, input.entries, input.subscriptions, month, today, input.transfers ?? []);
       if (usage.ratio < 0.8) continue;
       out.push({
         id: `limit-${card.id}`,

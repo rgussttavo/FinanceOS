@@ -55,6 +55,7 @@ export const VIEW_ICONS: Record<ViewId, LucideIcon> = {
   planejamento: CalendarRange,
   patrimonio: Landmark,
   mais: LayoutGrid,
+  contas: Landmark,
   calendario: CalendarDays,
   orcamento: ClipboardList,
   metas: Target,

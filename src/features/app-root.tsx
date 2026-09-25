@@ -11,13 +11,14 @@ import { BottomNav, Fab, PageHeader, Sidebar, TopBar, greetingFor, navigate, use
 import { ConfirmHost, IconButton, SkeletonList, Toaster, toast } from '@/components/ui';
 import { AccountPanel, SignInSheet, useAuthRedirectError, useCloudSync, useSession } from '@/features/auth';
 import { BRAND } from '@/lib/brand';
-import type { FlowItem } from '@/lib/cashflow';
+import { dayBalances, type FlowItem } from '@/lib/cashflow';
+import { balancesAt } from '@/lib/ledger';
 import { DEMO_DB, db, putRecord, selectDatabase } from '@/lib/db';
 import { currentMonthKey, nowInstant } from '@/lib/dates';
 import type { MovFilter, SubId, ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
 import type { AssistantContext } from '@/lib/assistant';
-import { monthOccurrences, useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
+import { ledgerInput, monthOccurrences, useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
 import { toggleSettled, useBootstrap, useCategories, useSettings } from '@/lib/store';
 import { cloudConfigured } from '@/lib/supabase';
 import { detachCloud } from '@/lib/sync';
@@ -27,6 +28,7 @@ import { AssinaturasView } from './assinaturas';
 import { CalendarioView } from './calendario';
 import { CartoesView } from './cartoes';
 import { CategoriasView } from './categorias';
+import { ContasView } from './contas';
 import { DividasView } from './dividas';
 import { MaisView, PlanejamentoView } from './hubs';
 import { InicioView } from './inicio';
@@ -106,6 +108,11 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   const todayHistory = useHistory(base, current, 4);
   const cardsEnabled = settings?.cardsEnabled ?? true;
   const cash = useCash(base, cardsEnabled);
+  // de quanto o mês aberto parte: o saldo das contas na véspera do dia 1
+  const monthOpening = React.useMemo(
+    () => dayBalances(ledgerInput(base, cardsEnabled), `${month}-01`, `${month}-01`).opening,
+    [base, cardsEnabled, month],
+  );
 
   const hidden = settings?.privateMode ?? false;
   const displayName = settings?.displayName.trim() || 'você';
@@ -147,8 +154,12 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       expand: (m) => monthOccurrences(base, m),
       assets: base.assets,
       cash,
+      // o saldo de cada conta, do mesmo livro-caixa das Contas
+      accounts: balancesAt(ledgerInput(base, cardsEnabled, cash.today), cash.today)
+        .accounts.filter((r) => !r.account.archived || r.balance !== 0)
+        .map((r) => ({ name: r.account.name, balance: r.balance })),
     }),
-    [current, base, todayPicture, todayHistory, categories, cash],
+    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled],
   );
 
   const toggleHidden = React.useCallback(async () => {
@@ -317,6 +328,8 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
     onToggleOccurrence,
     onOpenOccurrence,
     history,
+    monthOpening,
+    balanceKnown: cash.hasOpening,
   };
 
   const syncFooter = demo ? (
@@ -369,8 +382,11 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       break;
     case 'patrimonio':
       content = (
-        <PatrimonioView spaceId={spaceId} base={base} cashNow={cash.balanceNow} hidden={hidden} cardsEnabled={cardsEnabled} onGo={go} />
+        <PatrimonioView spaceId={spaceId} base={base} hidden={hidden} cardsEnabled={cardsEnabled} onGo={go} />
       );
+      break;
+    case 'contas':
+      content = <ContasView spaceId={spaceId} base={base} cardsEnabled={cardsEnabled} hidden={hidden} param={route.param} />;
       break;
     case 'mais':
       content = <MaisView hiddenViews={hiddenViews} onGo={go} />;

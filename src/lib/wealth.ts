@@ -1,18 +1,24 @@
-import { cardUsage } from './cards';
 import { addMonthsToKey, daysInMonth, monthKeyOf, monthKeyParts, partsToIso } from './dates';
 import { debtProgress } from './debts';
-import { occurrencesInMonth } from './occurrences';
-import type { Asset, Card, Cents, Debt, Entry, IsoDate, MonthKey, Subscription } from './types';
+import { balancesAt, cardDebts, type LedgerInput } from './ledger';
+import { occurrencesOf } from './occurrences';
+import type { Asset, Cents, Debt, Entry, IsoDate, MonthKey } from './types';
 
 /**
  * O que você tem menos o que você deve.
  *
- * Ativos: o saldo em conta (quando positivo), o que foi investido e os bens.
- * Passivos: o que falta pagar das dívidas e o que está comprometido nos
- * cartões — fatura aberta mais as parcelas que ainda vêm.
+ * Ativos: o saldo de cada conta (quando positivo), o que foi investido e os
+ * bens. Passivos: conta no negativo, o que falta pagar das dívidas e o que os
+ * cartões devem — a compra parcelada inteira, menos o que já foi pago.
  *
- * O investido é a soma dos aportes lançados, não o valor de mercado: o app não
- * conecta em corretora, e inventar rendimento seria pior do que não mostrar.
+ * Tudo sai do livro-caixa: o caixa daqui é o mesmo das Contas e do Início, e
+ * a dívida do cartão é a mesma do limite usado. Dinheiro que vai da conta
+ * para o investimento sai de um lado e entra no outro — nunca conta duas
+ * vezes, nem some.
+ *
+ * O investido é a soma dos aportes feitos (menos os resgates), não o valor de
+ * mercado: o app não conecta em corretora, e inventar rendimento seria pior
+ * do que não mostrar.
  */
 
 export interface WealthBreakdown {
@@ -30,14 +36,25 @@ export interface WealthBreakdown {
   net: Cents;
 }
 
-/** soma dos aportes até o fim de `month` */
-export function investedUntil(entries: Entry[], month: MonthKey, today: IsoDate): Cents {
-  const invest = entries.filter((e) => e.kind === 'invest' && !e.deletedAt);
-  if (!invest.length) return 0;
-  const first = monthKeyOf(invest.reduce((min, e) => (e.date < min ? e.date : min), invest[0].date));
+/**
+ * Aportes que aconteceram até `cutoff`, menos resgates.
+ *
+ * Só o realizado: o aporte programado para o dia 28 não está investido no
+ * dia 20. Antes, todo aporte previsto do mês já contava como feito.
+ */
+export function investedRealized(entries: Entry[], cutoff: IsoDate, today: IsoDate, filter?: (e: Entry) => boolean): Cents {
   let total = 0;
-  for (let m = first; m <= month; m = addMonthsToKey(m, 1)) {
-    for (const o of occurrencesInMonth(invest, m, today)) total += o.amount;
+  for (const e of entries) {
+    if (e.kind !== 'invest' || e.deletedAt || e.date > cutoff) continue;
+    if (filter && !filter(e)) continue;
+    const start = monthKeyOf(e.date);
+    for (let m = start; m <= monthKeyOf(cutoff); m = addMonthsToKey(m, 1)) {
+      for (const o of occurrencesOf(e, m, today)) {
+        if (!o.settlement || o.date > cutoff) continue;
+        total += e.withdrawal ? -o.amount : o.amount;
+      }
+      if (e.repeat.kind === 'once') break;
+    }
   }
   return total;
 }
@@ -47,22 +64,25 @@ const monthEnd = (month: MonthKey): IsoDate => {
   return partsToIso(y, m, daysInMonth(y, m));
 };
 
-export function wealthNow(input: {
-  assets: Asset[];
-  entries: Entry[];
-  debts: Debt[];
-  cards: Card[];
-  subscriptions: Subscription[];
-  cashNow: Cents;
-  today: IsoDate;
-  cardsEnabled: boolean;
-}): WealthBreakdown {
-  const { today } = input;
-  const month = monthKeyOf(today);
-  const live = input.assets.filter((a) => !a.deletedAt);
+/** o investido no fim de `month` (ou hoje, se o mês ainda não acabou) */
+export function investedUntil(entries: Entry[], month: MonthKey, today: IsoDate): Cents {
+  const end = monthEnd(month);
+  return investedRealized(entries, end < today ? end : today, today);
+}
 
-  const cash = Math.max(0, input.cashNow);
-  const investments = investedUntil(input.entries, month, today);
+export function wealthNow(ledger: LedgerInput, assets: Asset[]): WealthBreakdown {
+  const { today } = ledger;
+  const month = monthKeyOf(today);
+  const live = assets.filter((a) => !a.deletedAt);
+
+  let cash = 0;
+  let overdraft = 0;
+  for (const row of balancesAt(ledger, today).accounts) {
+    if (row.balance >= 0) cash += row.balance;
+    else overdraft += -row.balance;
+  }
+
+  const investments = investedRealized(ledger.entries, today, today);
   const property = live.filter((a) => a.kind === 'property').reduce((t, a) => t + a.value, 0);
   const vehicles = live.filter((a) => a.kind === 'vehicle').reduce((t, a) => t + a.value, 0);
   const otherAssets = live.filter((a) => a.kind === 'other').reduce((t, a) => t + a.value, 0);
@@ -70,8 +90,8 @@ export function wealthNow(input: {
   let financing = 0;
   let loans = 0;
   let cardsDebt = 0;
-  let otherDebts = Math.max(0, -input.cashNow);
-  for (const d of input.debts) {
+  let otherDebts = overdraft;
+  for (const d of ledger.debts) {
     if (d.deletedAt || d.settledAt) continue;
     const left = debtProgress(d, month).outstanding;
     if (d.kind === 'financing') financing += left;
@@ -79,12 +99,7 @@ export function wealthNow(input: {
     else if (d.kind === 'card') cardsDebt += left;
     else otherDebts += left;
   }
-  if (input.cardsEnabled) {
-    for (const c of input.cards) {
-      if (c.deletedAt || c.archived) continue;
-      cardsDebt += cardUsage(c, input.entries, input.subscriptions, month, today).used;
-    }
-  }
+  for (const c of cardDebts(ledger)) cardsDebt += Math.max(0, c.debt);
 
   const assetsTotal = cash + investments + property + vehicles + otherAssets;
   const liabilitiesTotal = financing + loans + cardsDebt + otherDebts;
@@ -114,9 +129,9 @@ export interface WealthPoint {
 /**
  * Evolução mês a mês de investimentos, bens e dívidas.
  *
- * Fica de fora o saldo em conta e os cartões, que o app só conhece do mês
- * corrente — incluí-los no passado seria chutar. Bens entram a partir da data
- * de compra, pelo valor de hoje; a tela diz isso.
+ * Fica de fora o saldo em conta e os cartões: o histórico olha só o que o
+ * app conhece com segurança mês a mês. Bens entram a partir da data de
+ * compra, pelo valor de hoje; a tela diz isso.
  */
 export function wealthHistory(
   input: { assets: Asset[]; entries: Entry[]; debts: Debt[]; today: IsoDate },
@@ -124,19 +139,9 @@ export function wealthHistory(
 ): WealthPoint[] {
   const current = monthKeyOf(input.today);
   const out: WealthPoint[] = [];
-  const invest = input.entries.filter((e) => e.kind === 'invest' && !e.deletedAt);
-
-  // acumulado corrido, para não refazer a soma do começo a cada mês
-  const first = invest.length ? monthKeyOf(invest.reduce((min, e) => (e.date < min ? e.date : min), invest[0].date)) : current;
-  const start = addMonthsToKey(current, -(months - 1));
-  let running = 0;
-  for (let m = first; m < start; m = addMonthsToKey(m, 1)) {
-    for (const o of occurrencesInMonth(invest, m, input.today)) running += o.amount;
-  }
-
   for (let i = months - 1; i >= 0; i--) {
     const m = addMonthsToKey(current, -i);
-    for (const o of occurrencesInMonth(invest, m, input.today)) running += o.amount;
+    const invested = investedUntil(input.entries, m, input.today);
     const end = monthEnd(m);
     const goods = input.assets
       .filter((a) => !a.deletedAt && (!a.purchasedAt || a.purchasedAt <= end))
@@ -144,7 +149,7 @@ export function wealthHistory(
     const debts = input.debts
       .filter((d) => !d.deletedAt && !d.settledAt && d.startMonth <= m)
       .reduce((t, d) => t + debtProgress(d, m).outstanding, 0);
-    out.push({ month: m, assets: running + goods, debts, net: running + goods - debts });
+    out.push({ month: m, assets: invested + goods, debts, net: invested + goods - debts });
   }
   return out;
 }

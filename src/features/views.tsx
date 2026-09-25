@@ -20,11 +20,11 @@ import {
   categorySlices,
 } from '@/components/charts';
 import { OccurrenceList } from '@/components/entries';
-import { Button, EmptyState, Input, Panel, SectionTitle } from '@/components/ui';
+import { Button, EmptyState, Panel, SectionTitle } from '@/components/ui';
 import { FireSheet, InvestimentoSheet } from '@/features/simuladores';
 import { useMarket } from '@/lib/market';
 import { buildInvoice } from '@/lib/cards';
-import { repeatPreviousMonth, setCarryOver, useCardsData, useCarryOver } from '@/lib/store';
+import { repeatPreviousMonth, useCardsData } from '@/lib/store';
 import { cn } from '@/lib/cn';
 import {
   addMonthsToKey,
@@ -34,7 +34,7 @@ import {
   monthKeyParts,
   todayIso,
 } from '@/lib/dates';
-import { formatMoney, formatPercent, parseMoney, ratio } from '@/lib/money';
+import { formatMoney, formatPercent, ratio } from '@/lib/money';
 import type { MonthSummary, Occurrence } from '@/lib/occurrences';
 import { firstNegativeDay, type DayPoint } from '@/lib/occurrences';
 import type { Category, Cents, MonthKey } from '@/lib/types';
@@ -273,6 +273,10 @@ export interface ViewContext {
   /** abre o lançamento (ou a tela da assinatura/dívida, nas linhas virtuais) */
   onOpenOccurrence: (o: Occurrence) => void;
   history: MonthSummary[];
+  /** o saldo das contas na véspera do dia 1: de onde o mês parte */
+  monthOpening: Cents;
+  /** a pessoa já informou quanto tem? sem isso, o saldo parte de zero */
+  balanceKnown: boolean;
 }
 
 /* ---------------------------------------------------------------- Receitas */
@@ -305,7 +309,7 @@ export function ReceitasView(ctx: ViewContext) {
         ]}
       />
 
-      <CarryOverCard spaceId={ctx.spaceId} month={ctx.month} hidden={ctx.hidden} />
+      <MonthOpeningNote opening={ctx.monthOpening} known={ctx.balanceKnown} month={ctx.month} hidden={ctx.hidden} />
       <RepeatPreviousButton spaceId={ctx.spaceId} month={ctx.month} kind="in" />
 
       <Panel className="px-5 py-4">
@@ -553,82 +557,32 @@ function RepeatPreviousButton({
 }
 
 /**
- * O que sobrou na conta no mês passado.
+ * De quanto o mês parte.
  *
- * Sem isso o mês começa sempre do zero, e o saldo da tela nunca bate com o do
- * banco de quem não gastou tudo.
+ * Antes, a pessoa precisava informar todo mês quanto tinha sobrado — e o
+ * valor entrava como lançamento. Agora o saldo passa de um mês para o outro
+ * sozinho, pelo livro-caixa: aqui só se mostra de onde o mês partiu, e por
+ * quê. Nada disso é receita.
  */
-function CarryOverCard({
-  spaceId,
-  month,
-  hidden,
-}: {
-  spaceId: string;
-  month: MonthKey;
-  hidden: boolean;
-}) {
-  const current = useCarryOver(spaceId, month);
-  const [open, setOpen] = React.useState(false);
-  const [text, setText] = React.useState('');
-
-  const [loadedFor, setLoadedFor] = React.useState('');
-  if (open && loadedFor !== month) {
-    setLoadedFor(month);
-    setText(current > 0 ? String(current / 100).replace('.', ',') : '');
-  }
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          setLoadedFor('');
-          setOpen(true);
-        }}
-        className="flex w-full items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3 text-left transition-colors hover:bg-surface-2"
-      >
-        <span className="min-w-0">
-          <span className="block text-[14px] text-ink">Sobrou saldo do mês anterior?</span>
-          <span className="block text-[12px] text-ink-3">
-            {current > 0
-              ? `${formatMoney(current, { hidden })} já lançados`
-              : 'Informe quanto ficou na conta'}
-          </span>
-        </span>
-        <ChevronRight size={17} className="shrink-0 text-ink-3" />
-      </button>
-    );
-  }
-
+function MonthOpeningNote({ opening, known, month, hidden }: { opening: Cents; known: boolean; month: MonthKey; hidden: boolean }) {
   return (
-    <div className="rounded-card border border-line bg-surface px-4 py-3">
-      <p className="text-[14px] text-ink">Quanto sobrou do mês passado</p>
-      <div className="mt-2 flex gap-2">
-        <Input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          inputMode="decimal"
-          placeholder="0,00"
-          aria-label="Saldo do mês anterior"
-          className="tnum flex-1"
-        />
-        <Button
-          variant="primary"
-          onClick={async () => {
-            await setCarryOver(spaceId, month, parseMoney(text) ?? 0);
-            setOpen(false);
-          }}
-        >
-          Salvar
-        </Button>
-        <Button variant="quiet" onClick={() => setOpen(false)}>
-          Cancelar
-        </Button>
-      </div>
-      <p className="mt-2 text-[12px] text-ink-3">
-        Entra como receita do dia 1º. Zerar o campo remove o lançamento.
-      </p>
-    </div>
+    <a
+      href="#/contas"
+      className="flex w-full items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3 text-left transition-colors hover:bg-surface-2"
+    >
+      <span className="min-w-0">
+        <span className="block text-[14px] text-ink">
+          {formatMonthLabel(month)} começou com{' '}
+          <span className={cn('tnum font-semibold', opening < 0 ? 'text-out' : 'text-ink')}>{formatMoney(opening, { hidden, signed: opening < 0 })}</span>
+        </span>
+        <span className="block text-[12px] text-ink-3">
+          {known
+            ? 'O saldo das suas contas na véspera. Não é receita: é o que já estava lá.'
+            : 'Sem saldo informado, as contas partem de zero. Informe quanto você tem em Contas.'}
+        </span>
+      </span>
+      <ChevronRight size={17} className="shrink-0 text-ink-3" />
+    </a>
   );
 }
 

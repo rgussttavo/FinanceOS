@@ -8,6 +8,7 @@ import { Button, Field, Input, Panel, SectionTitle, Sheet } from '@/components/u
 import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/cn';
 import { db, getSyncState } from '@/lib/db';
+import { migrateLedger } from '@/lib/migrate';
 import { ensureCategories } from '@/lib/provision';
 import { adoptLocalSpace, runSync, type SyncReport } from '@/lib/sync';
 import { cloudConfigured, enabledProviders, supabase } from '@/lib/supabase';
@@ -100,6 +101,8 @@ export function useCloudSync(session: Session | null): {
       // a conta pode ter chegado sem categorias; depois do pull dá para saber
       const { spaceId } = await getSyncState();
       if (result.phase === 'done' && spaceId && (await ensureCategories(spaceId))) await runSync();
+      // outro aparelho com versão antiga pode ter mandado "saldo do mês anterior"
+      if (result.phase === 'done' && spaceId && (await migrateLedger(spaceId)).migrated > 0) await runSync();
       setReport(result);
     } catch (err: unknown) {
       setReport({

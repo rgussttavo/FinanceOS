@@ -1,6 +1,7 @@
 import { buildSeedCategories } from './categories';
 import { addMonthsToKey, clampDayToMonth, monthKeyOf, monthKeyParts, partsToIso } from './dates';
 import type {
+  Account,
   Asset,
   Card,
   Category,
@@ -31,6 +32,7 @@ import type {
 export const DEMO_SPACE_ID = 'demo-space';
 
 export interface DemoData {
+  accounts: Account[];
   categories: Category[];
   entries: Entry[];
   cards: Card[];
@@ -129,8 +131,23 @@ export function buildDemoData(today: IsoDate): DemoData {
     if (current) add('out', 'Bar com amigos', 16400, Math.max(1, Math.min(todayDay, 16)), 'alimentacao');
   }
 
-  // saldo que sobrou do mês passado
-  entry('in', 'Saldo do mês anterior', 118000, day(month, 1), null, { tags: ['saldo-anterior'] });
+  // a conta: o mês parte de R$ 1.180 que sobraram do mês passado; o que veio
+  // antes do dia 1 já está dentro desse saldo
+  const accounts: Account[] = [
+    {
+      ...base,
+      id: 'demo-conta-principal',
+      name: 'Conta corrente',
+      kind: 'checking',
+      institution: 'Nubank',
+      color: '',
+      openingBalance: 118000,
+      openingDate: day(month, 1),
+      primary: true,
+      checkpoints: [],
+      archived: false,
+    },
+  ];
   // um freela que entra na semana que vem
   entry('in', 'Freela · site da padaria', 180000, day(month, Math.min(todayDay + 9, 28)), 'extra');
 
@@ -350,6 +367,7 @@ export function buildDemoData(today: IsoDate): DemoData {
   };
 
   return {
+    accounts,
     categories,
     entries,
     cards: [nubank, itau],

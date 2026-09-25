@@ -59,6 +59,8 @@ export interface AssistantContext {
   assets?: Asset[];
   /** a régua do caixa, a mesma do Início: quando presente, "cruza o zero" sai dela */
   cash?: CashSnapshot;
+  /** o saldo de cada conta hoje, do livro-caixa: o mesmo número da tela de Contas */
+  accounts?: { name: string; balance: Cents }[];
 }
 
 export interface Answer {
@@ -491,6 +493,105 @@ type Named = (ctx: AssistantContext, slots: Slots) => Answer;
 /** perguntas que não são "quanto/quais de alguma coisa" e precisam de resposta própria */
 const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
   {
+    id: 'vermelho',
+    /**
+     * "Por que estou fechando no vermelho?" — pelo mesmo caixa do Início.
+     *
+     * Não basta dizer "você gastou mais do que recebeu": a resposta mostra de
+     * onde parte, o que ainda entra e sai, e quais saídas pesam mais, para a
+     * pessoa saber o que adiar ou antecipar.
+     */
+    test: (p) =>
+      /\b(vermelho|negativo|negativa|falta dinheiro|faltando dinheiro|nao (vai )?(sobrar|fechar|dar))\b/.test(p.raw) &&
+      !/\b(cartao|fatura)\b/.test(p.raw),
+    answer: (ctx) => {
+      const cash = ctx.cash;
+      if (!cash) return { text: 'Ainda não consigo ver o saldo das contas para responder isso.' };
+      const pending = cash.items.filter(
+        (i) => i.kind !== 'in' && !i.settled && !i.internal && i.date <= cash.monthEnd && (i.overdue || i.date > cash.today),
+      );
+      const incoming = cash.items.filter((i) => i.kind === 'in' && !i.settled && !i.internal && i.date > cash.today && i.date <= cash.monthEnd);
+      const outTotal = pending.reduce((s, i) => s + i.amount, 0);
+      const inTotal = incoming.reduce((s, i) => s + i.amount, 0);
+      const biggest = pending.slice().sort((a, b) => b.amount - a.amount).slice(0, 5);
+      const bySource = (src: string) => pending.filter((i) => i.source === src).reduce((s, i) => s + i.amount, 0);
+      const origins = (
+        [
+          ['faturas de cartão', bySource('invoice')],
+          ['contas e lançamentos', bySource('entry')],
+          ['assinaturas', bySource('subscription')],
+          ['parcelas de dívida', bySource('debt')],
+        ] as [string, number][]
+      ).filter(([, v]) => v > 0);
+
+      const fecha = cash.endOfMonth;
+      const low = cash.lowest;
+      const dips = !!low && low.balance < 0;
+      const parts = [
+        `Hoje você tem ${formatMoney(cash.balanceNow, { signed: cash.balanceNow < 0 })} nas contas.`,
+        `Até o fim de ${monthName(cash.month)} ainda entram ${formatMoney(inTotal)} e saem ${formatMoney(outTotal)}${
+          cash.overdue > 0 ? ` (${formatMoney(cash.overdue)} disso já venceram e não foram pagos)` : ''
+        }.`,
+        fecha < 0
+          ? `Pelo previsto, o mês fecha em ${formatMoney(fecha, { signed: true })}.`
+          : `Pelo previsto, o mês fecha com ${formatMoney(fecha)}${dips ? ', mas passa pelo negativo no caminho' : ''}.`,
+        dips && low ? `O ponto mais baixo é ${formatMoney(low.balance, { signed: true })}, no dia ${Number(low.date.slice(8))}.` : '',
+        origins.length ? `O que ainda sai: ${origins.map(([l, v]) => `${formatMoney(v)} em ${l}`).join(', ')}.` : '',
+        fecha >= 0 && !dips
+          ? 'Pelo que está lançado, você não fecha no vermelho.'
+          : 'As maiores saídas que ainda vêm estão abaixo: são as primeiras candidatas a adiar ou renegociar.',
+      ].filter(Boolean);
+
+      return {
+        text: parts.join(' '),
+        highlight: { label: 'Fim do mês previsto', value: formatMoney(fecha, { signed: fecha < 0 }) },
+        list: biggest.map((i) => ({
+          label: i.label,
+          detail: i.overdue ? 'vencida · sem pagamento' : `dia ${Number(i.date.slice(8))}`,
+          value: formatMoney(i.amount),
+        })),
+        basis: 'saldo das contas hoje, mais o que está previsto até o fim do mês',
+        link: { label: 'Ver o mês dia a dia', route: { view: 'calendario' } },
+      };
+    },
+  },
+  {
+    id: 'quanto-tenho',
+    /**
+     * "Quanto tenho", "qual meu saldo": o saldo das contas hoje. É o mesmo
+     * número do Início (Agora), das Contas e do Patrimônio — sai do mesmo
+     * livro-caixa. Nunca o resultado do mês, que é outra pergunta.
+     */
+    test: (p) =>
+      /\b(quanto|qto)( (eu|que))? (tenho|tem|possuo|ha)\b/.test(p.raw) ||
+      /\b(qual|quanto|ver|meu|o) (e )?(o )?(meu )?saldo\b/.test(p.raw) ||
+      /\bsaldo (da|das|na|nas|em) conta/.test(p.raw) ||
+      /\bsaldo (de )?(hoje|agora|atual)\b/.test(p.raw),
+    answer: (ctx) => {
+      const cash = ctx.cash;
+      if (!cash) return { text: 'Ainda não consigo ver o saldo das contas para responder isso.' };
+      const accounts = ctx.accounts ?? [];
+      const text = [
+        `Você tem ${formatMoney(cash.balanceNow, { signed: cash.balanceNow < 0 })} nas contas hoje.`,
+        `Pelo previsto, o fim de ${monthName(cash.month)} fica em ${formatMoney(cash.endOfMonth, { signed: cash.endOfMonth < 0 })}.`,
+        cash.hasOpening ? '' : 'Você ainda não informou o saldo de nenhuma conta, então este número parte de zero e pode não bater com o banco.',
+        cash.overdue > 0 ? `${formatMoney(cash.overdue)} em contas vencidas ainda não saíram: quando forem pagas, o saldo cai.` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      return {
+        text,
+        highlight: { label: 'Nas contas, hoje', value: formatMoney(cash.balanceNow, { signed: cash.balanceNow < 0 }) },
+        list:
+          accounts.length > 1
+            ? accounts.map((a) => ({ label: a.name, detail: 'saldo de hoje', value: formatMoney(a.balance, { signed: a.balance < 0 }) }))
+            : undefined,
+        basis: 'o que já aconteceu nas contas até hoje',
+        link: { label: 'Ver as contas', route: { view: 'contas' } },
+      };
+    },
+  },
+  {
     id: 'resumo',
     test: (p) => p.tags.has('RESUMO') || /\bcomo (estou|vou|ando|anda)\b/.test(p.raw),
     answer: (ctx, slots) => {
@@ -509,28 +610,45 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
       const parts = [
         `Em ${monthName(slots.month)} entraram ${formatMoney(s.income)} e saíram ${formatMoney(s.expense)}.`,
         s.invested > 0 ? `Você investiu ${formatMoney(s.invested)}.` : '',
-        s.balance >= 0 ? `Sobram ${formatMoney(s.balance)}.` : `Está faltando ${formatMoney(-s.balance)} para fechar o mês.`,
+        s.balance >= 0
+          ? `O resultado do mês é ${formatMoney(s.balance, { signed: true })}.`
+          : `As saídas passam das entradas em ${formatMoney(-s.balance)}.`,
+        slots.month === ctx.month && ctx.cash
+          ? `Nas contas: ${formatMoney(ctx.cash.balanceNow, { signed: ctx.cash.balanceNow < 0 })} hoje, ${formatMoney(ctx.cash.endOfMonth, { signed: ctx.cash.endOfMonth < 0 })} previstos no fim do mês.`
+          : '',
         negativo ? `O saldo cruza o zero no dia ${Number(negativo.date.slice(8))}.` : '',
         s.overdueExpense > 0 ? `${formatMoney(s.overdueExpense)} já venceram e não foram baixados.` : '',
       ].filter(Boolean);
 
       return {
         text: parts.join(' '),
-        highlight: { label: s.balance >= 0 ? 'Sobra do mês' : 'Falta no mês', value: formatMoney(Math.abs(s.balance)) },
+        highlight: { label: 'Resultado do mês', value: formatMoney(s.balance, { signed: true }) },
       };
     },
   },
   {
     id: 'saldo',
+    /**
+     * "Quanto sobra no mês": o resultado da competência — entradas menos
+     * saídas e aportes do mês, com o previsto. Não é o saldo da conta, e a
+     * resposta diz isso, com os dois números lado a lado.
+     */
     test: (p) => p.tags.has('SOBRA') && !p.tags.has('GASTO') && !p.tags.has('RECEITA'),
     answer: (ctx, slots) => {
       const s = summaryOfMonth(ctx, slots.month);
+      const cash = slots.month === ctx.month ? ctx.cash : undefined;
       return {
-        text:
+        text: [
           s.balance >= 0
-            ? `Sobram ${formatMoney(s.balance)} em ${monthName(slots.month)}, contando o que entrou e tudo que ainda está previsto sair.`
-            : `${monthName(slots.month)} está negativo em ${formatMoney(-s.balance)}. As saídas previstas passam das entradas.`,
-        highlight: { label: 'Saldo do mês', value: formatMoney(s.balance) },
+            ? `Em ${monthName(slots.month)}, o que entra passa do que sai em ${formatMoney(s.balance)}, contando o previsto.`
+            : `Em ${monthName(slots.month)}, as saídas previstas passam das entradas em ${formatMoney(-s.balance)}.`,
+          cash
+            ? `Isso é o resultado do mês, não o saldo da conta: nas contas você tem ${formatMoney(cash.balanceNow)} hoje, e o previsto para o fim do mês é ${formatMoney(cash.endOfMonth)}.`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+        highlight: { label: 'Resultado do mês', value: formatMoney(s.balance, { signed: true }) },
       };
     },
   },
@@ -577,7 +695,9 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
           : null
         : firstNegativeDay(ctx.projection);
       if (!negativo) {
-        return { text: `Pelo que está lançado, sim. O saldo não fica negativo em nenhum dia de ${monthName(ctx.month)}, e sobram ${formatMoney(ctx.summary.balance)} no fim.` };
+        // o fim do mês é o do caixa: o mesmo número do Início e do Calendário
+        const fim = ctx.cash ? ctx.cash.endOfMonth : ctx.summary.balance;
+        return { text: `Pelo que está lançado, sim. O saldo não fica negativo em nenhum dia de ${monthName(ctx.month)}, e o mês fecha com ${formatMoney(fim)} nas contas.` };
       }
       return {
         text: `Pelo que está lançado, o dinheiro não alcança: o saldo cruza o zero no dia ${Number(negativo.date.slice(8))}, faltando ${formatMoney(-negativo.balance)}. Dá tempo de antecipar uma entrada ou adiar uma saída até lá.`,

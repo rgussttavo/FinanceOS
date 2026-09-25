@@ -6,7 +6,6 @@ import { Panel, SectionTitle, Skeleton } from '@/components/ui';
 import { dayBalances, type CashSnapshot, type DayBalance, type FlowItem } from '@/lib/cashflow';
 import { cn } from '@/lib/cn';
 import {
-  addDaysIso,
   currentMonthKey,
   daysInMonth,
   formatDayShort,
@@ -61,8 +60,9 @@ export function CalendarioView({
   const shownItems = picked ? data.items.filter((i) => i.date === picked) : data.items;
   const shownHolidays = picked ? holidays.filter((h) => h.date === picked) : holidays;
 
-  const totalIn = data.items.filter((i) => i.kind === 'in').reduce((t, i) => t + i.amount, 0);
-  const totalOut = data.items.filter((i) => i.kind !== 'in').reduce((t, i) => t + i.amount, 0);
+  // ajuste de saldo mexe no saldo, mas não é entrada nem saída
+  const totalIn = data.items.filter((i) => i.kind === 'in' && !i.internal).reduce((t, i) => t + i.amount, 0);
+  const totalOut = data.items.filter((i) => i.kind !== 'in' && !i.internal).reduce((t, i) => t + i.amount, 0);
   const last = data.days[data.days.length - 1];
   const lowest = data.days.reduce<DayBalance | null>((min, d) => (!min || d.balance < min.balance ? d : min), null);
 
@@ -103,8 +103,8 @@ export function CalendarioView({
             <SectionTitle>Como o saldo anda no mês</SectionTitle>
             <BalanceLine days={data.days} today={today} hidden={hidden} />
             <dl className="mt-4 grid grid-cols-3 gap-2 text-[12px]">
-              <Stat label="Entra" value={totalIn} tone="text-in" hidden={hidden} />
-              <Stat label="Sai" value={totalOut} tone="text-out" hidden={hidden} />
+              <Stat label="Entra na conta" value={totalIn} tone="text-in" hidden={hidden} />
+              <Stat label="Sai da conta" value={totalOut} tone="text-out" hidden={hidden} />
               <Stat label="Fim do mês" value={last?.balance ?? 0} tone={last && last.balance < 0 ? 'text-out' : 'text-ink'} hidden={hidden} />
             </dl>
             {lowest && lowest.balance < 0 ? (
@@ -116,9 +116,11 @@ export function CalendarioView({
                 O menor saldo do mês é {formatMoney(lowest.balance, { hidden })}, no dia {formatDayShort(lowest.date)}.
               </p>
             ) : null}
-            {month > cash.month ? (
-              <p className="mt-1 text-[12px] text-ink-3">Parte de {formatMoney(data.opening, { hidden })}, o saldo previsto para o fim do mês anterior.</p>
-            ) : null}
+            <p className="mt-1 text-[12px] text-ink-3">
+              Parte de {formatMoney(data.opening, { hidden })}, o saldo {month > cash.month ? 'previsto para' : 'das contas n'}o fim do mês anterior. Aqui vale o
+              dia em que o dinheiro sai da conta: a compra no cartão sai quando a fatura vence, e o aporte, no dia dele — por isso o total pode
+              diferir dos gastos do mês em Movimentos.
+            </p>
           </Panel>
         </div>
 

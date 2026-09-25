@@ -11,7 +11,8 @@ import { cn } from '@/lib/cn';
 import { addMonthsToKey, currentMonthKey, dateInMonth, formatDayShort, formatMonthLabel, todayIso } from '@/lib/dates';
 import { parseMoney } from '@/lib/money';
 import type { MonthSummary } from '@/lib/occurrences';
-import { createEntry, setOpeningBalance } from '@/lib/store';
+import { setBalance as setAccountBalance } from '@/lib/accounts';
+import { createEntry } from '@/lib/store';
 import type { Category, MonthKey } from '@/lib/types';
 
 /**
@@ -341,7 +342,8 @@ function Manual({
     setSaving(true);
     try {
       const month = currentMonthKey();
-      if (balanceValue !== null) await setOpeningBalance(spaceId, month, negative ? -balanceValue : balanceValue);
+      // o saldo de hoje vira o ponto de partida da conta principal
+      if (balanceValue !== null) await setAccountBalance({ spaceId, balance: negative ? -balanceValue : balanceValue });
 
       if (incomeValue) {
         // o saldo de hoje já contém o último recebimento: a série começa no próximo
@@ -574,8 +576,8 @@ function BalanceNow({ spaceId, cash }: { spaceId: string; cash: CashSnapshot }) 
     const negative = negativeSign || /^[-−]/.test(trimmed);
     const parsed = parseMoney(trimmed.replace(/^[-−]/, ''));
     if (parsed === null) return setError('Digite o saldo, como 1.250,00 ou -80,00.');
-    // o saldo anterior é o que faz o saldo de hoje bater com o valor informado
-    await setOpeningBalance(spaceId, cash.month, (negative ? -parsed : parsed) - cash.balanceNow);
+    // vira o saldo inicial da conta, ou um ajuste visível se ela já tem histórico
+    await setAccountBalance({ spaceId, balance: negative ? -parsed : parsed, date: cash.today });
   }
 
   return (

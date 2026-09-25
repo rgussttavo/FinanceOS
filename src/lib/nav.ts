@@ -12,6 +12,7 @@ import { BRAND } from './brand';
 export type RootId = 'inicio' | 'movimentos' | 'planejamento' | 'patrimonio' | 'mais';
 
 export type SubId =
+  | 'contas'
   | 'calendario'
   | 'orcamento'
   | 'metas'
@@ -48,6 +49,7 @@ export const ROOTS: { id: RootId; label: string }[] = [
 ];
 
 export const PARENT: Record<SubId, RootId> = {
+  contas: 'patrimonio',
   calendario: 'planejamento',
   orcamento: 'planejamento',
   metas: 'planejamento',
@@ -77,6 +79,7 @@ export const VIEW_META: Record<ViewId, ViewMeta> = {
   planejamento: { title: 'Planejamento', description: 'O que vem por aí e o que você quer alcançar' },
   patrimonio: { title: 'Seu patrimônio', description: 'O que você tem menos o que deve' },
   mais: { title: 'Mais', description: 'Ferramentas, busca e ajustes' },
+  contas: { title: 'Contas', description: 'Quanto tem em cada conta, e de onde veio cada centavo' },
   calendario: { title: 'Calendário', description: 'O mês dia a dia, com o saldo de cada dia' },
   orcamento: { title: 'Orçamento', description: 'Orce antes de gastar' },
   metas: { title: 'Metas', description: 'Quanto falta e quanto guardar por mês' },
