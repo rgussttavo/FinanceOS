@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { FlowTimeline } from '@/components/timeline';
 import { Panel, SectionTitle, Skeleton } from '@/components/ui';
-import { buildFlows, dailyBalances, type CashSnapshot, type DayBalance, type FlowItem } from '@/lib/cashflow';
+import { dayBalances, type CashSnapshot, type DayBalance, type FlowItem } from '@/lib/cashflow';
 import { cn } from '@/lib/cn';
 import {
   addDaysIso,
@@ -16,7 +16,7 @@ import {
 } from '@/lib/dates';
 import { holidaysBetween } from '@/lib/holidays';
 import { formatMoney } from '@/lib/money';
-import type { FinanceBase } from '@/lib/picture';
+import { ledgerInput, type FinanceBase } from '@/lib/picture';
 import type { Category, Cents, IsoDate, MonthKey } from '@/lib/types';
 import { MonthStrip } from './views';
 
@@ -51,26 +51,10 @@ export function CalendarioView({
     const { y, m } = monthKeyParts(month);
     const start = partsToIso(y, m, 1);
     const end = partsToIso(y, m, daysInMonth(y, m));
-    const input = {
-      entries: base.entries,
-      subscriptions: base.subscriptions,
-      cards: base.cards,
-      debts: base.debts,
-      cardsEnabled,
-      today,
-    };
-
-    // mês futuro: parte do saldo previsto no fim do mês anterior, encadeado desde hoje
-    let opening = 0;
-    if (month > cash.month) {
-      const chain = buildFlows(input, cash.monthStart, addDaysIso(start, -1));
-      const days = dailyBalances(chain, cash.monthStart, addDaysIso(start, -1), 0, today);
-      opening = days[days.length - 1]?.balance ?? 0;
-    }
-    const items = buildFlows(input, start, end);
-    const days = dailyBalances(items, start, end, opening, today);
+    // o mesmo saldo do Início e das Contas: passado pelo realizado, futuro pelo previsto
+    const { days, items, opening } = dayBalances(ledgerInput(base, cardsEnabled, today), start, end);
     return { start, end, items, days, opening };
-  }, [base, month, cash, cardsEnabled, today]);
+  }, [base, month, cardsEnabled, today]);
 
   const holidays = React.useMemo(() => holidaysBetween(data.start, data.end), [data.start, data.end]);
   const balances = React.useMemo(() => new Map(data.days.map((d) => [d.date, d.balance])), [data.days]);

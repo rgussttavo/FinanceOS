@@ -78,9 +78,76 @@ export interface Account extends SyncFields {
   kind: AccountKind;
   institution: string;
   color: string;
-  /** saldo declarado na criação; o extrato caminha a partir dele */
+  /**
+   * Saldo no começo do dia `openingDate`. É o ponto de partida: o saldo de
+   * qualquer dia é ele mais o que se realizou na conta de `openingDate` em
+   * diante. O que aconteceu antes já está dentro dele e não conta de novo.
+   */
   openingBalance: Cents;
+  /** a data a que o saldo inicial se refere; ausente nas contas antigas = desde sempre */
+  openingDate?: IsoDate | null;
+  /**
+   * A conta principal: onde cai o lançamento que não diz de qual conta é.
+   * Existe exatamente uma por espaço.
+   */
+  primary?: boolean;
+  /**
+   * Saldos que o banco declarou (extrato importado ou conferido à mão). São
+   * conferidos o tempo todo: se um lançamento some ou muda depois, a conta
+   * volta a mostrar a diferença, em vez de o saldo "conferido" mentir calado.
+   */
+  checkpoints?: BalanceCheckpoint[];
   archived: boolean;
+}
+
+export interface BalanceCheckpoint {
+  /** o saldo no FIM deste dia, segundo o banco */
+  date: IsoDate;
+  amount: Cents;
+  /** de onde veio: nome do arquivo importado, ou "informado" */
+  source: string;
+  at: IsoInstant;
+}
+
+/* ----------------------------------------------------------- transferência */
+
+/**
+ * Dinheiro que muda de lugar sem entrar nem sair da vida da pessoa.
+ *
+ * Um registro só, com os dois lados dentro — e não uma despesa numa conta e
+ * uma receita na outra. Assim não existe transferência pela metade: editar ou
+ * excluir mexe nos dois lados de uma vez, e ela nunca aparece como gasto nem
+ * como renda.
+ *
+ *   account     conta → conta (TED, Pix entre contas suas, aplicação em
+ *               corretora cadastrada como conta)
+ *   card        conta → cartão: o pagamento da fatura. A compra já pesou no
+ *               cartão; o pagamento só tira o dinheiro da conta.
+ *   adjustment  correção de saldo feita pela pessoa para bater com o banco.
+ *               Aparece como tal, nunca como receita ou despesa.
+ */
+export type TransferKind = 'account' | 'card' | 'adjustment';
+
+export interface Transfer extends SyncFields {
+  kind: TransferKind;
+  date: IsoDate;
+  /** sempre positivo; em ajuste, o sentido vem de `direction` */
+  amount: Cents;
+  description: string;
+  /** de onde sai; em ajuste, a conta ajustada */
+  fromAccountId: string | null;
+  /** para onde vai, em conta → conta */
+  toAccountId: string | null;
+  /** o cartão pago, em pagamento de fatura */
+  toCardId: string | null;
+  /** a fatura que o pagamento quita (AAAA-MM) */
+  invoiceMonth: MonthKey | null;
+  /** só no ajuste: o saldo subiu ('in') ou desceu ('out') */
+  direction?: 'in' | 'out';
+  notes: string;
+  /** linhas de extrato que já correspondem a esta transferência (dos dois lados) */
+  externalIds: string[];
+  source: EntrySource;
 }
 
 /* ----------------------------------------------------------------- cartão */
@@ -109,6 +176,13 @@ export interface Repeat {
   kind: RepeatKind;
   /** para 'installments': número total de parcelas. Para os demais, opcional. */
   count?: number;
+  /**
+   * Para 'installments': o valor total da compra, quando conhecido. As
+   * parcelas saem dele com a sobra de centavos na primeira — R$ 100 em 3x é
+   * 33,34 + 33,33 + 33,33, e não 3 × 33,33 = 99,99. Ausente, cada parcela vale
+   * `amount`.
+   */
+  total?: Cents;
   /** repete até esta data, inclusive */
   until?: IsoDate | null;
 }
@@ -152,6 +226,19 @@ export interface Entry extends SyncFields {
    * cadastrado é só um palpite, e errar por dois dias mudava compras de fatura.
    */
   invoiceMonth?: MonthKey | null;
+  /**
+   * A cobrança real de uma assinatura cadastrada, vinda do extrato. Naquele
+   * mês ela toma o lugar da cobrança prevista — com o valor e o dia que o
+   * banco mostrou —, em vez de as duas pesarem juntas.
+   */
+  subscriptionId?: string | null;
+  /** o mesmo, para a parcela de uma dívida cadastrada */
+  debtId?: string | null;
+  /**
+   * Só em investimento: resgate. O dinheiro volta da aplicação para a conta —
+   * entra na conta, sai do investido, e não é renda.
+   */
+  withdrawal?: boolean;
 }
 
 export type EntrySource = 'manual' | 'ofx' | 'csv' | 'qif' | 'xlsx' | 'boleto' | 'pix' | 'recurring' | 'card';
@@ -375,6 +462,7 @@ export type MutationOp = 'put' | 'delete';
 export type SyncTable =
   | 'categories'
   | 'accounts'
+  | 'transfers'
   | 'cards'
   | 'entries'
   | 'subscriptions'

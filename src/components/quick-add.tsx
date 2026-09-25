@@ -18,7 +18,7 @@ import {
 import { cn } from '@/lib/cn';
 import { addDaysIso, formatDayShort, todayIso } from '@/lib/dates';
 import { goalProgress } from '@/lib/goals';
-import { formatMoney, parseMoney } from '@/lib/money';
+import { formatMoney, parseMoney, splitCents } from '@/lib/money';
 import type { Route } from '@/lib/nav';
 import { deleteRecord } from '@/lib/db';
 import {
@@ -333,7 +333,8 @@ function QuickForm({
   }, [startScan]);
 
   const amount = parseMoney(amountText);
-  const perInstallment = amount && kind === 'card' ? Math.round(amount / installments) : null;
+  // a primeira parcela leva a sobra de centavos; o total vai junto com a compra
+  const perInstallment = amount && kind === 'card' ? (splitCents(amount, installments)[0] ?? null) : null;
 
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
@@ -383,7 +384,7 @@ function QuickForm({
           repeat:
             kind === 'card'
               ? installments > 1
-                ? { kind: 'installments', count: installments }
+                ? { kind: 'installments', count: installments, total: amount }
                 : { kind: 'once' }
               : repeatKind === 'installments'
                 ? { kind: 'installments', count: 12 }

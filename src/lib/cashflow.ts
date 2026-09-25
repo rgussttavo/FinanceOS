@@ -1,30 +1,34 @@
-import { buildInvoice, subscriptionChargeIn } from './cards';
+import { realizedCharges, realizedKey, subscriptionCharge } from './cards';
+import { addDaysIso, addMonthsToKey, diffDays, monthKeyOf, monthKeyParts, partsToIso } from './dates';
+import { DEFAULT_DEBT_DAY, debtInstallmentIn } from './debts';
 import {
-  addDaysIso,
-  addMonthsToKey,
-  dateInMonth,
-  diffDays,
-  monthKeyOf,
-  monthKeyParts,
-  partsToIso,
-} from './dates';
-import { OPENING_TAG, occurrencesInMonth, type Occurrence } from './occurrences';
-import type { Card, Cents, Debt, Entry, FlowKind, IsoDate, MonthKey, Subscription } from './types';
+  balancesAt,
+  cashNow,
+  pendingDay,
+  plannedItems,
+  realizedPostings,
+  type LedgerInput,
+  type PlannedItem,
+  type Posting,
+} from './ledger';
+import { OPENING_TAG, type Occurrence } from './occurrences';
+import type { Cents, Debt, Entry, FlowKind, IsoDate, MonthKey, Subscription } from './types';
 
 /**
  * O dinheiro no dia em que ele se mexe.
  *
  * A tela de despesas conta a compra no dia da compra: é a visão de "para onde
- * foi o dinheiro". Mas a pergunta "quanto posso gastar até o salário" precisa
- * de outra régua — a da conta corrente. Nela, a compra no cartão só sai no
- * vencimento da fatura, a assinatura sai no dia da cobrança e a parcela da
- * dívida sai no dia dela.
+ * foi o dinheiro". A pergunta "quanto posso gastar até o salário" precisa de
+ * outra régua — a da conta. Nela, a compra no cartão só sai quando a fatura é
+ * paga, a assinatura sai no dia da cobrança e a parcela da dívida no dia dela.
  *
- * Este módulo monta essa régua. É puro: recebe os registros e o dia de hoje e
- * devolve a linha do tempo; quem desenha é a tela.
+ * Este módulo é só a apresentação dessa régua: os números vêm todos do
+ * livro-caixa (ledger.ts). O que já aconteceu vem das postagens realizadas; o
+ * que vem pela frente, do previsto. O saldo de hoje daqui é, por construção, o
+ * mesmo saldo das Contas.
  */
 
-export type FlowSource = 'entry' | 'subscription' | 'invoice' | 'debt';
+export type FlowSource = 'entry' | 'subscription' | 'invoice' | 'debt' | 'transfer' | 'adjustment';
 
 export interface FlowItem {
   /** estável entre renderizações: serve de chave de lista */
@@ -36,9 +40,9 @@ export interface FlowItem {
   /** sempre positivo; o sentido vem de `kind` */
   amount: Cents;
   categoryId: string | null;
-  /** baixado (lançamento marcado como pago) */
+  /** já aconteceu */
   settled: boolean;
-  /** venceu e não foi baixado; só lançamentos têm baixa */
+  /** venceu e não foi baixado */
   overdue: boolean;
   entryId?: string;
   occurrenceKey?: string;
@@ -46,19 +50,20 @@ export interface FlowItem {
   cardId?: string;
   debtId?: string;
   installment?: { index: number; total: number } | null;
-  /** o saldo trazido do mês anterior: move o saldo, mas não é entrada nem saída */
+  /** a conta onde o movimento acontece */
+  accountId?: string;
+  /**
+   * Move o saldo mas não é entrada nem saída: o ajuste de saldo. A
+   * transferência entre contas suas nem aparece na régua do total, porque não
+   * muda o total.
+   */
+  internal?: boolean;
+  /** compatibilidade: o antigo "saldo do mês anterior", que não existe mais */
   opening?: boolean;
 }
 
-export interface FlowInput {
-  entries: Entry[];
-  subscriptions: Subscription[];
-  cards: Card[];
-  debts: Debt[];
-  /** com cartões desligados, compra no cartão volta a ser gasto comum */
-  cardsEnabled: boolean;
-  today: IsoDate;
-}
+/** a régua do caixa lê exatamente o mesmo que o livro-caixa */
+export type FlowInput = LedgerInput;
 
 export const signed = (item: Pick<FlowItem, 'kind' | 'amount'>): Cents =>
   item.kind === 'in' ? item.amount : -item.amount;
@@ -70,117 +75,75 @@ export function monthsCovering(from: IsoDate, to: IsoDate): MonthKey[] {
   return out;
 }
 
+function fromPosting(p: Posting): FlowItem | null {
+  // transferência entre contas suas não muda o total: não é linha desta régua
+  if (p.source === 'transfer') return null;
+  const inflow = p.amount >= 0;
+  const kind: FlowKind = inflow ? 'in' : p.kind === 'invest' ? 'invest' : 'out';
+  return {
+    id: p.id,
+    date: p.date,
+    kind,
+    source: p.source === 'card-payment' ? 'invoice' : p.source,
+    label: p.label,
+    amount: Math.abs(p.amount),
+    categoryId: p.categoryId ?? null,
+    settled: true,
+    overdue: false,
+    accountId: p.accountId,
+    ...(p.source === 'entry' ? { entryId: p.refId, occurrenceKey: p.occurrenceKey } : null),
+    ...(p.source === 'subscription' ? { subscriptionId: p.refId } : null),
+    ...(p.source === 'debt' ? { debtId: p.refId } : null),
+    ...(p.source === 'invoice' ? { cardId: p.refId } : null),
+    ...(p.internal ? { internal: true } : null),
+  };
+}
+
+function fromPlanned(p: PlannedItem): FlowItem | null {
+  if (p.source === 'transfer' && p.internal) return null;
+  return {
+    id: p.id,
+    date: p.date,
+    kind: p.kind,
+    source: p.source === 'transfer' ? 'invoice' : p.source,
+    label: p.label,
+    amount: p.amount,
+    categoryId: p.categoryId,
+    settled: false,
+    overdue: p.overdue,
+    accountId: p.accountId,
+    installment: p.installment ?? null,
+    ...(p.source === 'entry' ? { entryId: p.refId, occurrenceKey: p.occurrenceKey } : null),
+    ...(p.source === 'subscription' ? { subscriptionId: p.refId } : null),
+    ...(p.source === 'debt' ? { debtId: p.refId } : null),
+    ...(p.cardId ? { cardId: p.cardId } : null),
+  };
+}
+
 /**
- * Todos os movimentos de caixa entre duas datas, inclusive.
- *
- * `entries` precisa trazer os lançamentos até o último mês do intervalo — a
- * fatura de outubro depende de compras de setembro, e a parcela de hoje, de
- * uma compra do ano passado.
+ * Todos os movimentos de caixa entre duas datas, inclusive: o que já
+ * aconteceu até hoje e o que está previsto depois — mais o vencido que
+ * ninguém pagou, marcado como tal.
  */
 export function buildFlows(input: FlowInput, from: IsoDate, to: IsoDate): FlowItem[] {
-  const { entries, subscriptions, debts, cardsEnabled, today } = input;
-  const cards = cardsEnabled ? input.cards.filter((c) => !c.deletedAt && !c.archived) : [];
-  const cardIds = new Set(cards.map((c) => c.id));
-  const months = monthsCovering(from, to);
-  const within = (d: IsoDate) => d >= from && d <= to;
+  const { today } = input;
   const out: FlowItem[] = [];
-
-  // lançamentos da conta; o que foi no cartão entra pela fatura
-  const cashEntries = entries.filter((e) => !e.deletedAt && !(e.cardId && cardIds.has(e.cardId)));
-  for (const month of months) {
-    for (const o of occurrencesInMonth(cashEntries, month, today)) {
-      if (!within(o.date)) continue;
-      out.push({
-        id: `e:${o.entryId}:${o.key}`,
-        date: o.date,
-        kind: o.kind,
-        source: 'entry',
-        label: o.description,
-        amount: o.amount,
-        categoryId: o.categoryId,
-        settled: o.settlement !== null,
-        overdue: o.overdue,
-        entryId: o.entryId,
-        occurrenceKey: o.key,
-        installment: o.installment,
-        ...(o.opening ? { opening: true } : null),
-      });
+  const pastEnd = to < today ? to : today;
+  if (from <= pastEnd) {
+    for (const p of realizedPostings(input, pastEnd)) {
+      if (p.date < from) continue;
+      const item = fromPosting(p);
+      if (item) out.push(item);
     }
   }
-
-  // assinaturas pagas pela conta, no dia da cobrança
-  for (const sub of subscriptions) {
-    if (sub.deletedAt || (sub.cardId && cardIds.has(sub.cardId))) continue;
-    for (const month of months) {
-      if (!subscriptionChargeIn(sub, month)) continue;
-      const date = dateInMonth(month, sub.billingDay);
-      if (!within(date) || date < sub.startedAt) continue;
-      if (sub.canceledAt && date > sub.canceledAt) continue;
-      out.push({
-        id: `s:${sub.id}:${month}`,
-        date,
-        kind: 'out',
-        source: 'subscription',
-        label: sub.name,
-        amount: sub.amount,
-        categoryId: sub.categoryId,
-        settled: false,
-        overdue: false,
-        subscriptionId: sub.id,
-      });
-    }
+  for (const p of plannedItems(input, to, from)) {
+    const item = fromPlanned(p);
+    if (item) out.push(item);
   }
-
-  // parcela de dívida marcada para entrar no fluxo
-  for (const debt of debts) {
-    if (debt.deletedAt || debt.settledAt || !debt.inFlow) continue;
-    const count = Math.max(1, Math.trunc(debt.installments));
-    for (const month of months) {
-      const index = monthsBetween(debt.startMonth, month) + 1;
-      if (index < 1 || index > count) continue;
-      const date = dateInMonth(month, debt.dueDay ?? DEFAULT_DEBT_DAY);
-      if (!within(date)) continue;
-      out.push({
-        id: `d:${debt.id}:${month}`,
-        date,
-        kind: 'out',
-        source: 'debt',
-        label: debt.name,
-        amount: debt.installment,
-        categoryId: null,
-        settled: false,
-        overdue: false,
-        debtId: debt.id,
-        installment: { index, total: count },
-      });
-    }
-  }
-
-  // a fatura de cada cartão, no vencimento; a de um mês pode vencer no seguinte
-  for (const card of cards) {
-    for (const month of [addMonthsToKey(months[0], -1), ...months]) {
-      const invoice = buildInvoice(card, entries, subscriptions, month, today);
-      if (invoice.total <= 0 || !within(invoice.dueOn)) continue;
-      out.push({
-        id: `f:${card.id}:${month}`,
-        date: invoice.dueOn,
-        kind: 'out',
-        source: 'invoice',
-        label: `Fatura ${card.name || card.institution}`,
-        amount: invoice.total,
-        categoryId: null,
-        settled: false,
-        overdue: false,
-        cardId: card.id,
-      });
-    }
-  }
-
   return out.sort(byDateThenKind);
 }
 
-/** dia padrão da parcela de dívida cadastrada antes de o dia existir */
-export const DEFAULT_DEBT_DAY = 10;
+export { DEFAULT_DEBT_DAY };
 
 function byDateThenKind(a: FlowItem, b: FlowItem): number {
   if (a.date !== b.date) return a.date < b.date ? -1 : 1;
@@ -189,47 +152,42 @@ function byDateThenKind(a: FlowItem, b: FlowItem): number {
   return b.amount - a.amount;
 }
 
-function monthsBetween(from: MonthKey, to: MonthKey): number {
-  const a = monthKeyParts(from);
-  const b = monthKeyParts(to);
-  return (b.y - a.y) * 12 + (b.m - a.m);
-}
-
 /* ------------------------------------------------- linhas que não são lançamento */
 
 /**
  * Assinaturas e parcelas de dívida como linhas do mês, na régua da
  * competência (a das telas de movimentos).
  *
- * Antes, uma assinatura paga no débito nunca entrava nas despesas, e a dívida
- * marcada para "entrar nas despesas" não entrava em lugar nenhum. Elas não
- * viram lançamento no banco — continuam sendo editadas na tela delas —, mas
- * passam a pesar no mês como pesam na vida.
+ * Elas não viram lançamento no banco — continuam sendo editadas na tela
+ * delas —, mas pesam no mês como pesam na vida. Quando o extrato trouxe a
+ * cobrança real daquele mês, fica só a real.
  */
 export function virtualOccurrences(
   subscriptions: Subscription[],
   debts: Debt[],
   month: MonthKey,
   today: IsoDate,
+  /** os lançamentos: a cobrança que já veio do extrato não aparece duas vezes */
+  entries: Entry[] = [],
 ): Occurrence[] {
   const out: Occurrence[] = [];
+  const realized = realizedCharges(entries);
 
   for (const sub of subscriptions) {
-    if (sub.deletedAt || !subscriptionChargeIn(sub, month)) continue;
-    const date = dateInMonth(month, sub.billingDay);
-    if (date < sub.startedAt || (sub.canceledAt && date > sub.canceledAt)) continue;
+    const charge = subscriptionCharge(sub, month);
+    if (!charge || realized.has(realizedKey(sub.id, month))) continue;
     out.push({
       entryId: `sub:${sub.id}`,
       key: month,
-      date,
+      date: charge.date,
       kind: 'out',
       description: sub.name,
-      amount: sub.amount,
+      amount: charge.amount,
       categoryId: sub.categoryId,
-      accountId: null,
+      accountId: sub.accountId,
       cardId: sub.cardId,
       // cobrança automática: o que já passou foi cobrado
-      settlement: date <= today ? { at: `${date}T12:00:00.000Z` } : null,
+      settlement: charge.date <= today ? { at: `${charge.date}T12:00:00.000Z` } : null,
       installment: null,
       overdue: false,
       virtual: 'subscription',
@@ -238,23 +196,21 @@ export function virtualOccurrences(
   }
 
   for (const debt of debts) {
-    if (debt.deletedAt || debt.settledAt || !debt.inFlow) continue;
-    const count = Math.max(1, Math.trunc(debt.installments));
-    const index = monthsBetween(debt.startMonth, month) + 1;
-    if (index < 1 || index > count) continue;
-    const date = dateInMonth(month, debt.dueDay ?? DEFAULT_DEBT_DAY);
+    if (!debt.inFlow) continue;
+    const inst = debtInstallmentIn(debt, month);
+    if (!inst || realized.has(realizedKey(debt.id, month))) continue;
     out.push({
       entryId: `debt:${debt.id}`,
       key: month,
-      date,
+      date: inst.date,
       kind: 'out',
       description: debt.name,
       amount: debt.installment,
       categoryId: null,
       accountId: null,
       cardId: null,
-      settlement: date <= today ? { at: `${date}T12:00:00.000Z` } : null,
-      installment: { index, total: count },
+      settlement: inst.date <= today ? { at: `${inst.date}T12:00:00.000Z` } : null,
+      installment: { index: inst.index, total: inst.total },
       overdue: false,
       virtual: 'debt',
       refId: debt.id,
@@ -275,15 +231,19 @@ export interface DayBalance {
   projected: boolean;
 }
 
+/** o dia em que um movimento pesa no saldo: o vencido e não pago pesa amanhã */
+const effectiveDay = (item: FlowItem, today: IsoDate) => (item.overdue && !item.settled ? pendingDay(today) : item.date);
+
 /** saldo corrido de `from` a `to`, partindo de `opening` antes do primeiro dia */
 export function dailyBalances(items: FlowItem[], from: IsoDate, to: IsoDate, opening: Cents, today: IsoDate): DayBalance[] {
   const byDay = new Map<IsoDate, { inflow: Cents; outflow: Cents }>();
   for (const item of items) {
-    if (item.date < from || item.date > to) continue;
-    const slot = byDay.get(item.date) ?? { inflow: 0, outflow: 0 };
+    const day = effectiveDay(item, today);
+    if (day < from || day > to) continue;
+    const slot = byDay.get(day) ?? { inflow: 0, outflow: 0 };
     if (item.kind === 'in') slot.inflow += item.amount;
     else slot.outflow += item.amount;
-    byDay.set(item.date, slot);
+    byDay.set(day, slot);
   }
 
   const out: DayBalance[] = [];
@@ -294,6 +254,27 @@ export function dailyBalances(items: FlowItem[], from: IsoDate, to: IsoDate, ope
     out.push({ date: d, balance: running, inflow: slot.inflow, outflow: slot.outflow, projected: d > today });
   }
   return out;
+}
+
+/**
+ * O saldo somado das contas, dia a dia: o realizado até hoje e o previsto
+ * depois. É a curva que o Início e o Calendário desenham — as duas telas
+ * pedem aqui, e o dia de hoje sai igual ao saldo das Contas.
+ */
+export function dayBalances(input: FlowInput, from: IsoDate, to: IsoDate): { days: DayBalance[]; items: FlowItem[]; opening: Cents } {
+  const { today } = input;
+  const dayBefore = addDaysIso(from, -1);
+  if (dayBefore <= today) {
+    const opening = balancesAt(input, dayBefore).total;
+    const items = buildFlows(input, from, to);
+    return { days: dailyBalances(items, from, to, opening, today), items, opening };
+  }
+  // começa no futuro: parte do saldo previsto na véspera, encadeado desde hoje
+  const chain = buildFlows(input, addDaysIso(today, 1), to);
+  let opening = cashNow(input);
+  for (const i of chain) if (effectiveDay(i, today) <= dayBefore) opening += signed(i);
+  const items = chain.filter((i) => i.date >= from);
+  return { days: dailyBalances(items, from, to, opening, today), items, opening };
 }
 
 /** trechos seguidos de dias no vermelho: [primeiro, último] */
@@ -324,14 +305,16 @@ export interface CashSnapshot {
   month: MonthKey;
   monthStart: IsoDate;
   monthEnd: IsoDate;
-  /** movimentos do começo do mês até o fim do mês seguinte */
+  /** movimentos do começo do mês até 60 dias à frente */
   items: FlowItem[];
   /** saldo corrido do mês corrente, dia a dia */
   days: DayBalance[];
-  /** saldo hoje: tudo que aconteceu no mês até hoje, saldo anterior incluso */
+  /** saldo hoje, somando as contas: o mesmo número da tela de Contas */
   balanceNow: Cents;
   /** saldo previsto no último dia do mês */
   endOfMonth: Cents;
+  /** o saldo no fim do mês anterior, de onde o mês parte */
+  monthOpening: Cents;
   /** o próximo dinheiro que entra, se houver nos próximos 60 dias */
   nextIncome: FlowItem | null;
   daysToNextIncome: number | null;
@@ -345,13 +328,16 @@ export interface CashSnapshot {
   /** o dia de menor saldo daqui até o fim do mês */
   lowest: DayBalance | null;
   negative: { from: IsoDate; to: IsoDate; lowest: Cents }[];
-  /** o que ainda sai até o próximo recebimento (ou até o fim do mês) */
+  /** o que ainda sai até o próximo recebimento (ou até o fim do mês), vencidos inclusos */
   dueBeforeIncome: Cents;
   dueBeforeIncomeCount: number;
-  /** totais do mês na régua do caixa */
+  /** vencido e não baixado: não saiu da conta, mas vai sair */
+  overdue: Cents;
+  overdueCount: number;
+  /** totais do mês na régua do caixa, sem transferências e ajustes */
   monthIn: Cents;
   monthOut: Cents;
-  /** já existe saldo anterior informado neste mês? */
+  /** a pessoa já disse quanto tem (saldo inicial, saldo conferido ou ajuste)? */
   hasOpening: boolean;
 }
 
@@ -360,9 +346,9 @@ export { OPENING_TAG };
 /**
  * O retrato do dinheiro hoje — o que o Início mostra primeiro.
  *
- * O saldo parte do "saldo do mês anterior" que a pessoa informou (ou ajustou
- * para bater com o banco). Sem ele, o saldo de hoje é só a soma do que entrou
- * e saiu neste mês, e a tela avisa isso em vez de fingir precisão.
+ * O saldo é o das contas, pelo livro-caixa. Sem saldo inicial informado em
+ * nenhuma conta, ele é só a soma do que se realizou, e a tela avisa isso em
+ * vez de fingir precisão.
  */
 export function cashSnapshot(input: FlowInput): CashSnapshot {
   const { today } = input;
@@ -373,40 +359,33 @@ export function cashSnapshot(input: FlowInput): CashSnapshot {
   const horizon = addDaysIso(today, 60);
   const windowEnd = horizon > monthEnd ? horizon : monthEnd;
 
-  const items = buildFlows(input, monthStart, windowEnd);
-  const monthItems = items.filter((i) => i.date <= monthEnd);
-  const days = dailyBalances(monthItems, monthStart, monthEnd, 0, today);
+  const { days: allDays, items, opening } = dayBalances(input, monthStart, windowEnd);
+  const days = allDays.filter((d) => d.date <= monthEnd);
+  const balanceNow = cashNow(input);
+  const endOfMonth = days[days.length - 1]?.balance ?? balanceNow;
 
-  const balanceNow = days.find((d) => d.date === today)?.balance ?? 0;
-  const endOfMonth = days[days.length - 1]?.balance ?? 0;
-
-  const nextIncome = items.find((i) => i.kind === 'in' && !i.opening && i.date > today && i.date <= horizon) ?? null;
+  const nextIncome = items.find((i) => i.kind === 'in' && !i.internal && !i.settled && i.date > today && i.date <= horizon) ?? null;
   const daysToNextIncome = nextIncome ? diffDays(today, nextIncome.date) : null;
 
-  // saldo corrido de hoje até o horizonte, para achar o menor ponto
-  const ahead = dailyBalances(
-    items.filter((i) => i.date > today),
-    addDaysIso(today, 1),
-    windowEnd,
-    balanceNow,
-    today,
-  );
+  const ahead = allDays.filter((d) => d.date > today);
   const untilIncome = nextIncome ? ahead.filter((d) => d.date < nextIncome.date) : ahead.filter((d) => d.date <= monthEnd);
   const safeUntilIncome = Math.min(balanceNow, ...untilIncome.map((d) => d.balance));
   const restOfMonth = ahead.filter((d) => d.date <= monthEnd);
   const safeUntilMonthEnd = Math.min(balanceNow, ...restOfMonth.map((d) => d.balance));
-
   const lowest = restOfMonth.reduce<DayBalance | null>((min, d) => (!min || d.balance < min.balance ? d : min), null);
 
   const limit = nextIncome ? nextIncome.date : addDaysIso(monthEnd, 1);
-  const due = items.filter((i) => i.kind !== 'in' && i.date > today && i.date < limit);
+  const pending = items.filter((i) => i.kind !== 'in' && !i.internal && !i.settled);
+  const due = pending.filter((i) => i.overdue || (i.date > today && i.date < limit));
+  const overdueItems = pending.filter((i) => i.overdue);
 
-  const monthIn = monthItems.filter((i) => i.kind === 'in' && !i.opening).reduce((s, i) => s + i.amount, 0);
-  const monthOut = monthItems.filter((i) => i.kind !== 'in' && !i.opening).reduce((s, i) => s + i.amount, 0);
+  const monthItems = items.filter((i) => i.date <= monthEnd && !i.internal);
+  const monthIn = monthItems.filter((i) => i.kind === 'in').reduce((s, i) => s + i.amount, 0);
+  const monthOut = monthItems.filter((i) => i.kind !== 'in').reduce((s, i) => s + i.amount, 0);
 
-  const hasOpening = input.entries.some(
-    (e) => !e.deletedAt && e.tags.includes(OPENING_TAG) && monthKeyOf(e.date) === month,
-  );
+  const hasOpening =
+    input.accounts.some((a) => !a.deletedAt && (!!a.openingDate || a.openingBalance !== 0 || (a.checkpoints?.length ?? 0) > 0)) ||
+    input.transfers.some((t) => !t.deletedAt && t.kind === 'adjustment');
 
   return {
     today,
@@ -417,6 +396,7 @@ export function cashSnapshot(input: FlowInput): CashSnapshot {
     days,
     balanceNow,
     endOfMonth,
+    monthOpening: opening,
     nextIncome,
     daysToNextIncome,
     safeUntilIncome,
@@ -425,6 +405,8 @@ export function cashSnapshot(input: FlowInput): CashSnapshot {
     negative: negativeStretches(days.filter((d) => d.date >= today)),
     dueBeforeIncome: due.reduce((s, i) => s + i.amount, 0),
     dueBeforeIncomeCount: due.length,
+    overdue: overdueItems.reduce((s, i) => s + i.amount, 0),
+    overdueCount: overdueItems.length,
     monthIn,
     monthOut,
     hasOpening,
@@ -433,9 +415,9 @@ export function cashSnapshot(input: FlowInput): CashSnapshot {
 
 /** o que ainda sai no mês, por origem: ajuda a explicar a saúde do mês */
 export function remainingByOrigin(snapshot: CashSnapshot): Record<FlowSource, Cents> {
-  const out: Record<FlowSource, Cents> = { entry: 0, subscription: 0, invoice: 0, debt: 0 };
+  const out: Record<FlowSource, Cents> = { entry: 0, subscription: 0, invoice: 0, debt: 0, transfer: 0, adjustment: 0 };
   for (const i of snapshot.items) {
-    if (i.kind === 'in' || i.date <= snapshot.today || i.date > snapshot.monthEnd) continue;
+    if (i.kind === 'in' || i.settled || i.internal || i.date > snapshot.monthEnd) continue;
     out[i.source] += i.amount;
   }
   return out;

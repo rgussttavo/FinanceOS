@@ -297,7 +297,15 @@ function EditForm({
         repeatKind === entry.repeat.kind && repeatKind !== 'installments'
           ? entry.repeat
           : repeatKind === 'installments'
-            ? { kind: 'installments', count: Math.max(2, Number(count) || 2) }
+            ? {
+                kind: 'installments',
+                count: Math.max(2, Number(count) || 2),
+                // o total da compra continua valendo enquanto a parcela não for
+                // editada; mudou a parcela, o total passa a ser parcela × vezes
+                ...(entry.repeat.kind === 'installments' && entry.repeat.total && amount === entry.amount
+                  ? { total: entry.repeat.total }
+                  : null),
+              }
             : { kind: repeatKind },
     };
   }

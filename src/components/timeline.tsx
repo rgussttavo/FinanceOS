@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, CreditCard, Flag, Receipt, Repeat } from 'lucide-react';
+import { ArrowLeftRight, Check, CreditCard, Flag, Receipt, Repeat, Scale } from 'lucide-react';
 import type { FlowItem } from '@/lib/cashflow';
 import { cn } from '@/lib/cn';
 import { MONTHS_PT, WEEKDAYS_SHORT_PT, isoToLocalDate, isoToParts } from '@/lib/dates';
@@ -22,6 +22,8 @@ const SOURCE_ICON = {
   subscription: Repeat,
   invoice: CreditCard,
   debt: Receipt,
+  transfer: ArrowLeftRight,
+  adjustment: Scale,
 } as const;
 
 const dayLabel = (iso: IsoDate) => {
@@ -161,7 +163,9 @@ function TimelineRow({
       ? 'fatura do cartão'
       : item.source === 'subscription'
         ? 'assinatura'
-        : item.source === 'debt'
+        : item.source === 'adjustment'
+          ? 'ajuste de saldo · não é receita nem despesa'
+          : item.source === 'debt'
           ? `parcela ${item.installment?.index}/${item.installment?.total}`
           : item.installment
             ? `parcela ${item.installment.index}/${item.installment.total}`

@@ -37,7 +37,7 @@ import { cn } from '@/lib/cn';
 import { addMonthsToKey, diffDays, formatDayShort, formatMonthLabel, monthKeyOf, todayIso } from '@/lib/dates';
 import { restoreRecord } from '@/lib/db';
 import type { FinanceBase } from '@/lib/picture';
-import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
+import { formatMoney, formatPercent, parseMoney, splitCents } from '@/lib/money';
 import { createCard, createEntry, removeCard, removeEntry, updateCard } from '@/lib/store';
 import type { Card, Category, MonthKey } from '@/lib/types';
 
@@ -443,7 +443,7 @@ export function CartoesView({
     };
     const usage = cardUsage(active, entries, subscriptions, month, today);
     const future = futureInstallments(active, entries, openMonth);
-    const futureTotal = future.reduce((t, f) => t + f.perInstallment * f.left, 0);
+    const futureTotal = future.reduce((t, f) => t + f.leftTotal, 0);
     const subs = subscriptions.filter((s) => s.cardId === active.id && !s.canceledAt && !s.deletedAt);
     return { openMonth, invoices, usage, future, futureTotal, subs };
   }, [active, entries, subscriptions, month, today]);
@@ -580,7 +580,7 @@ export function CartoesView({
                       {f.current > 0 ? `parcela ${f.current}/${f.total} nesta fatura · ` : ''}faltam {f.left}× de {formatMoney(f.perInstallment, { hidden })}
                     </span>
                   </span>
-                  <span className="tnum shrink-0 text-[14px] font-semibold text-ink-2">{formatMoney(f.perInstallment * f.left, { hidden })}</span>
+                  <span className="tnum shrink-0 text-[14px] font-semibold text-ink-2">{formatMoney(f.leftTotal, { hidden })}</span>
                 </li>
               ))}
             </ul>
@@ -887,9 +887,10 @@ function PurchaseSheet({
   const count = Math.max(1, Number(installments) || 1);
   const typed = parseMoney(totalText) ?? 0;
   // o valor digitado é o total da compra ou o de cada parcela, conforme a
-  // escolha; guardar sempre a parcela evita arredondar duas vezes
-  const perInstallment = mode === 'total' ? Math.round(typed / count) : typed;
+  // escolha. Com o total, ele vai junto: as parcelas saem dele sem perder
+  // centavo (R$ 100 em 3x é 33,34 + 33,33 + 33,33, e não 3 × 33,33)
   const total = mode === 'total' ? typed : typed * count;
+  const perInstallment = mode === 'total' ? (splitCents(typed, count)[0] ?? 0) : typed;
 
   async function submit() {
     if (!description.trim()) return setError('Escreva o que foi comprado.');
@@ -905,7 +906,7 @@ function PurchaseSheet({
         date,
         categoryId: categoryId || null,
         cardId: card.id,
-        repeat: count > 1 ? { kind: 'installments', count } : { kind: 'once' },
+        repeat: count > 1 ? { kind: 'installments', count, total } : { kind: 'once' },
       });
       setDescription('');
       setTotalText('');

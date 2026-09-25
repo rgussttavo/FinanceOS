@@ -3,10 +3,11 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useMemo } from 'react';
 import { cashSnapshot, virtualOccurrences, type CashSnapshot } from './cashflow';
+import type { LedgerInput } from './ledger';
 import { entriesUpTo, liveRows } from './db';
 import { addMonthsToKey, currentMonthKey, todayIso } from './dates';
 import { occurrencesInMonth, projectMonth, summarizeMonth, type DayPoint, type MonthSummary, type Occurrence } from './occurrences';
-import type { Asset, Card, Debt, Entry, Goal, MonthKey, Subscription } from './types';
+import type { Account, Asset, Card, Debt, Entry, Goal, MonthKey, Subscription, Transfer } from './types';
 
 /**
  * O retrato financeiro: tudo que as telas de leitura precisam, carregado uma
@@ -22,8 +23,17 @@ export interface FinanceBase {
   entries: Entry[];
   /** assinaturas, ativas e canceladas */
   subscriptions: Subscription[];
-  /** cartões não arquivados */
+  /** cartões não arquivados: os que as telas oferecem */
   cards: Card[];
+  /**
+   * Todos os cartões não excluídos. O arquivado não aceita compra nova, mas
+   * ainda deve o que deve — o livro-caixa precisa dele.
+   */
+  allCards: Card[];
+  /** contas, inclusive arquivadas: o saldo delas continua existindo */
+  accounts: Account[];
+  /** transferências, pagamentos de fatura e ajustes de saldo */
+  transfers: Transfer[];
   /** dívidas, em aberto e quitadas */
   debts: Debt[];
   /** metas não arquivadas */
@@ -39,18 +49,23 @@ export function useFinanceBase(spaceId: string | null, month: MonthKey): Finance
 
   const data = useLiveQuery(async () => {
     if (!spaceId) return null;
-    const [entries, subscriptions, cards, debts, goals, assets] = await Promise.all([
+    const [entries, subscriptions, cards, debts, goals, assets, accounts, transfers] = await Promise.all([
       entriesUpTo(spaceId, last),
       liveRows<Subscription>('subscriptions', spaceId),
       liveRows<Card>('cards', spaceId),
       liveRows<Debt>('debts', spaceId),
       liveRows<Goal>('goals', spaceId),
       liveRows<Asset>('assets', spaceId),
+      liveRows<Account>('accounts', spaceId),
+      liveRows<Transfer>('transfers', spaceId),
     ]);
     return {
       entries,
       subscriptions,
       cards: cards.filter((c) => !c.archived),
+      allCards: cards,
+      accounts,
+      transfers,
       debts,
       goals: goals.filter((g) => !g.archivedAt),
       assets: assets.sort((a, b) => b.value - a.value),
@@ -61,7 +76,7 @@ export function useFinanceBase(spaceId: string | null, month: MonthKey): Finance
     () =>
       data
         ? { ready: true, ...data }
-        : { ready: false, entries: [], subscriptions: [], cards: [], debts: [], goals: [], assets: [] },
+        : { ready: false, entries: [], subscriptions: [], cards: [], allCards: [], accounts: [], transfers: [], debts: [], goals: [], assets: [] },
     [data],
   );
 }
@@ -80,7 +95,7 @@ export interface MonthPicture {
 export function monthOccurrences(base: FinanceBase, month: MonthKey, today = todayIso()): Occurrence[] {
   return [
     ...occurrencesInMonth(base.entries, month, today),
-    ...virtualOccurrences(base.subscriptions, base.debts, month, today),
+    ...virtualOccurrences(base.subscriptions, base.debts, month, today, base.entries),
   ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
@@ -112,17 +127,23 @@ export function useHistory(base: FinanceBase, last: MonthKey, count = 6): MonthS
 
 /* ---------------------------------------------------------------- o caixa */
 
+/**
+ * A entrada do livro-caixa a partir da base carregada. Toda conta de saldo do
+ * app passa por aqui, para nenhuma tela montar a sua com um pedaço a menos.
+ */
+export function ledgerInput(base: FinanceBase, cardsEnabled: boolean, today = todayIso()): LedgerInput {
+  return {
+    accounts: base.accounts,
+    entries: base.entries,
+    transfers: base.transfers,
+    cards: base.allCards,
+    subscriptions: base.subscriptions,
+    debts: base.debts,
+    cardsEnabled,
+    today,
+  };
+}
+
 export function useCash(base: FinanceBase, cardsEnabled: boolean): CashSnapshot {
-  return useMemo(
-    () =>
-      cashSnapshot({
-        entries: base.entries,
-        subscriptions: base.subscriptions,
-        cards: base.cards,
-        debts: base.debts,
-        cardsEnabled,
-        today: todayIso(),
-      }),
-    [base, cardsEnabled],
-  );
+  return useMemo(() => cashSnapshot(ledgerInput(base, cardsEnabled)), [base, cardsEnabled]);
 }

@@ -1,5 +1,26 @@
-import { addMonthsToKey, monthKeyParts } from './dates';
-import type { Cents, Debt, MonthKey } from './types';
+import { addMonthsToKey, dateInMonth, monthKeyParts } from './dates';
+import type { Cents, Debt, IsoDate, MonthKey } from './types';
+
+/** dia padrão da parcela de dívida cadastrada antes de o dia existir */
+export const DEFAULT_DEBT_DAY = 10;
+
+/**
+ * A parcela de uma dívida num mês: o dia, qual é e de quantas — ou nada.
+ *
+ * Regra única para despesas, caixa e patrimônio. Quitar a dívida encerra as
+ * parcelas DALI em diante; as que venceram antes continuam no mês em que
+ * foram pagas. Antes, marcar como quitada apagava do passado todas as
+ * parcelas que a pessoa de fato pagou.
+ */
+export function debtInstallmentIn(debt: Debt, month: MonthKey): { date: IsoDate; index: number; total: number } | null {
+  if (debt.deletedAt) return null;
+  const total = Math.max(1, Math.trunc(debt.installments));
+  const index = monthsBetween(debt.startMonth, month) + 1;
+  if (index < 1 || index > total) return null;
+  const date = dateInMonth(month, debt.dueDay ?? DEFAULT_DEBT_DAY);
+  if (debt.settledAt && date > debt.settledAt.slice(0, 10)) return null;
+  return { date, index, total };
+}
 
 /* ------------------------------------------------------------- progresso */
 

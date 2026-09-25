@@ -10,6 +10,7 @@ import {
   partsToIso,
   todayIso,
 } from './dates';
+import { splitCents } from './money';
 import type { Cents, Entry, FlowKind, IsoDate, MonthKey, Settlement } from './types';
 
 /**
@@ -49,6 +50,8 @@ export interface Occurrence {
    * entrou nem que saiu no mês — fica fora de entradas, saídas e categorias.
    */
   opening?: boolean;
+  /** resgate de investimento: volta dinheiro para a conta e sai do investido */
+  withdrawal?: boolean;
 }
 
 /** marca do lançamento que carrega o saldo do mês anterior */
@@ -67,7 +70,7 @@ function buildOccurrence(
   today: IsoDate,
 ): Occurrence {
   const settlement = entry.settled[key] ?? null;
-  const amount = settlement?.amount ?? entry.amount;
+  const amount = settlement?.amount ?? plannedAmount(entry, installment);
   return {
     entryId: entry.id,
     key,
@@ -83,7 +86,31 @@ function buildOccurrence(
     // compra no cartão não vence sozinha: quem vence é a fatura
     overdue: settlement === null && !entry.cardId && diffDays(today, date) < 0,
     ...(entry.tags.includes(OPENING_TAG) ? { opening: true } : null),
+    ...(entry.kind === 'invest' && entry.withdrawal ? { withdrawal: true } : null),
   };
+}
+
+/**
+ * O valor previsto de uma ocorrência.
+ *
+ * Na compra parcelada com total conhecido, cada parcela sai da divisão exata
+ * do total, com a sobra de centavos nas primeiras: R$ 100 em 3x é 33,34 +
+ * 33,33 + 33,33. Antes cada parcela valia o total dividido e arredondado, e a
+ * soma das parcelas não fechava com a compra (99,99 em 3x, 100,02 em 6x).
+ */
+export function plannedAmount(entry: Entry, installment: { index: number; total: number } | null): Cents {
+  const total = entry.repeat.kind === 'installments' ? entry.repeat.total : undefined;
+  if (installment && typeof total === 'number' && total > 0) {
+    return splitCents(total, installment.total)[installment.index - 1] ?? entry.amount;
+  }
+  return entry.amount;
+}
+
+/** o total de uma compra parcelada: o informado, ou parcela × quantidade */
+export function installmentTotal(entry: Entry): Cents {
+  if (entry.repeat.kind !== 'installments') return entry.amount;
+  const count = Math.max(1, Math.trunc(entry.repeat.count ?? 1));
+  return typeof entry.repeat.total === 'number' && entry.repeat.total > 0 ? entry.repeat.total : entry.amount * count;
 }
 
 /** a regra ainda vale nesta competencia? */
@@ -232,12 +259,14 @@ export function summarizeMonth(
       else if (o.overdue) s.overdueExpense += o.amount;
       else if (diffDays(today, o.date) >= 0) s.pendingExpense += o.amount;
     } else {
-      s.invested += o.amount;
+      // resgate devolve: o investido do mês é o que foi aplicado menos o resgatado
+      s.invested += o.withdrawal ? -o.amount : o.amount;
     }
 
     if (o.kind !== 'in') {
       const key = o.categoryId ?? (o.virtual === 'debt' ? DEBT_SLICE : 'sem-categoria');
-      s.byCategory.set(key, (s.byCategory.get(key) ?? 0) + o.amount);
+      const signedForCategory = o.withdrawal ? -o.amount : o.amount;
+      s.byCategory.set(key, (s.byCategory.get(key) ?? 0) + signedForCategory);
     }
   }
 

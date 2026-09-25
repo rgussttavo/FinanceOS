@@ -7,8 +7,8 @@ import {
   monthKeyParts,
   partsToIso,
 } from './dates';
-import { occurrencesOf, type Occurrence } from './occurrences';
-import type { Card, Cents, Entry, IsoDate, MonthKey, Subscription } from './types';
+import { occurrencesOf, plannedAmount, type Occurrence } from './occurrences';
+import type { Card, Cents, Entry, IsoDate, MonthKey, Subscription, Transfer } from './types';
 
 /* ------------------------------------------------------------------ bancos */
 
@@ -249,13 +249,38 @@ export interface Invoice {
   closed: boolean;
 }
 
-/** quanto uma assinatura cobra na competência, considerando ciclo anual */
-export function subscriptionChargeIn(sub: Subscription, month: MonthKey): Cents {
-  if (sub.canceledAt && monthKeyOf(sub.canceledAt) < month) return 0;
-  if (monthKeyOf(sub.startedAt) > month) return 0;
-  if (sub.cycle === 'monthly') return sub.amount;
+/**
+ * A cobrança de uma assinatura num mês: o dia e o valor, ou nada.
+ *
+ * É a regra única — lista de despesas, fatura, caixa e patrimônio perguntam
+ * aqui. Antes cada um tinha a sua: a fatura cobrava no mês do cancelamento
+ * mesmo depois de cancelada e cobrava no mês de início mesmo antes do
+ * primeiro dia, enquanto a lista de despesas não — e o cartão e as despesas
+ * mostravam valores diferentes para o mesmo mês.
+ *
+ * O valor é o da época: com histórico de preço, o mês antigo sai pelo preço
+ * antigo, e não pelo de hoje.
+ */
+export function subscriptionCharge(sub: Subscription, month: MonthKey): { date: IsoDate; amount: Cents } | null {
+  if (sub.deletedAt) return null;
   // anual: cobra uma vez por ano, no mês em que começou
-  return monthKeyParts(sub.startedAt).m === monthKeyParts(month).m ? sub.amount : 0;
+  if (sub.cycle === 'yearly' && monthKeyParts(sub.startedAt).m !== monthKeyParts(month).m) return null;
+  const date = dateInMonth(month, sub.billingDay);
+  if (date < sub.startedAt) return null;
+  if (sub.canceledAt && date > sub.canceledAt) return null;
+  const amount = priceOn(sub, date);
+  return amount > 0 ? { date, amount } : null;
+}
+
+function priceOn(sub: Subscription, date: IsoDate): Cents {
+  const history = (sub.priceHistory ?? []).slice().sort((a, b) => (a.until < b.until ? -1 : a.until > b.until ? 1 : 0));
+  for (const h of history) if (date <= h.until) return h.amount;
+  return sub.amount;
+}
+
+/** quanto uma assinatura cobra na competência (0 quando não cobra) */
+export function subscriptionChargeIn(sub: Subscription, month: MonthKey): Cents {
+  return subscriptionCharge(sub, month)?.amount ?? 0;
 }
 
 /**
@@ -272,38 +297,7 @@ export function buildInvoice(
   month: MonthKey,
   today: IsoDate,
 ): Invoice {
-  const lines: InvoiceLine[] = [];
-
-  for (const entry of entries) {
-    if (entry.cardId !== card.id || entry.deletedAt) continue;
-
-    // a compra parcelada rende uma ocorrência por mês; o ciclo decide em qual
-    // fatura a primeira delas entra, e as seguintes andam junto
-    const shift = monthsSince(monthKeyOf(entry.date), firstInvoiceOf(card, entry));
-    const competence = addMonthsToKey(month, -shift);
-
-    for (const occurrence of occurrencesOf(entry, competence, today)) {
-      lines.push(toLine(occurrence, false));
-    }
-  }
-
-  for (const sub of subscriptions) {
-    if (sub.cardId !== card.id || sub.deletedAt) continue;
-    const amount = subscriptionChargeIn(sub, month);
-    if (!amount) continue;
-    lines.push({
-      id: `sub:${sub.id}:${month}`,
-      description: sub.name,
-      amount,
-      date: dateInMonth(month, sub.billingDay),
-      categoryId: sub.categoryId,
-      installment: null,
-      subscription: true,
-    });
-  }
-
-  lines.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-
+  const lines = invoiceLinesByMonth(card, entries, subscriptions, month, month, today).get(month) ?? [];
   const closesOn = closingDateOf(card, month);
   return {
     cardId: card.id,
@@ -314,6 +308,85 @@ export function buildInvoice(
     lines,
     closed: today > closesOn,
   };
+}
+
+/** chave da cobrança de uma assinatura ou parcela de dívida que já veio do extrato */
+export const realizedKey = (refId: string, month: MonthKey) => `${refId}:${month}`;
+
+/** as cobranças previstas que já têm um lançamento real no lugar */
+export function realizedCharges(entries: Entry[]): Set<string> {
+  const out = new Set<string>();
+  for (const e of entries) {
+    if (e.deletedAt) continue;
+    if (e.subscriptionId) out.add(realizedKey(e.subscriptionId, monthKeyOf(e.date)));
+    if (e.debtId) out.add(realizedKey(e.debtId, monthKeyOf(e.date)));
+  }
+  return out;
+}
+
+/**
+ * As linhas de todas as faturas de um cartão entre dois meses, numa passada.
+ *
+ * É a única fonte de "o que tem na fatura": a tela do cartão, o caixa (que
+ * paga a fatura no vencimento) e o motor de saldo leem daqui. A compra entra
+ * na fatura do ciclo em que foi feita; a assinatura também — cobrada depois do
+ * fechamento, vai para a fatura seguinte, como no banco.
+ */
+export function invoiceLinesByMonth(
+  card: Card,
+  entries: Entry[],
+  subscriptions: Subscription[],
+  from: MonthKey,
+  to: MonthKey,
+  today: IsoDate,
+): Map<MonthKey, InvoiceLine[]> {
+  const out = new Map<MonthKey, InvoiceLine[]>();
+  const push = (month: MonthKey, line: InvoiceLine) => {
+    if (month < from || month > to) return;
+    const list = out.get(month);
+    if (list) list.push(line);
+    else out.set(month, [line]);
+  };
+
+  for (const entry of entries) {
+    if (entry.cardId !== card.id || entry.deletedAt) continue;
+
+    // a compra parcelada rende uma ocorrência por mês; o ciclo decide em qual
+    // fatura a primeira delas entra, e as seguintes andam junto
+    const start = monthKeyOf(entry.date);
+    const shift = monthsSince(start, firstInvoiceOf(card, entry));
+    if (entry.repeat.kind === 'once') {
+      for (const o of occurrencesOf(entry, start, today)) push(addMonthsToKey(start, shift), toLine(o, false));
+      continue;
+    }
+    const firstCompetence = addMonthsToKey(from, -shift) > start ? addMonthsToKey(from, -shift) : start;
+    const lastCompetence = addMonthsToKey(to, -shift);
+    for (let c = firstCompetence; c <= lastCompetence; c = addMonthsToKey(c, 1)) {
+      for (const o of occurrencesOf(entry, c, today)) push(addMonthsToKey(c, shift), toLine(o, false));
+    }
+  }
+
+  const realized = realizedCharges(entries);
+  for (const sub of subscriptions) {
+    if (sub.cardId !== card.id || sub.deletedAt) continue;
+    // a cobrança do fim de um mês pode cair na fatura do mês seguinte
+    for (let m = addMonthsToKey(from, -1); m <= to; m = addMonthsToKey(m, 1)) {
+      const charge = subscriptionCharge(sub, m);
+      if (!charge || realized.has(realizedKey(sub.id, m))) continue;
+      push(invoiceMonthOf(card, charge.date), {
+        id: `sub:${sub.id}:${m}`,
+        description: sub.name,
+        amount: charge.amount,
+        date: charge.date,
+        categoryId: sub.categoryId,
+        installment: null,
+        subscription: true,
+      });
+    }
+  }
+
+  for (const list of out.values()) list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return out;
 }
 
 function toLine(o: Occurrence, subscription: boolean): InvoiceLine {
@@ -379,40 +452,123 @@ export interface CardUsage {
 }
 
 /**
- * Quanto do limite está comprometido.
+ * Quanto o cartão deve de verdade numa data.
  *
- * Não é o valor da fatura do mês: parcela que ainda vai vencer continua
- * segurando limite. Então a conta soma todas as parcelas futuras de toda
- * compra em aberto, mais as assinaturas do cartão.
+ * Tudo o que foi comprado — a compra parcelada pelo valor INTEIRO, porque a
+ * parcela que ainda vai vencer já segura o limite —, menos o que foi pago.
+ * Pago é o pagamento registrado (importado do extrato ou feito no app); a
+ * fatura vencida sem pagamento registrado conta como paga inteira no
+ * vencimento, que é o que acontece com quem tem débito automático e é o que
+ * o app sempre supôs.
+ *
+ * Antes, "limite usado" olhava só as compras datadas no mês aberto: a compra
+ * de 29 do mês passado, que está na fatura aberta, não segurava limite; e
+ * nada devolvia o limite quando a fatura era paga.
  */
+export interface CardBalance {
+  /** compras e cobranças até a data, com a parcelada inteira */
+  charges: Cents;
+  /** pagamentos registrados mais as faturas vencidas tidas como pagas */
+  payments: Cents;
+  /** o que o cartão deve: compras menos pagamentos */
+  debt: Cents;
+  /** faturas vencidas sem pagamento registrado, tidas como pagas no vencimento */
+  autoPaid: { month: MonthKey; dueOn: IsoDate; amount: Cents }[];
+  /** pagamentos registrados, por fatura */
+  paidByInvoice: Map<MonthKey, Cents>;
+}
+
+export function cardBalance(
+  card: Card,
+  entries: Entry[],
+  subscriptions: Subscription[],
+  transfers: Transfer[],
+  asOf: IsoDate,
+  today: IsoDate = asOf,
+): CardBalance {
+  let charges = 0;
+  let firstMonth: MonthKey | null = null;
+  const mine = entries.filter((e) => e.cardId === card.id && !e.deletedAt);
+
+  for (const entry of mine) {
+    const start = monthKeyOf(entry.date);
+    if (!firstMonth || start < firstMonth) firstMonth = start;
+    if (entry.repeat.kind === 'installments') {
+      // a compra parcelada pesa inteira no dia da compra
+      if (entry.date > asOf) continue;
+      const count = Math.max(1, Math.trunc(entry.repeat.count ?? 1));
+      for (let i = 0; i < count; i++) {
+        for (const o of occurrencesOf(entry, addMonthsToKey(start, i), today)) charges += o.kind === 'in' ? -o.amount : o.amount;
+      }
+      continue;
+    }
+    // avulsa e recorrente: cada cobrança no dia dela
+    for (let m = start; m <= monthKeyOf(asOf); m = addMonthsToKey(m, 1)) {
+      for (const o of occurrencesOf(entry, m, today)) {
+        if (o.date <= asOf) charges += o.kind === 'in' ? -o.amount : o.amount;
+      }
+      if (entry.repeat.kind === 'once') break;
+    }
+  }
+
+  const realized = realizedCharges(entries);
+  for (const sub of subscriptions) {
+    if (sub.cardId !== card.id || sub.deletedAt) continue;
+    const start = monthKeyOf(sub.startedAt);
+    if (!firstMonth || start < firstMonth) firstMonth = start;
+    for (let m = start; m <= monthKeyOf(asOf); m = addMonthsToKey(m, 1)) {
+      const charge = subscriptionCharge(sub, m);
+      if (charge && charge.date <= asOf && !realized.has(realizedKey(sub.id, m))) charges += charge.amount;
+    }
+  }
+
+  const paidByInvoice = new Map<MonthKey, Cents>();
+  let payments = 0;
+  for (const t of transfers) {
+    if (t.deletedAt || t.kind !== 'card' || t.toCardId !== card.id || t.date > asOf) continue;
+    const month = t.invoiceMonth ?? paymentInvoiceMonth(card, t.date);
+    paidByInvoice.set(month, (paidByInvoice.get(month) ?? 0) + t.amount);
+    payments += t.amount;
+  }
+
+  const autoPaid: CardBalance['autoPaid'] = [];
+  if (firstMonth) {
+    const lastInvoice = invoiceMonthOf(card, asOf);
+    const lines = invoiceLinesByMonth(card, entries, subscriptions, firstMonth, lastInvoice, today);
+    for (const [month, list] of lines) {
+      const dueOn = dueDateOf(card, month);
+      if (dueOn > asOf || paidByInvoice.has(month)) continue;
+      const total = list.reduce((s, l) => s + l.amount, 0);
+      if (total <= 0) continue;
+      autoPaid.push({ month, dueOn, amount: total });
+      payments += total;
+    }
+    autoPaid.sort((a, b) => (a.month < b.month ? -1 : 1));
+  }
+
+  return { charges, payments, debt: charges - payments, autoPaid, paidByInvoice };
+}
+
+/**
+ * A fatura que um pagamento sem fatura indicada quita: a última que já
+ * fechou até o dia do pagamento.
+ */
+export function paymentInvoiceMonth(card: Pick<Card, 'closingDay'>, date: IsoDate): MonthKey {
+  return addMonthsToKey(invoiceMonthOf(card, date), -1);
+}
+
+/** quanto do limite está comprometido, na mesma conta da dívida do cartão */
 export function cardUsage(
   card: Card,
   entries: Entry[],
   subscriptions: Subscription[],
   month: MonthKey,
   today: IsoDate,
+  transfers: Transfer[] = [],
 ): CardUsage {
-  let used = 0;
-
-  for (const entry of entries) {
-    if (entry.cardId !== card.id || entry.deletedAt) continue;
-
-    if (entry.repeat.kind === 'installments') {
-      const total = Math.max(1, Math.trunc(entry.repeat.count ?? 1));
-      const startInvoice = firstInvoiceOf(card, entry);
-      const paid = Math.max(0, monthsSince(startInvoice, month));
-      const remaining = Math.max(0, total - paid);
-      used += remaining * entry.amount;
-    } else {
-      for (const o of occurrencesOf(entry, month, today)) used += o.kind === 'in' ? -o.amount : o.amount;
-    }
-  }
-
-  for (const sub of subscriptions) {
-    if (sub.cardId !== card.id || sub.deletedAt) continue;
-    used += subscriptionChargeIn(sub, month);
-  }
-
+  // mês passado: como estava no fim dele; mês corrente ou futuro: hoje
+  const asOf = month < monthKeyOf(today) ? dateInMonth(month, 31) : today;
+  const used = Math.max(0, cardBalance(card, entries, subscriptions, transfers, asOf, today).debt);
   const limit = Math.max(0, card.limit);
   return {
     used,
@@ -453,6 +609,8 @@ export interface FutureLine {
   perInstallment: Cents;
   /** parcelas que ainda não caíram em fatura nenhuma */
   left: number;
+  /** a soma exata dessas parcelas, com os centavos de cada uma */
+  leftTotal: Cents;
   total: number;
   /** a parcela que está na fatura aberta */
   current: number;
@@ -473,7 +631,18 @@ export function futureInstallments(card: Card, entries: Entry[], openMonth: Mont
     const current = monthsSince(first, openMonth) + 1;
     const left = total - Math.max(0, current);
     if (left <= 0) continue;
-    out.push({ id: e.id, description: e.description, perInstallment: e.amount, left, total, current: Math.max(0, current) });
+    const from = Math.max(0, current) + 1;
+    let leftTotal = 0;
+    for (let i = from; i <= total; i++) leftTotal += plannedAmount(e, { index: i, total });
+    out.push({
+      id: e.id,
+      description: e.description,
+      perInstallment: plannedAmount(e, { index: from, total }),
+      left,
+      leftTotal,
+      total,
+      current: Math.max(0, current),
+    });
   }
-  return out.sort((a, b) => b.perInstallment * b.left - a.perInstallment * a.left);
+  return out.sort((a, b) => b.leftTotal - a.leftTotal);
 }

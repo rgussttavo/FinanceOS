@@ -29,6 +29,7 @@ type Syncable = { id: string; spaceId: string; updatedAt: string; deletedAt: str
 const TABLES: SyncTable[] = [
   'categories',
   'accounts',
+  'transfers',
   'cards',
   'entries',
   'subscriptions',
@@ -449,6 +450,7 @@ async function joinExistingSpace(
 const TABLE_OF: Record<SyncTable, keyof ReturnType<typeof db>> = {
   categories: 'categories',
   accounts: 'accounts',
+  transfers: 'transfers',
   cards: 'cards',
   entries: 'entries',
   subscriptions: 'subscriptions',

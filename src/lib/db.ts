@@ -19,8 +19,37 @@ import type {
   Subscription,
   SyncState,
   SyncTable,
+  Transfer,
 } from './types';
 import type { LearnedRule } from './categories';
+
+/**
+ * O diário do que aconteceu com o dinheiro neste aparelho.
+ *
+ * Não sincroniza e não entra em cálculo nenhum: serve para, quando um número
+ * não bater, dar para ver o que foi feito e quando — importou tal arquivo,
+ * criou tal transferência, ajustou tal saldo.
+ */
+export interface AuditEvent {
+  seq?: number;
+  at: string;
+  spaceId: string;
+  event:
+    | 'transaction.created'
+    | 'transaction.updated'
+    | 'transaction.deleted'
+    | 'transfer.created'
+    | 'transfer.updated'
+    | 'transfer.deleted'
+    | 'account.created'
+    | 'account.updated'
+    | 'statement.imported'
+    | 'statement.reconciled'
+    | 'invoice.paid'
+    | 'balance.adjusted'
+    | 'ledger.migrated';
+  detail: Record<string, unknown>;
+}
 
 /**
  * Base local do FinanceOS.
@@ -46,6 +75,7 @@ export class NorteDB extends Dexie {
   members!: Table<SpaceMember, string>;
   categories!: Table<Category, string>;
   accounts!: Table<Account, string>;
+  transfers!: Table<Transfer, string>;
   cards!: Table<Card, string>;
   entries!: Table<Entry, string>;
   subscriptions!: Table<Subscription, string>;
@@ -61,6 +91,7 @@ export class NorteDB extends Dexie {
   files!: Table<StoredFile, string>;
   mutations!: Table<Mutation, number>;
   syncState!: Table<SyncState, string>;
+  audit!: Table<AuditEvent, number>;
 
   constructor(name = 'norte') {
     super(name);
@@ -97,6 +128,13 @@ export class NorteDB extends Dexie {
 
     this.version(4).stores({
       assets: 'id, spaceId, kind, updatedAt, deletedAt',
+    });
+
+    // contas de verdade: transferências entre elas, pagamento de fatura, ajuste
+    // de saldo; e o registro local do que aconteceu com o dinheiro
+    this.version(5).stores({
+      transfers: 'id, spaceId, date, kind, fromAccountId, toAccountId, toCardId, updatedAt, deletedAt, [spaceId+date]',
+      audit: '++seq, at, event, spaceId',
     });
   }
 }
@@ -142,6 +180,7 @@ export function db(): NorteDB {
 const SYNC_TABLES: Record<SyncTable, keyof NorteDB> = {
   categories: 'categories',
   accounts: 'accounts',
+  transfers: 'transfers',
   cards: 'cards',
   entries: 'entries',
   subscriptions: 'subscriptions',
@@ -361,4 +400,13 @@ export async function wipeLocal(): Promise<void> {
   await d.delete();
   _db = null;
   void d;
+}
+
+/** anota no diário local; nunca derruba a operação que está sendo anotada */
+export async function audit(spaceId: string, event: AuditEvent['event'], detail: Record<string, unknown>): Promise<void> {
+  try {
+    await db().audit.add({ at: nowInstant(), spaceId, event, detail });
+  } catch {
+    // diário cheio ou base fechando: a operação em si já aconteceu
+  }
 }
