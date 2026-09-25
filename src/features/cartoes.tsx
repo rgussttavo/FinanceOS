@@ -36,10 +36,12 @@ import {
 import { cn } from '@/lib/cn';
 import { addMonthsToKey, diffDays, formatDayShort, formatMonthLabel, monthKeyOf, todayIso } from '@/lib/dates';
 import { restoreRecord } from '@/lib/db';
-import type { FinanceBase } from '@/lib/picture';
+import { payInvoice, removeTransfer } from '@/lib/accounts';
+import { invoiceStatus } from '@/lib/ledger';
+import { ledgerInput, type FinanceBase } from '@/lib/picture';
 import { formatMoney, formatPercent, parseMoney, splitCents } from '@/lib/money';
 import { createCard, createEntry, removeCard, removeEntry, updateCard } from '@/lib/store';
-import type { Card, Category, MonthKey } from '@/lib/types';
+import type { Account, Card, Category, MonthKey } from '@/lib/types';
 
 /* --------------------------------------------------------------- bandeiras */
 
@@ -392,6 +394,179 @@ function InvoicePanel({
 
 /* ------------------------------------------------------------------- tela */
 
+/* --------------------------------------------------------------- pagamento */
+
+type InvoiceStatus = ReturnType<typeof invoiceStatus>;
+
+/**
+ * Quanto da fatura foi pago, e de onde saiu.
+ *
+ * Pagar a fatura não é uma despesa: as compras já contaram, no dia de cada
+ * uma. O pagamento só tira o dinheiro da conta e zera a dívida do cartão.
+ * Sem pagamento registrado, a fatura vencida é tida como paga inteira no
+ * vencimento — e a tela diz isso, em vez de fingir que sabe.
+ */
+function InvoicePayment({
+  status,
+  accounts,
+  hidden,
+  today,
+  onPay,
+}: {
+  status: InvoiceStatus;
+  accounts: Account[];
+  hidden: boolean;
+  today: string;
+  onPay: () => void;
+}) {
+  if (status.total <= 0 && !status.payments.length) return null;
+  const nameOf = (id: string | null) => accounts.find((a) => a.id === id)?.name ?? 'conta principal';
+  const due = status.dueOn <= today;
+
+  return (
+    <div className="mt-4 rounded-card border border-line bg-surface-2 px-3 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 text-[13px]">
+          {status.autoPaid ? (
+            <p className="text-ink-2">
+              Tida como paga no vencimento ({formatDayShort(status.dueOn)}), inteira. Nenhum pagamento foi registrado — se o valor pago foi outro,
+              registre o pagamento.
+            </p>
+          ) : status.remaining === 0 ? (
+            <p className="text-in">Paga: {formatMoney(status.paid, { hidden })}.</p>
+          ) : status.paid > 0 ? (
+            <p className={cn(due ? 'text-warn' : 'text-ink-2')}>
+              Pago {formatMoney(status.paid, { hidden })} de {formatMoney(status.total, { hidden })} · falta {formatMoney(status.remaining, { hidden })}
+              {due ? ', já vencido' : ''}.
+            </p>
+          ) : (
+            <p className="text-ink-3">Ainda não paga. No vencimento, sai da conta como pagamento — não como despesa.</p>
+          )}
+        </div>
+        {status.remaining > 0 || status.autoPaid ? (
+          <Button size="sm" variant={due && !status.autoPaid ? 'primary' : 'ghost'} className="shrink-0" onClick={onPay}>
+            Registrar pagamento
+          </Button>
+        ) : null}
+      </div>
+      {status.payments.length ? (
+        <ul className="mt-2 grid gap-1 border-t border-line pt-2">
+          {status.payments.map((t) => (
+            <li key={t.id} className="flex items-center justify-between gap-3 text-[12.5px]">
+              <span className="min-w-0 truncate text-ink-3">
+                {formatDayShort(t.date)} · saiu de {nameOf(t.fromAccountId)}
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <span className="tnum text-ink">{formatMoney(t.amount, { hidden })}</span>
+                <button
+                  type="button"
+                  aria-label="Excluir este pagamento"
+                  className="text-ink-3 hover:text-out"
+                  onClick={async () => {
+                    const ok = await confirmAction({
+                      title: 'Excluir este pagamento?',
+                      description: 'O dinheiro volta para a conta e a fatura volta a dever esse valor.',
+                      confirmLabel: 'Excluir',
+                      danger: true,
+                    });
+                    if (!ok) return;
+                    await removeTransfer(t);
+                    toast('Pagamento excluído.');
+                  }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function PaySheet({
+  open,
+  onClose,
+  spaceId,
+  card,
+  status,
+  accounts,
+}: {
+  open: boolean;
+  onClose: () => void;
+  spaceId: string;
+  card: Card;
+  status: InvoiceStatus | null;
+  accounts: Account[];
+}) {
+  const [text, setText] = React.useState('');
+  const [date, setDate] = React.useState(todayIso());
+  const [from, setFrom] = React.useState('');
+  const [error, setError] = React.useState<string | null>(null);
+  const [loadedFor, setLoadedFor] = React.useState<string | null>(null);
+
+  const key = open && status ? `${card.id}:${status.month}` : null;
+  if (key !== loadedFor) {
+    setLoadedFor(key);
+    if (open && status) {
+      const suggested = status.autoPaid ? status.total : status.remaining;
+      setText(suggested > 0 ? String(suggested / 100).replace('.', ',') : '');
+      setDate(status.dueOn < todayIso() ? status.dueOn : todayIso());
+      setFrom(card.accountId ?? accounts.find((a) => a.primary)?.id ?? accounts[0]?.id ?? '');
+      setError(null);
+    }
+  }
+
+  if (!status) return null;
+
+  async function save() {
+    const amount = parseMoney(text);
+    if (amount === null || amount <= 0) return setError('Informe o valor pago.');
+    try {
+      await payInvoice({ spaceId, card, month: status!.month, amount, date, fromAccountId: from || null });
+      toast('Pagamento registrado. Saiu da conta — as compras já tinham contado.');
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Não consegui registrar.');
+    }
+  }
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title={`Pagar a fatura de ${formatMonthLabel(status.month)}`}
+      description="Registra o dinheiro que saiu da conta para o cartão. Não é despesa nova: as compras já contaram no dia de cada uma."
+      footer={
+        <Button variant="primary" size="lg" className="w-full" onClick={() => void save()}>
+          Registrar pagamento
+        </Button>
+      }
+    >
+      <div className="grid gap-3">
+        <Field label="Valor pago" htmlFor="pay-amount" error={error} hint={`A fatura soma ${formatMoney(status.total)}.`}>
+          <Input id="pay-amount" value={text} onChange={(e) => setText(e.target.value)} inputMode="decimal" className="tnum text-[20px] font-semibold" />
+        </Field>
+        <Field label="Dia" htmlFor="pay-date">
+          <Input id="pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+        {accounts.length > 1 ? (
+          <Field label="Saiu de" htmlFor="pay-from">
+            <Select id="pay-from" value={from} onChange={(e) => setFrom(e.target.value)}>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
+      </div>
+    </Sheet>
+  );
+}
+
 type Which = 'anterior' | 'atual' | 'proxima';
 
 export function CartoesView({
@@ -428,9 +603,9 @@ export function CartoesView({
 
   const usageById = React.useMemo(() => {
     const map = new Map<string, number>();
-    for (const card of cards) map.set(card.id, cardUsage(card, entries, subscriptions, month, today).ratio);
+    for (const card of cards) map.set(card.id, cardUsage(card, entries, subscriptions, month, today, base.transfers).ratio);
     return map;
-  }, [cards, entries, subscriptions, month, today]);
+  }, [cards, entries, subscriptions, month, today, base.transfers]);
 
   const data = React.useMemo(() => {
     if (!active) return null;
@@ -441,18 +616,35 @@ export function CartoesView({
       atual: buildInvoice(active, entries, subscriptions, openMonth, today),
       proxima: buildInvoice(active, entries, subscriptions, addMonthsToKey(openMonth, 1), today),
     };
-    const usage = cardUsage(active, entries, subscriptions, month, today);
+    const usage = cardUsage(active, entries, subscriptions, month, today, base.transfers);
     const future = futureInstallments(active, entries, openMonth);
     const futureTotal = future.reduce((t, f) => t + f.leftTotal, 0);
     const subs = subscriptions.filter((s) => s.cardId === active.id && !s.canceledAt && !s.deletedAt);
-    return { openMonth, invoices, usage, future, futureTotal, subs };
-  }, [active, entries, subscriptions, month, today]);
+    const ledger = ledgerInput(base, true, today);
+    const status = {
+      anterior: invoiceStatus(ledger, active, invoices.anterior.month),
+      atual: invoiceStatus(ledger, active, invoices.atual.month),
+      proxima: invoiceStatus(ledger, active, invoices.proxima.month),
+    };
+    return { openMonth, invoices, usage, future, futureTotal, subs, status };
+  }, [active, entries, subscriptions, month, today, base]);
+  const [paying, setPaying] = React.useState(false);
 
   const sheets = (
     <>
       <CardSheet state={cardSheet} spaceId={spaceId} onClose={() => setCardSheet({ open: false, editing: null })} />
       {active ? (
         <PurchaseSheet open={purchaseOpen} onClose={() => setPurchaseOpen(false)} spaceId={spaceId} card={active} categories={categories} />
+      ) : null}
+      {active ? (
+        <PaySheet
+          open={paying}
+          onClose={() => setPaying(false)}
+          spaceId={spaceId}
+          card={active}
+          status={data ? data.status[which] : null}
+          accounts={base.accounts.filter((a) => !a.archived)}
+        />
       ) : null}
     </>
   );
@@ -603,6 +795,7 @@ export function CartoesView({
               className="mb-4"
             />
             <InvoicePanel invoice={data.invoices[which]} categories={categories} hidden={hidden} today={today} onAddPurchase={() => setPurchaseOpen(true)} />
+            <InvoicePayment status={data.status[which]} accounts={base.accounts} hidden={hidden} today={today} onPay={() => setPaying(true)} />
           </Panel>
         ) : null}
 
