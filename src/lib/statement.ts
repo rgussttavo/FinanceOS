@@ -975,3 +975,85 @@ export function detectInstallment(description: string): { index: number; total: 
   if (!base) return null;
   return { index, total, base };
 }
+
+/* ----------------------------------------------------------- integridade */
+
+export interface StatementIntegrity {
+  /** o arquivo traz saldo suficiente para conferir a si mesmo */
+  checked: boolean;
+  ok: boolean;
+  opening?: DeclaredBalance;
+  closing?: DeclaredBalance;
+  /** a soma das transações lidas */
+  sum: Cents;
+  /** saldo anterior + transações: o que o saldo final deveria ser */
+  expectedClosing?: Cents;
+  /** saldo final declarado menos o esperado */
+  diff?: Cents;
+  /** dias em que o saldo do banco não fecha com o dia anterior mais os movimentos do dia */
+  badDays: { date: IsoDate; expected: Cents; declared: Cents }[];
+}
+
+/**
+ * O arquivo confere consigo mesmo?
+ *
+ * Com saldo anterior, saldo final ou saldo linha a linha, dá para saber se
+ * cada transação foi lida certa: um sinal trocado, um decimal errado ou uma
+ * linha perdida aparecem como diferença, no dia exato em que ela surge. É a
+ * prova de que o que vai entrar no app é o que está no arquivo — feita antes
+ * de gravar qualquer coisa.
+ *
+ * A conta é por dia, e não por linha: banco que lista o dia em outra ordem
+ * ainda fecha o dia no mesmo saldo.
+ */
+export function statementIntegrity(parsed: Pick<ParsedStatement, 'rows' | 'balance'>, invert = false): StatementIntegrity {
+  const rows = parsed.rows.map((r) => ({ ...r, amount: invert ? -r.amount : r.amount }));
+  const sum = rows.reduce((s, r) => s + r.amount, 0);
+  const opening = parsed.balance?.opening;
+  const closing = parsed.balance?.closing;
+  const badDays: StatementIntegrity['badDays'] = [];
+
+  /**
+   * O saldo do fim de cada dia, pelo banco. Banco que lista as linhas do dia
+   * numa ordem e calcula o saldo em outra deixa o fechamento do dia em
+   * qualquer uma das linhas — então o esperado precisa ser UM dos saldos que o
+   * banco mostrou naquele dia, não necessariamente o último.
+   */
+  const days: { date: IsoDate; total: Cents; balances: Cents[] }[] = [];
+  for (const r of rows) {
+    const last = days[days.length - 1];
+    const day = last && last.date === r.date ? last : (days.push({ date: r.date, total: 0, balances: [] }), days[days.length - 1]);
+    day.total += r.amount;
+    if (r.balanceAfter !== undefined) day.balances.push(r.balanceAfter);
+  }
+  let running: Cents | null = opening ? opening.amount : null;
+  let dayChecks = 0;
+  for (const d of days) {
+    const declared = d.balances.length ? d.balances[d.balances.length - 1] : null;
+    if (running !== null && declared !== null) {
+      dayChecks += 1;
+      const expected = running + d.total;
+      if (d.balances.includes(expected)) {
+        running = expected;
+        continue;
+      }
+      badDays.push({ date: d.date, expected, declared });
+    }
+    running = declared ?? (running !== null ? running + d.total : null);
+  }
+
+  const expectedClosing = opening ? opening.amount + rows.filter((r) => r.date <= (closing?.date ?? '9999')).reduce((s, r) => s + r.amount, 0) : undefined;
+  const diff = closing && expectedClosing !== undefined ? closing.amount - expectedClosing : undefined;
+  const checked = dayChecks > 0 || diff !== undefined;
+
+  return {
+    checked,
+    ok: checked && badDays.length === 0 && (diff === undefined || diff === 0),
+    ...(opening ? { opening } : null),
+    ...(closing ? { closing } : null),
+    sum,
+    ...(expectedClosing !== undefined ? { expectedClosing } : null),
+    ...(diff !== undefined ? { diff } : null),
+    badDays,
+  };
+}

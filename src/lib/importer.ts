@@ -1,27 +1,35 @@
-import { categorize, cleanDescription, type LearnedRule } from './categories';
+import { ensurePrimaryAccount, loadLedger, primaryIdFor } from './accounts';
+import { bankInText, buildInvoice, cardOfBank, dueDateOf, invoiceMonthOf } from './cards';
+import { categorize, cleanDescription, normalize, type LearnedRule } from './categories';
 import { addDaysIso, addMonthsToKey, clampDayToMonth, diffDays, monthKeyOf, monthKeyParts, nowInstant, partsToIso, todayIso } from './dates';
-import { buildInvoice, invoiceMonthOf } from './cards';
-import { db, entriesUpTo, putRecords } from './db';
+import { audit, db, entriesUpTo, liveRows, putRecord, putRecords } from './db';
+import { FALLBACK_ACCOUNT_ID, auditAccount, primaryAccountId, type LedgerInput } from './ledger';
 import { occurrencesInMonth, type Occurrence } from './occurrences';
 import { uid } from './provision';
-import { detectInstallment, tidyDescription, type ParsedStatement, type StatementRow } from './statement';
-import type { Category, Cents, Entry, EntrySource, FlowKind, IsoDate, Subscription } from './types';
-import { normalize } from './categories';
+import { detectInstallment, tidyDescription, type ParsedStatement, type StatementBalance, type StatementRow } from './statement';
+import type { Account, Card, Category, Cents, Debt, Entry, EntrySource, FlowKind, IsoDate, Settings, Subscription, Transfer } from './types';
 
 /**
  * Do extrato lido ao lançamento gravado.
  *
- * O leitor diz o que o arquivo contém. Daqui sai o que fazer com cada linha, e
- * a regra é não duplicar nada que a pessoa já tem:
+ * O leitor diz o que o arquivo contém. Daqui sai o que fazer com cada linha,
+ * com duas regras:
  *
- *   - linha que já veio num import anterior é pulada, sempre;
- *   - linha que bate com uma conta prevista e ainda aberta vira baixa nela,
- *     em vez de um segundo lançamento com o mesmo aluguel;
- *   - linha parecida com algo já lançado à mão fica desmarcada, para a pessoa
- *     decidir — o app não sabe se são dois cafés iguais ou o mesmo café.
+ *   1. não duplicar nada que a pessoa já tem — linha importada antes é pulada;
+ *      conta prevista e aberta vira baixa; transferência já registrada do
+ *      outro lado é reconhecida;
+ *   2. toda linha do extrato de uma conta tem efeito nela. Antes, pagamento de
+ *      fatura, transferência entre contas, resgate e cobrança de assinatura
+ *      ficavam de fora — e o saldo do app não tinha como bater com o do banco.
+ *      Agora cada um vira o que é: pagamento, transferência, resgate, cobrança
+ *      real. Nenhum deles vira receita ou despesa por engano.
  */
 
-export type ImportTarget = { type: 'account' } | { type: 'card'; cardId: string };
+/**
+ * Onde o extrato entra. Na conta, `accountId` é a conta cadastrada; ausente,
+ * é a principal.
+ */
+export type ImportTarget = { type: 'account'; accountId?: string | null } | { type: 'card'; cardId: string };
 
 export type RowStatus =
   /** novo, vira lançamento */
@@ -32,11 +40,11 @@ export type RowStatus =
   | 'similar'
   /** este mesmo identificador já foi importado */
   | 'imported'
-  /** pagamento de fatura, estorno no cartão: contaria em dobro */
+  /** pagamento de fatura: vira pagamento (conta → cartão), nunca despesa */
   | 'transfer'
-  /** cobrança de uma assinatura já cadastrada: ela já pesa no mês */
+  /** cobrança de uma assinatura já cadastrada: vira a cobrança real daquele mês */
   | 'subscription'
-  /** dinheiro entre contas suas ou resgate de aplicação: não é renda nem gasto */
+  /** dinheiro entre contas suas, ou resgate de aplicação: não é renda nem gasto */
   | 'internal';
 
 export type Confidence = 'alta' | 'média' | 'baixa';
@@ -69,6 +77,8 @@ export interface ReviewRow {
   kind: FlowKind;
   /** sempre positivo, como no resto do app */
   amount: Cents;
+  /** o sentido na conta: a linha tirou dinheiro dela? */
+  outflow: boolean;
   categoryId: string | null;
   /** a categoria veio de palpite fraco; a UI chama atenção */
   unsure: boolean;
@@ -82,6 +92,22 @@ export interface ReviewRow {
   /** a ocorrência com que a linha bateu, quando bateu */
   match: { entryId: string; occurrenceKey: string; description: string } | null;
   installment: { index: number; total: number } | null;
+  /**
+   * Transferência entre contas suas: a outra conta. Com ela, a linha vira uma
+   * transferência (um registro, os dois lados); sem ela, fica de fora e a
+   * reconciliação mostra a diferença.
+   */
+  counterpartAccountId?: string | null;
+  /** pagamento de fatura na conta: o cartão pago. A linha vira pagamento, não despesa */
+  payCardId?: string | null;
+  /** cobrança de uma assinatura cadastrada: a linha vira a cobrança real daquele mês */
+  subscriptionId?: string | null;
+  /** resgate de aplicação: volta para a conta, sai do investido, não é renda */
+  withdrawal?: boolean;
+  /** a transferência já registrada (do outro lado) que esta linha é */
+  matchedTransferId?: string | null;
+  /** explicação curta do que vai acontecer, quando não é óbvio */
+  note?: string;
 }
 
 export interface ReviewOptions {
@@ -90,7 +116,7 @@ export interface ReviewOptions {
   /** inverte o sinal de tudo: fatura que traz compra como positivo */
   invert: boolean;
   categories: Category[];
-  /** assinaturas cadastradas: a cobrança delas no extrato não vira lançamento de novo */
+  /** assinaturas cadastradas: a cobrança delas no extrato vira a cobrança real */
   subscriptions?: Subscription[];
   /** progresso real da comparação, linha a linha */
   onProgress?: (done: number, total: number) => void;
@@ -99,19 +125,27 @@ export interface ReviewOptions {
 /* ------------------------------------------------------------ assinatura */
 
 /**
+ * O escopo do identificador. A conta principal usa o escopo antigo ("acct"),
+ * o mesmo de todo extrato importado antes de existirem contas: reimportar
+ * aquele arquivo continua reconhecendo cada linha. As outras contas têm o
+ * próprio escopo, para duas contas com a mesma tarifa no mesmo dia não se
+ * confundirem.
+ */
+function scopeFor(target: ImportTarget, spaceId: string): string {
+  if (target.type === 'card') return `card:${target.cardId}`;
+  const id = target.accountId;
+  if (!id || id === primaryIdFor(spaceId) || id === FALLBACK_ACCOUNT_ID) return 'acct';
+  return `acct:${id}`;
+}
+
+/**
  * O identificador que torna o reimport inofensivo.
  *
  * No OFX o banco dá um (FITID). Nos outros formatos ele é derivado da data, do
  * valor e da descrição — e da ordem dentro do arquivo entre linhas idênticas,
  * porque dois cafés de R$ 6 no mesmo dia são dois cafés.
  */
-function externalIdFor(
-  row: StatementRow,
-  parsed: ParsedStatement,
-  target: ImportTarget,
-  repeat: number,
-): string {
-  const scope = target.type === 'card' ? `card:${target.cardId}` : 'acct';
+function externalIdFor(row: StatementRow, parsed: ParsedStatement, scope: string, repeat: number): string {
   if (row.fitId) return `ofx:${parsed.accountKey ?? scope}:${row.fitId}`;
   const base = `${row.date}|${row.amount}|${cleanDescription(row.description)}|${repeat}`;
   return `${parsed.format}:${scope}:${hash(base)}`;
@@ -135,11 +169,10 @@ function hash(text: string): string {
 
 const CARD_PAYMENT = /pagamento (de |da )?fatura|pgto fatura|pagamento recebido|pag fatura|pagto fatura/;
 
-
 /**
  * Crédito na fatura que é pagamento, com a palavra que o banco usar. Os
  * outros créditos (estorno, cancelamento, reembolso) entram e abatem a
- * fatura — antes ficavam de fora, e a fatura do app passava da do banco.
+ * fatura.
  */
 const CARD_CREDIT_PAYMENT = /pagamento|pgto|pagto|pag fat|debito automatico/;
 
@@ -166,14 +199,16 @@ export function invoiceReconciliation(rows: ReviewRow[]) {
     alreadyTotal: sum(charges.filter((r) => r.status === 'imported')) - sum(credits.filter((r) => r.status === 'imported')),
   };
 }
-const INTERNAL = /transferencia entre contas|mesma titularidade|conta propria|entre suas contas|resgate|transf.*propria/;
+
+const INTERNAL = /transferencia entre contas|mesma titularidade|conta propria|entre suas contas|transf.*propria|mesmo titular/;
+const WITHDRAWAL = /\b(resgate|resg|resgatado|rendimento resgatado|resgate aplic\w*|resgate cdb|resgate lci|resgate lca|resgate tesouro|resgate poupanca)\b/;
 const ACCOUNT_CARD_BILL = /fatura|pagamento (de )?cartao|pgto cartao|pag cartao/;
 
 /**
  * Monta a lista que a pessoa revisa antes de gravar.
  *
- * Lê o que já existe no espaço uma vez só: os identificadores importados antes
- * e as ocorrências dos meses que o extrato cobre.
+ * Lê o que já existe no espaço uma vez só: identificadores importados antes,
+ * transferências registradas e as ocorrências dos meses que o extrato cobre.
  */
 export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions): Promise<ReviewRow[]> {
   const { spaceId, target, categories } = opts;
@@ -182,26 +217,38 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
   const rows = parsed.rows.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   if (!rows.length) return [];
 
+  const [accounts, cards, transfers] = await Promise.all([
+    liveRows<Account>('accounts', spaceId),
+    liveRows<Card>('cards', spaceId),
+    liveRows<Transfer>('transfers', spaceId),
+  ]);
+  const targetAccount = target.type === 'account' ? (target.accountId ?? primaryAccountId(accounts)) : null;
+  const others = accounts.filter((a) => !a.archived && a.id !== targetAccount);
+  const liveCards = cards.filter((c) => !c.archived);
+
   // linhas idênticas no mesmo arquivo recebem um contador, para não virarem uma só
+  const scope = scopeFor(target, spaceId);
   const seen = new Map<string, number>();
   const ids = parsed.rows.map((row) => {
     const k = `${row.date}|${row.amount}|${cleanDescription(row.description)}`;
     const n = seen.get(k) ?? 0;
     seen.set(k, n + 1);
-    return externalIdFor(row, parsed, target, n);
+    return externalIdFor(row, parsed, scope, n);
   });
   const idOf = new Map(parsed.rows.map((row, i) => [row, ids[i]]));
 
-  const already = new Set(
-    (await db().entries.where('externalId').anyOf(ids).toArray())
+  const already = new Set<string>([
+    ...(await db().entries.where('externalId').anyOf(ids).toArray())
       .filter((e) => e.spaceId === spaceId && !e.deletedAt)
-      .map((e) => e.externalId),
-  );
+      .map((e) => e.externalId as string),
+    ...transfers.flatMap((t) => t.externalIds ?? []),
+  ]);
 
   // na fatura, parcelas de compras antigas podem estar datadas bem longe do arquivo: a janela é mais larga
   const pad = target.type === 'card' ? 45 : 0;
   const occurrences = await occurrencesCovering(spaceId, addDaysIso(rows[0].date, -pad), addDaysIso(rows[rows.length - 1].date, pad));
   const taken = new Set<string>();
+  const takenTransfers = new Set<string>();
   const subs = (opts.subscriptions ?? []).filter((s) => !s.deletedAt);
 
   const out: ReviewRow[] = [];
@@ -216,6 +263,26 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
   }
   opts.onProgress?.(rows.length, rows.length);
   return out;
+
+  /** a transferência já registrada que esta linha é, vista do lado de cá */
+  function matchTransfer(date: IsoDate, amount: Cents, outflow: boolean): Transfer | null {
+    let best: Transfer | null = null;
+    let bestGap = Infinity;
+    for (const t of transfers) {
+      if (takenTransfers.has(t.id) || t.amount !== amount) continue;
+      const gap = Math.abs(diffDays(t.date, date));
+      if (gap > (target.type === 'card' ? 7 : 3) || gap >= bestGap) continue;
+      const fits =
+        target.type === 'card'
+          ? t.kind === 'card' && t.toCardId === target.cardId && !outflow
+          : (t.kind === 'account' && ((outflow && t.fromAccountId === targetAccount) || (!outflow && t.toAccountId === targetAccount))) ||
+            (t.kind === 'card' && outflow && t.fromAccountId === targetAccount);
+      if (!fits) continue;
+      best = t;
+      bestGap = gap;
+    }
+    return best;
+  }
 
   function reviewOne(row: StatementRow, i: number): ReviewRow {
     const externalId = idOf.get(row) ?? `row:${i}`;
@@ -243,19 +310,46 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
 
     let status: RowStatus = 'new';
     let match: ReviewRow['match'] = null;
+    let include: boolean | null = null;
+    const extra: Partial<ReviewRow> = {};
 
     const sub = outflow ? matchSubscription(subs, plainDesc, amount, row.date) : null;
+    const isWithdrawal = target.type === 'account' && !outflow && WITHDRAWAL.test(fullDesc);
+    const linked = !already.has(externalId) ? matchTransfer(row.date, amount, outflow) : null;
 
     if (already.has(externalId)) {
       status = 'imported';
+    } else if (linked) {
+      // o outro lado já registrou: esta linha só se junta a ela
+      takenTransfers.add(linked.id);
+      status = 'imported';
+      extra.matchedTransferId = linked.id;
+      extra.note = linked.kind === 'card' ? 'é o pagamento de fatura já registrado' : 'é a transferência já registrada';
     } else if (sub) {
       status = 'subscription';
       match = { entryId: `sub:${sub.id}`, occurrenceKey: '', description: sub.name };
-    } else if (INTERNAL.test(plainDesc)) {
+      extra.subscriptionId = sub.id;
+      if (sub.categoryId) guess = { ...guess, categoryId: sub.categoryId, confidence: 0.9 };
+      include = true;
+      extra.note = `cobrança real de ${sub.name}: toma o lugar da prevista`;
+    } else if (isWithdrawal) {
       status = 'internal';
+      kind = 'invest';
+      guess = categorize({ description, kind: 'invest', categories, learned });
+      extra.withdrawal = true;
+      include = true;
+      extra.note = 'resgate: volta para a conta e sai do investido, não é renda';
+    } else if (target.type === 'account' && INTERNAL.test(plainDesc)) {
+      status = 'internal';
+      const counterpart = others.length === 1 ? others[0].id : null;
+      extra.counterpartAccountId = counterpart;
+      include = !!counterpart;
+      extra.note = counterpart ? 'transferência entre suas contas' : 'transferência entre suas contas: escolha a outra conta';
     } else if (target.type === 'card' && (CARD_PAYMENT.test(fullDesc) || (!outflow && CARD_CREDIT_PAYMENT.test(fullDesc)))) {
-      // o pagamento da fatura anterior não é compra nem estorno: fica de fora
+      // o pagamento da fatura anterior, visto do cartão: vira o pagamento, que sai da conta
       status = 'transfer';
+      include = true;
+      extra.note = 'pagamento da fatura: sai da conta, não é compra nem estorno';
     } else {
       const hit = findMatch(occurrences, taken, row.date, amount, outflow, installment, target.type === 'card' ? plainDesc : null);
       if (hit) {
@@ -265,8 +359,20 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
         // parcela de uma compra que já está no app (veio de outra fatura): não entra de novo
         if (hit.installment && (installment || target.type === 'card')) status = 'imported';
       } else if (target.type === 'account' && outflow && ACCOUNT_CARD_BILL.test(plainDesc)) {
-        // a fatura paga pela conta: se as compras do cartão já estão no app, é dobro
-        status = 'transfer';
+        // a fatura paga pela conta: com o cartão cadastrado, é pagamento e não despesa
+        const bank = bankInText(row.description);
+        const card = cardOfBank(liveCards, bank) ?? (liveCards.length === 1 ? liveCards[0] : null);
+        if (liveCards.length) {
+          status = 'transfer';
+          extra.payCardId = card?.id ?? null;
+          include = !!card;
+          extra.note = card
+            ? `pagamento da fatura ${card.name || card.institution}: sai da conta, as compras já contam no cartão`
+            : 'pagamento de fatura: escolha o cartão';
+        } else {
+          // sem cartão cadastrado, as compras não estão no app: o pagamento é o gasto
+          extra.note = 'fatura de cartão que não está no app: entra como gasto. Se importar a fatura depois, exclua esta linha.';
+        }
       }
     }
 
@@ -276,18 +382,20 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       description: installment ? installment.base : description,
       kind,
       amount,
+      outflow,
       categoryId: guess.categoryId,
       unsure: guess.confidence < 0.35,
       confidence: guess.confidence >= 0.7 ? 'alta' : guess.confidence >= 0.45 ? 'média' : 'baixa',
       externalId,
       status,
-      include: status === 'new' || status === 'settle',
+      include: include ?? (status === 'new' || status === 'settle'),
       match,
       installment: installment ? { index: installment.index, total: installment.total } : null,
       billPayment:
         CARD_PAYMENT.test(fullDesc) ||
         (target.type === 'card' && !outflow && CARD_CREDIT_PAYMENT.test(fullDesc)) ||
         (target.type === 'account' && outflow && ACCOUNT_CARD_BILL.test(plainDesc)),
+      ...extra,
     };
   }
 }
@@ -380,33 +488,72 @@ export function sharesWord(a: string, b: string): boolean {
 
 /* -------------------------------------------------------------- gravação */
 
+export interface Reconciliation {
+  accountId: string;
+  /** o saldo que o banco escreveu no arquivo */
+  declared: Cents;
+  date: IsoDate;
+  /** o saldo que o app calcula para a mesma conta, no mesmo dia */
+  computed: Cents;
+  /** declarado menos calculado: zero é conferido */
+  diff: Cents;
+  /** linhas do arquivo que ficaram de fora e mexeriam no saldo */
+  left: { description: string; date: IsoDate; signed: Cents }[];
+  /** movimentos da conta no período do arquivo que não vieram dele */
+  extra: { description: string; date: IsoDate; signed: Cents }[];
+}
+
 export interface ImportResult {
   created: number;
   settled: number;
+  /** transferências e pagamentos de fatura criados */
+  transfers: number;
+  /** linhas que se juntaram a uma transferência já registrada */
+  linked: number;
   /** a competência mais recente do extrato, para a tela abrir nela */
   lastMonth: string;
   /** na fatura de cartão: qual fatura o arquivo é */
   invoiceMonth?: string;
   /** a fatura anterior do mesmo cartão está vazia no app: as parcelas antigas faltam */
   previousInvoiceMissing?: boolean;
+  /** o saldo do banco contra o do app, quando o arquivo traz o saldo */
+  reconciliation?: Reconciliation;
+  /** o saldo anterior do arquivo virou o saldo inicial da conta */
+  openingSet?: { amount: Cents; date: IsoDate };
 }
 
 /**
- * Grava a revisão numa transação só.
+ * Grava a revisão.
  *
- * Um extrato de um ano são centenas de linhas; gravar uma a uma deixaria a
- * base pela metade se a aba fechasse no meio, e a fila de sync com centenas de
- * transações pequenas em vez de uma.
+ * Um extrato de um ano são centenas de linhas; cada tabela vai numa
+ * transação só, para a base nunca ficar com metade de um extrato.
  */
 export async function commitReview(
   rows: ReviewRow[],
-  opts: { spaceId: string; target: ImportTarget; source: EntrySource; invoiceMonth?: string | null },
+  opts: {
+    spaceId: string;
+    target: ImportTarget;
+    source: EntrySource;
+    invoiceMonth?: string | null;
+    /** nome do arquivo, para o saldo conferido dizer de onde veio */
+    fileName?: string;
+    /** saldos declarados no arquivo */
+    balance?: StatementBalance;
+    /** usar o saldo anterior do arquivo como saldo inicial da conta (só se ela ainda não tem) */
+    useOpening?: boolean;
+  },
 ): Promise<ImportResult> {
   const chosen = rows.filter((r) => r.include);
   const today = todayIso();
   const at = nowInstant();
 
+  const accounts = await liveRows<Account>('accounts', opts.spaceId);
+  const targetAccount = opts.target.type === 'account' ? (opts.target.accountId ?? primaryAccountId(accounts)) : null;
+  const accountField = targetAccount && targetAccount !== FALLBACK_ACCOUNT_ID ? targetAccount : null;
+
   const created: Entry[] = [];
+  const newTransfers: Transfer[] = [];
+  const linkedTransfers = new Map<string, string[]>();
   const settleBy = new Map<string, { key: string; amount: Cents }[]>();
 
   /**
@@ -424,11 +571,73 @@ export async function commitReview(
   const invoiceMonth = card ? opts.invoiceMonth || (lastPurchase ? invoiceMonthOf(card, lastPurchase) : null) : null;
   const pinFor = (r: ReviewRow) => (invoiceMonth ? addMonthsToKey(invoiceMonth, -((r.installment?.index ?? 1) - 1)) : null);
 
+  const cards = await liveRows<Card>('cards', opts.spaceId);
+  const transferBase = (r: ReviewRow) => ({
+    id: uid(),
+    spaceId: opts.spaceId,
+    createdAt: at,
+    updatedAt: at,
+    deletedAt: null,
+    date: r.date,
+    amount: r.amount,
+    description: r.description.slice(0, 120),
+    notes: '',
+    externalIds: [r.externalId],
+    source: opts.source,
+    toAccountId: null,
+    toCardId: null,
+    invoiceMonth: null,
+  });
+
+  for (const r of rows) {
+    // a linha que se juntou a uma transferência já registrada guarda o próprio id nela
+    if (r.status === 'imported' && r.matchedTransferId) {
+      linkedTransfers.set(r.matchedTransferId, [...(linkedTransfers.get(r.matchedTransferId) ?? []), r.externalId]);
+    }
+  }
+
   for (const r of chosen) {
     if (r.status === 'settle' && r.match) {
       const list = settleBy.get(r.match.entryId) ?? [];
       list.push({ key: r.match.occurrenceKey, amount: r.amount });
       settleBy.set(r.match.entryId, list);
+      continue;
+    }
+
+    // transferência entre suas contas: um registro, os dois lados
+    if (r.status === 'internal' && !r.withdrawal) {
+      if (!r.counterpartAccountId || !targetAccount) continue;
+      newTransfers.push({
+        ...transferBase(r),
+        kind: 'account',
+        fromAccountId: r.outflow ? accountField : r.counterpartAccountId,
+        toAccountId: r.outflow ? r.counterpartAccountId : accountField,
+      });
+      continue;
+    }
+
+    // pagamento de fatura: sai da conta e quita o cartão
+    if (r.status === 'transfer') {
+      if (opts.target.type === 'account') {
+        const paid = cards.find((c) => c.id === r.payCardId);
+        if (!paid) continue;
+        newTransfers.push({
+          ...transferBase(r),
+          kind: 'card',
+          fromAccountId: accountField,
+          toCardId: paid.id,
+          invoiceMonth: invoicePaidBy(paid, r.date),
+        });
+      } else if (card && !r.outflow) {
+        // visto da fatura: o crédito "pagamento recebido" saiu de alguma conta — a do cartão, ou a principal
+        newTransfers.push({
+          ...transferBase(r),
+          kind: 'card',
+          fromAccountId: card.accountId ?? null,
+          toCardId: card.id,
+          invoiceMonth: invoicePaidBy(card, r.date),
+        });
+      }
       continue;
     }
 
@@ -458,7 +667,7 @@ export async function commitReview(
       amount: r.amount,
       date,
       categoryId: r.categoryId,
-      accountId: null,
+      accountId: cardId ? null : accountField,
       cardId,
       repeat,
       settled,
@@ -468,6 +677,8 @@ export async function commitReview(
       externalId: r.externalId,
       attachmentIds: [],
       ...(cardId && invoiceMonth ? { invoiceMonth: pinFor(r) } : null),
+      ...(r.subscriptionId ? { subscriptionId: r.subscriptionId } : null),
+      ...(r.withdrawal ? { withdrawal: true } : null),
     });
   }
 
@@ -495,7 +706,8 @@ export async function commitReview(
     for (const mark of marks) {
       settled[mark.key] = mark.amount === entry.amount ? { at } : { at, amount: mark.amount };
     }
-    toSettle.push({ ...entry, settled });
+    // a conta prevista sem conta definida foi paga por esta: é nela que o dinheiro saiu
+    toSettle.push({ ...entry, settled, ...(entry.accountId || !accountField ? null : { accountId: accountField }) });
   }
 
   // parcela reconhecida com centavos de diferença: vale o valor do banco naquela parcela
@@ -523,7 +735,16 @@ export async function commitReview(
   }
   const adjustedIds = new Set(adjusted.map((e) => e.id));
 
+  const linked: Transfer[] = [];
+  for (const [id, externalIds] of linkedTransfers) {
+    const t = await db().transfers.get(id);
+    if (!t || t.deletedAt) continue;
+    const merged = [...new Set([...(t.externalIds ?? []), ...externalIds])];
+    if (merged.length !== (t.externalIds ?? []).length) linked.push({ ...t, externalIds: merged });
+  }
+
   await putRecords('entries', [...created, ...toSettle, ...repinned.filter((e) => !adjustedIds.has(e.id)), ...adjusted]);
+  await putRecords('transfers', [...newTransfers, ...linked]);
 
   const lastMonth = chosen.reduce((max, r) => (monthKeyOf(r.date) > max ? monthKeyOf(r.date) : max), '');
 
@@ -538,10 +759,112 @@ export async function commitReview(
     const cardEntries = (await db().entries.where('cardId').equals(card.id).toArray()).filter((e) => !e.deletedAt);
     previousInvoiceMissing = buildInvoice(card, cardEntries, [], addMonthsToKey(invoiceMonth, -1), today).lines.length === 0;
   }
+
+  // o saldo do banco: vira saldo inicial (se pedido e se a conta não tem) e ponto de conferência
+  let openingSet: ImportResult['openingSet'];
+  let reconciliation: Reconciliation | undefined;
+  if (opts.target.type === 'account' && targetAccount && opts.balance) {
+    const account = await ensureTargetAccount(opts.spaceId, targetAccount);
+    let current = account;
+    const hasStart = !!current.openingDate || current.openingBalance !== 0 || (current.checkpoints?.length ?? 0) > 0;
+    if (opts.useOpening && !hasStart && opts.balance.opening) {
+      current = await putRecord('accounts', { ...current, openingBalance: opts.balance.opening.amount, openingDate: opts.balance.opening.date });
+      openingSet = { amount: opts.balance.opening.amount, date: opts.balance.opening.date };
+    }
+    if (opts.balance.closing) {
+      const closing = opts.balance.closing;
+      const exists = (current.checkpoints ?? []).some((c) => c.date === closing.date && c.amount === closing.amount);
+      if (!exists) {
+        current = await putRecord('accounts', {
+          ...current,
+          checkpoints: [...(current.checkpoints ?? []), { date: closing.date, amount: closing.amount, source: opts.fileName || 'extrato importado', at }],
+        });
+      }
+      reconciliation = await reconcile(opts.spaceId, current.id, closing.date, closing.amount, rows);
+    }
+  }
+
+  await audit(opts.spaceId, 'statement.imported', {
+    target: opts.target,
+    file: opts.fileName ?? null,
+    created: created.length,
+    settled: toSettle.length,
+    transfers: newTransfers.length,
+    linked: linked.length,
+    ...(reconciliation ? { declared: reconciliation.declared, computed: reconciliation.computed, diff: reconciliation.diff } : null),
+  });
+  if (reconciliation) {
+    await audit(opts.spaceId, 'statement.reconciled', { account: reconciliation.accountId, date: reconciliation.date, diff: reconciliation.diff });
+  }
+
   return {
     created: created.length,
     settled: toSettle.reduce((n, e) => n + (settleBy.get(e.id)?.length ?? 0), 0),
+    transfers: newTransfers.length,
+    linked: linked.length,
     lastMonth,
     ...(invoiceMonth ? { invoiceMonth, previousInvoiceMissing } : null),
+    ...(reconciliation ? { reconciliation } : null),
+    ...(openingSet ? { openingSet } : null),
   };
 }
+
+/**
+ * A fatura que um pagamento quita: a de vencimento mais perto do dia do
+ * pagamento, entre as que já fecharam.
+ */
+export function invoicePaidBy(card: Card, date: IsoDate): string {
+  const open = invoiceMonthOf(card, date);
+  let best = addMonthsToKey(open, -1);
+  let bestGap = Infinity;
+  for (const m of [addMonthsToKey(open, -2), addMonthsToKey(open, -1), open]) {
+    const gap = Math.abs(diffDays(dueDateOf(card, m), date));
+    if (gap < bestGap) {
+      best = m;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+
+/** a conta de destino existe como registro (a principal implícita vira de verdade aqui) */
+async function ensureTargetAccount(spaceId: string, accountId: string): Promise<Account> {
+  const found = await db().accounts.get(accountId);
+  if (found && !found.deletedAt) return found;
+  return ensurePrimaryAccount(spaceId);
+}
+
+/**
+ * O saldo do banco contra o do app, e o que explica a diferença.
+ *
+ * Quando não bate, a resposta vem com os suspeitos: linhas do arquivo que
+ * ficaram de fora e movimentos da conta, no mesmo período, que não vieram do
+ * arquivo (lançado à mão, importado de outro arquivo, cobrança automática que
+ * o banco não fez). A diferença nunca é corrigida sozinha.
+ */
+export async function reconcile(spaceId: string, accountId: string, date: IsoDate, declared: Cents, rows: ReviewRow[]): Promise<Reconciliation> {
+  const ledger: LedgerInput = await loadLedger(spaceId, todayIso() > date ? todayIso() : date);
+  const audit = auditAccount(ledger, accountId, date);
+  const computed = audit.balance;
+
+  const first = rows[0]?.date ?? date;
+  const fileIds = new Set(rows.map((r) => r.externalId));
+  const entryIds = new Set(
+    ledger.entries.filter((e) => e.externalId && fileIds.has(e.externalId)).map((e) => e.id),
+  );
+  const matchedEntries = new Set(rows.filter((r) => r.match).map((r) => r.match!.entryId));
+  const transferIds = new Set(ledger.transfers.filter((t) => (t.externalIds ?? []).some((x) => fileIds.has(x))).map((t) => t.id));
+
+  const extra = audit.lines
+    .filter((l) => l.date >= first && l.date <= date)
+    .filter((l) => !entryIds.has(l.refId) && !matchedEntries.has(l.refId) && !transferIds.has(l.refId))
+    .map((l) => ({ description: l.label, date: l.date, signed: l.amount }));
+
+  const left = rows
+    .filter((r) => !r.include && r.status !== 'imported')
+    .map((r) => ({ description: r.description, date: r.date, signed: r.outflow ? -r.amount : r.amount }));
+
+  return { accountId, declared, date, computed, diff: declared - computed, left, extra };
+}
+
+export type { Debt, Settings };

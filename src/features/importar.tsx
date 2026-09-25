@@ -1,8 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { ArrowRight, Check, ChevronDown, CreditCard, FileUp, Lock, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Check, ChevronDown, CreditCard, FileUp, Lock, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Logo } from '@/components/Logo';
+import { navigate } from '@/components/shell';
+import { setBalance } from '@/lib/accounts';
 import { Badge, Button, Chip, Field, Input, Meter, Panel, SectionTitle, Segmented, Select, toast } from '@/components/ui';
 import { BANKS, bankInText, cardOfBank, dueDateOf, invoiceMonthOf, matchBank, type BankInfo } from '@/lib/cards';
 import { cn } from '@/lib/cn';
@@ -22,11 +24,12 @@ import {
   StatementError,
   parseStatementFile,
   remapTable,
+  statementIntegrity,
   type ColumnMap,
   type ParsedStatement,
 } from '@/lib/statement';
-import { createCard, rememberCategory, useAllSubscriptions, useCards } from '@/lib/store';
-import type { Card, Category, Cents, EntrySource, MonthKey } from '@/lib/types';
+import { createCard, rememberCategory, useAccounts, useAllSubscriptions, useCards } from '@/lib/store';
+import type { Card, Category, Cents, EntrySource, IsoDate, MonthKey } from '@/lib/types';
 
 /**
  * Importar extrato.
@@ -72,8 +75,8 @@ const GROUPS: { id: ReviewGroup; title: string; hint: string; open: boolean }[] 
   { id: 'review', title: 'Precisam da sua olhada', hint: 'A categoria não é certa. Confirme ou troque.', open: true },
   { id: 'match', title: 'Batem com o que você já tem', hint: 'Contas previstas viram baixa; o resto fica de fora até você decidir.', open: true },
   { id: 'ready', title: 'Novos, prontos para entrar', hint: 'Categoria sugerida com boa confiança.', open: false },
-  { id: 'card-payment', title: 'Pagamentos de cartão', hint: 'Ficam de fora: as compras do cartão já contam.', open: false },
-  { id: 'internal', title: 'Transferências e resgates', hint: 'Dinheiro entre contas suas não é renda nem gasto.', open: false },
+  { id: 'card-payment', title: 'Pagamentos de cartão', hint: 'Viram pagamento da fatura: saem da conta, e as compras continuam contando só no cartão.', open: true },
+  { id: 'internal', title: 'Transferências e resgates', hint: 'Transferência vira transferência, com os dois lados; resgate volta para a conta. Nada disso é renda nem gasto.', open: true },
   { id: 'duplicate', title: 'Já importados antes', hint: 'Reconhecidos pelo identificador; não entram de novo.', open: false },
 ];
 
@@ -95,7 +98,12 @@ export function ImportarView({
   initialCard?: string | null;
 }) {
   const cards = useCards(spaceId);
+  const accounts = useAccounts(spaceId);
   const subscriptions = useAllSubscriptions(spaceId);
+  /** a conta em que o extrato entra; vazio = a principal */
+  const [accountId, setAccountId] = React.useState<string>('');
+  /** usar o saldo anterior do arquivo como saldo inicial, quando a conta não tem */
+  const [useOpening, setUseOpening] = React.useState(true);
   const [phase, setPhase] = React.useState<Phase>({ step: 'pick', error: null });
   const [targetType, setTargetType] = React.useState<'account' | 'card'>(initialCard ? 'card' : 'account');
   const [cardId, setCardId] = React.useState<string>(initialCard && initialCard !== 'novo' ? initialCard : '');
@@ -112,10 +120,14 @@ export function ImportarView({
   const [fileName, setFileName] = React.useState('');
 
   const chosenCard = cardId || cards[0]?.id || '';
+  const chosenAccount = accounts.find((a) => a.id === accountId) ?? accounts.find((a) => a.primary) ?? accounts[0] ?? null;
   const target: ImportTarget = React.useMemo(
-    () => (targetType === 'card' && chosenCard ? { type: 'card', cardId: chosenCard } : { type: 'account' }),
-    [targetType, chosenCard],
+    () =>
+      targetType === 'card' && chosenCard ? { type: 'card', cardId: chosenCard } : { type: 'account', accountId: chosenAccount?.id ?? null },
+    [targetType, chosenCard, chosenAccount?.id],
   );
+  const accountHasStart =
+    !!chosenAccount && (!!chosenAccount.openingDate || chosenAccount.openingBalance !== 0 || (chosenAccount.checkpoints?.length ?? 0) > 0);
 
   async function review(next: ParsedStatement, nextInvert: boolean, name: string) {
     setPhase({ step: 'reading', name, stage: 'Comparando com o que você já tem', progress: 0 });
@@ -170,13 +182,17 @@ export function ImportarView({
   async function onCommit() {
     if (!parsed) return;
     // pagamentos de fatura achados no extrato da conta: as compras deles moram na fatura
-    setPayments(target.type === 'account' ? rows.filter((r) => r.status === 'transfer' && r.kind === 'out') : []);
+    // fatura paga de um cartão que não está no app: o convite para importá-la
+    setPayments(target.type === 'account' ? rows.filter((r) => r.billPayment && r.outflow && !r.payCardId && r.include) : []);
     setPhase({ step: 'saving' });
     const result = await commitReview(rows, {
       spaceId,
       target,
       source: SOURCE_BY_FORMAT[parsed.format],
       invoiceMonth: target.type === 'card' ? invoicePick : null,
+      fileName,
+      balance: parsed.balance,
+      useOpening: useOpening && !accountHasStart,
     });
     setParsed(null);
     setRows([]);
@@ -244,6 +260,7 @@ export function ImportarView({
 
       {phase.step === 'done' ? (
         <Done
+          spaceId={spaceId}
           result={phase.result}
           onOpenMonth={onOpenMonth}
           onAgain={reset}
@@ -301,6 +318,11 @@ export function ImportarView({
           }}
           onCancel={reset}
           onCommit={onCommit}
+          otherAccounts={accounts.filter((a) => a.id !== chosenAccount?.id).map((a) => ({ id: a.id, name: a.name }))}
+          cardOptions={cards}
+          openingOffer={targetType === 'account' && !accountHasStart && parsed.balance?.opening ? parsed.balance.opening : null}
+          useOpening={useOpening}
+          setUseOpening={setUseOpening}
         />
       ) : (
         <PickStep
@@ -319,6 +341,9 @@ export function ImportarView({
             setNewCard(null);
           }}
           spaceId={spaceId}
+          accounts={accounts}
+          chosenAccount={chosenAccount?.id ?? ''}
+          setAccountId={setAccountId}
         />
       )}
     </div>
@@ -340,7 +365,13 @@ function PickStep({
   pendingFile,
   onCardCreated,
   spaceId,
+  accounts,
+  chosenAccount,
+  setAccountId,
 }: {
+  accounts: { id: string; name: string; institution: string }[];
+  chosenAccount: string;
+  setAccountId: (id: string) => void;
   phase: Phase;
   targetType: 'account' | 'card';
   setTargetType: (t: 'account' | 'card') => void;
@@ -373,6 +404,20 @@ function PickStep({
               { value: 'card', label: 'Fatura do cartão' },
             ]}
           />
+          {targetType === 'account' && accounts.length > 1 ? (
+            <div className="mt-3">
+              <Field label="Conta" htmlFor="import-account">
+                <Select id="import-account" value={chosenAccount} onChange={(e) => setAccountId(e.target.value)}>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.institution ? ` · ${a.institution}` : ''}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          ) : null}
           {targetType === 'card' ? (
             <div className="mt-3 grid gap-3">
               {pendingFile ? (
@@ -536,7 +581,19 @@ function Review({
   onRemap,
   onCancel,
   onCommit,
+  otherAccounts,
+  cardOptions,
+  openingOffer,
+  useOpening,
+  setUseOpening,
 }: {
+  /** as contas que não são a de destino: o outro lado de uma transferência */
+  otherAccounts: { id: string; name: string }[];
+  cardOptions: { id: string; name: string; institution: string }[];
+  /** o saldo anterior do arquivo, oferecido como saldo inicial quando a conta ainda não tem */
+  openingOffer: { amount: Cents; date: IsoDate } | null;
+  useOpening: boolean;
+  setUseOpening: (v: boolean) => void;
   card: Card | null;
   invoicePick: MonthKey | null;
   setInvoicePick: (m: MonthKey | null) => void;
@@ -564,11 +621,13 @@ function Review({
   }, [rows]);
 
   const chosen = rows.filter((r) => r.include);
-  const creating = chosen.filter((r) => r.status !== 'settle');
+  // transferência e pagamento de fatura mexem na conta, mas não são entrada nem saída
+  const moving = chosen.filter((r) => r.status === 'transfer' || (r.status === 'internal' && !r.withdrawal));
+  const creating = chosen.filter((r) => r.status !== 'settle' && !moving.includes(r));
   const settling = chosen.filter((r) => r.status === 'settle');
   const totals = creating.reduce(
     (acc, r) => {
-      if (r.kind === 'in') acc.in += r.amount;
+      if (!r.outflow) acc.in += r.amount;
       else acc.out += r.amount;
       return acc;
     },
@@ -584,6 +643,12 @@ function Review({
     // corrigir aqui ensina o app, igual a corrigir num lançamento
     void rememberCategory(row.description, categoryId);
   };
+
+  const pick = (key: string, field: 'counterpartAccountId' | 'payCardId', id: string | null) =>
+    setRows((list) => list.map((r) => (r.key === key ? { ...r, [field]: id, include: !!id } : r)));
+
+  // o arquivo confere consigo mesmo? a prova de que foi lido certo, antes de gravar
+  const integrity = React.useMemo(() => (targetType === 'account' ? statementIntegrity(parsed, invert) : null), [parsed, invert, targetType]);
 
   const confirmAll = (group: ReviewGroup) =>
     setRows((list) => list.map((r) => (groupOf(r) === group && r.categoryId ? { ...r, confidence: 'alta', unsure: false, include: true } : r)));
@@ -664,6 +729,54 @@ function Review({
         </Panel>
       ) : null}
 
+      {integrity?.checked ? (
+        <Panel className={cn('p-5', integrity.ok ? 'border-in/30' : 'border-warn/40')}>
+          <SectionTitle>O arquivo confere consigo mesmo?</SectionTitle>
+          {integrity.ok ? (
+            <p className="flex items-start gap-2 text-[14px] leading-relaxed text-ink">
+              <Check size={17} className="mt-0.5 shrink-0 text-in" strokeWidth={3} />
+              <span>
+                Sim.{' '}
+                {integrity.opening && integrity.closing && integrity.expectedClosing !== undefined
+                  ? `Saldo anterior ${formatMoney(integrity.opening.amount, { hidden, signed: integrity.opening.amount < 0 })} ${integrity.sum < 0 ? '−' : '+'} ${formatMoney(Math.abs(integrity.sum), { hidden })} em lançamentos = ${formatMoney(integrity.closing.amount, { hidden, signed: integrity.closing.amount < 0 })}, o saldo final que o banco escreveu.`
+                  : 'O saldo de cada dia no arquivo fecha com os lançamentos lidos.'}{' '}
+                Cada valor foi lido como está no arquivo.
+              </span>
+            </p>
+          ) : (
+            <div className="grid gap-2 text-[13px] leading-relaxed text-ink">
+              <p className="flex items-start gap-2">
+                <AlertTriangle size={17} className="mt-0.5 shrink-0 text-warn" />
+                <span>
+                  <strong className="font-semibold">Inconsistência no arquivo.</strong> Os saldos que o banco escreveu não fecham com os lançamentos lidos
+                  {integrity.diff ? ` — diferença de ${formatMoney(integrity.diff, { hidden, signed: true })} no fim` : ''}. Algum valor pode ter sido lido com o sinal
+                  ou o decimal errado: confira as colunas em “Algo errado na leitura?”, ou o dia abaixo.
+                </span>
+              </p>
+              {integrity.badDays.length ? (
+                <ul className="grid gap-1 pl-6 text-[12.5px] text-ink-2">
+                  {integrity.badDays.slice(0, 5).map((d) => (
+                    <li key={d.date}>
+                      {formatDayShort(d.date)}: o banco diz {formatMoney(d.declared, { hidden, signed: d.declared < 0 })}, as linhas somam{' '}
+                      {formatMoney(d.expected, { hidden, signed: d.expected < 0 })}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          )}
+          {openingOffer ? (
+            <label className="mt-3 flex items-start gap-2.5 rounded-field bg-surface-2 px-3 py-2.5 text-[13px] text-ink-2">
+              <input type="checkbox" checked={useOpening} onChange={(e) => setUseOpening(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
+              <span>
+                Usar o saldo anterior do extrato — {formatMoney(openingOffer.amount, { hidden, signed: openingOffer.amount < 0 })} em{' '}
+                {formatDayShort(openingOffer.date)} — como saldo inicial da conta. A conta ainda não tem um.
+              </span>
+            </label>
+          ) : null}
+        </Panel>
+      ) : null}
+
       <Panel className="p-5">
         <p className="truncate text-[12px] text-ink-3">{name}</p>
         <p className="mt-1 font-display text-[26px] leading-tight text-ink">
@@ -724,6 +837,9 @@ function Review({
                   targetType={targetType}
                   onToggle={() => toggle(r.key)}
                   onCategory={(id) => setCategory(r, id)}
+                  accounts={otherAccounts}
+                  cards={cardOptions}
+                  onPick={(field, id) => pick(r.key, field, id)}
                 />
               ))}
             </ul>
@@ -739,7 +855,8 @@ function Review({
           <strong className="font-semibold">
             {creating.length} {creating.length === 1 ? 'lançamento será adicionado' : 'lançamentos serão adicionados'}
           </strong>
-          {settling.length ? ` e ${settling.length} ${settling.length === 1 ? 'conta prevista marcada' : 'contas previstas marcadas'} como paga` : ''}.
+          {settling.length ? ` · ${settling.length} ${settling.length === 1 ? 'conta prevista marcada' : 'contas previstas marcadas'} como paga` : ''}
+          {moving.length ? ` · ${moving.length} ${moving.length === 1 ? 'transferência ou pagamento de fatura' : 'transferências e pagamentos de fatura'}` : ''}.
           <span className="block text-[12px] text-ink-3">
             Entra {formatMoney(totals.in, { hidden })} · sai {formatMoney(totals.out, { hidden })}
           </span>
@@ -811,6 +928,9 @@ function ReviewLine({
   targetType,
   onToggle,
   onCategory,
+  accounts,
+  cards,
+  onPick,
 }: {
   row: ReviewRow;
   categories: Category[];
@@ -818,18 +938,23 @@ function ReviewLine({
   targetType: 'account' | 'card';
   onToggle: () => void;
   onCategory: (id: string) => void;
+  /** as outras contas, para a transferência dizer para onde foi */
+  accounts: { id: string; name: string }[];
+  cards: { id: string; name: string; institution: string }[];
+  onPick: (field: 'counterpartAccountId' | 'payCardId', id: string | null) => void;
 }) {
   const options = categories.filter((c) => c.kind === row.kind);
   const locked = row.status === 'imported';
+  const isTransfer = row.status === 'internal' && !row.withdrawal;
+  const isPayment = row.status === 'transfer' && targetType === 'account';
 
-  let note = '';
-  if (row.status === 'settle' && row.match) note = `marca “${row.match.description}” como paga`;
-  if (row.status === 'similar' && row.match) note = `parecido com “${row.match.description}”, que já está lançado`;
-  if (row.status === 'subscription' && row.match) note = `é a assinatura ${row.match.description}, que já conta no mês`;
-  if (row.status === 'imported') note = 'já importado';
-  if (row.status === 'internal') note = 'transferência ou resgate: não é renda nem gasto';
-  if (row.status === 'transfer') note = targetType === 'card' ? 'pagamento ou estorno da fatura' : 'pagamento de fatura: as compras do cartão já contam';
-  if (row.installment && row.status === 'new') note = `parcela ${row.installment.index} de ${row.installment.total} · lança a compra inteira`;
+  let note = row.note ?? '';
+  if (!note) {
+    if (row.status === 'settle' && row.match) note = `marca “${row.match.description}” como paga`;
+    if (row.status === 'similar' && row.match) note = `parecido com “${row.match.description}”, que já está lançado`;
+    if (row.status === 'imported') note = 'já importado';
+    if (row.installment && row.status === 'new') note = `parcela ${row.installment.index} de ${row.installment.total} · lança a compra inteira`;
+  }
 
   return (
     <li className={cn('flex gap-3 py-3', !row.include && 'opacity-60')}>
@@ -852,8 +977,13 @@ function ReviewLine({
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <p className="min-w-0 flex-1 truncate text-[14px] text-ink">{row.description}</p>
-          <p className={cn('tnum shrink-0 text-[14px] font-semibold', row.kind === 'in' ? 'text-in' : row.kind === 'invest' ? 'text-inv' : 'text-out')}>
-            {row.kind === 'in' ? '+' : '−'}
+          <p
+            className={cn(
+              'tnum shrink-0 text-[14px] font-semibold',
+              row.kind === 'invest' ? 'text-inv' : !row.outflow ? 'text-in' : isTransfer || isPayment ? 'text-ink' : 'text-out',
+            )}
+          >
+            {row.outflow ? '−' : '+'}
             {formatMoney(row.amount, { hidden })}
           </p>
         </div>
@@ -863,7 +993,47 @@ function ReviewLine({
           {note ? <span className={cn(row.status === 'settle' && 'text-in')}> · {note}</span> : null}
         </p>
 
-        {row.include && row.status !== 'settle' ? (
+        {isTransfer ? (
+          <div className="mt-2">
+            <Select
+              aria-label={`Outra conta de ${row.description}`}
+              value={row.counterpartAccountId ?? ''}
+              onChange={(e) => onPick('counterpartAccountId', e.target.value || null)}
+              className={cn('h-9 text-[13px]', !row.counterpartAccountId && 'border-warn/60')}
+            >
+              <option value="">{row.outflow ? 'Foi para qual conta sua?' : 'Veio de qual conta sua?'}</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {row.outflow ? 'para ' : 'de '}
+                  {a.name}
+                </option>
+              ))}
+            </Select>
+            {!accounts.length ? (
+              <p className="mt-1 text-[12px] text-ink-3">Cadastre a outra conta em Contas para registrar a transferência.</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {isPayment ? (
+          <div className="mt-2">
+            <Select
+              aria-label={`Cartão pago por ${row.description}`}
+              value={row.payCardId ?? ''}
+              onChange={(e) => onPick('payCardId', e.target.value || null)}
+              className={cn('h-9 text-[13px]', !row.payCardId && 'border-warn/60')}
+            >
+              <option value="">Qual cartão foi pago?</option>
+              {cards.map((c) => (
+                <option key={c.id} value={c.id}>
+                  fatura {c.name || c.institution}
+                </option>
+              ))}
+            </Select>
+          </div>
+        ) : null}
+
+        {row.include && row.status !== 'settle' && !isTransfer && row.status !== 'transfer' ? (
           <div className="mt-2 flex items-center gap-2">
             <Select
               aria-label={`Categoria de ${row.description}`}
@@ -1028,6 +1198,7 @@ function QuickCard({
 /* -------------------------------------------------------------- 4 · pronto */
 
 function Done({
+  spaceId,
   result,
   onOpenMonth,
   onAgain,
@@ -1037,6 +1208,7 @@ function Done({
   onImportCard,
   onAnotherInvoice,
 }: {
+  spaceId: string;
   result: ImportResult;
   onOpenMonth: (m: MonthKey) => void;
   onAgain: () => void;
@@ -1069,7 +1241,9 @@ function Done({
       <p className="mt-4 font-display text-[26px] text-ink">Extrato no lugar</p>
       <p className="mx-auto mt-2 max-w-[36ch] text-[14px] leading-relaxed text-ink-3">
         {created ? `${created} ${created === 1 ? 'lançamento criado' : 'lançamentos criados'}` : 'Nenhum lançamento novo'}
-        {settled ? ` e ${settled} ${settled === 1 ? 'conta prevista marcada' : 'contas previstas marcadas'} como paga.` : '.'}
+        {settled ? ` · ${settled} ${settled === 1 ? 'conta prevista marcada' : 'contas previstas marcadas'} como paga` : ''}
+        {result.transfers ? ` · ${result.transfers} ${result.transfers === 1 ? 'transferência ou pagamento de fatura' : 'transferências e pagamentos de fatura'}` : ''}
+        {result.linked ? ` · ${result.linked} ${result.linked === 1 ? 'linha reconhecida' : 'linhas reconhecidas'} numa transferência já registrada` : ''}.
       </p>
       {result.invoiceMonth ? (
         <p className="mx-auto mt-2 max-w-[36ch] text-[13px] leading-relaxed text-ink-3">
@@ -1102,12 +1276,14 @@ function Done({
       </div>
     </Panel>
 
+    <ReconciliationPanel spaceId={spaceId} result={result} hidden={hidden} />
+
     {invites.length ? (
       <Panel className="p-5">
         <SectionTitle>Falta o cartão</SectionTitle>
         <p className="text-[14px] leading-relaxed text-ink-2">
-          Este extrato pagou {invites.length === 1 ? 'uma fatura' : 'faturas'} de cartão. O pagamento ficou de fora para não contar
-          duas vezes — mas o que você comprou está na fatura. Importe-a para o mês mostrar onde esse dinheiro foi.
+          Este extrato pagou {invites.length === 1 ? 'uma fatura' : 'faturas'} de um cartão que não está no app, e o pagamento entrou como gasto.
+          Importe a fatura para ver onde esse dinheiro foi — o pagamento passa a ser reconhecido como pagamento, e não conta duas vezes.
         </p>
         <ul className="mt-3 grid gap-2">
           {invites.map((inv) => (
@@ -1138,6 +1314,109 @@ function Done({
       </Panel>
     ) : null}
     </div>
+  );
+}
+
+/**
+ * O saldo do banco contra o do app, depois de importar.
+ *
+ * Bateu: está escrito, com os dois números. Não bateu: a diferença aparece
+ * com nome — as linhas do arquivo que ficaram de fora e o que está no app
+ * sem ter vindo do arquivo — e três saídas: ver a conta, registrar um ajuste
+ * visível, ou deixar para depois. O app nunca corrige sozinho: a conta fica
+ * marcada com a diferença até alguém resolver.
+ */
+function ReconciliationPanel({ spaceId, result, hidden }: { spaceId: string; result: ImportResult; hidden: boolean }) {
+  const r = result.reconciliation;
+  const [dismissed, setDismissed] = React.useState(false);
+  const [adjusted, setAdjusted] = React.useState(false);
+  if (!r) return null;
+  const m = (v: Cents) => formatMoney(v, { hidden, signed: v < 0 });
+
+  if (r.diff === 0) {
+    return (
+      <Panel className="border-in/30 p-5">
+        <p className="flex items-start gap-2 text-[14px] leading-relaxed text-ink">
+          <Check size={17} className="mt-0.5 shrink-0 text-in" strokeWidth={3} />
+          <span>
+            <strong className="font-semibold">Extrato reconciliado.</strong> Saldo do banco em {formatDayShort(r.date)}: {m(r.declared)} · saldo do app:{' '}
+            {m(r.computed)}. A conta fica marcada como conferida nesse dia — se algo mudar depois, ela avisa.
+          </span>
+        </p>
+        {result.openingSet ? (
+          <p className="mt-2 pl-6 text-[12.5px] text-ink-3">
+            O saldo anterior do arquivo ({m(result.openingSet.amount)} em {formatDayShort(result.openingSet.date)}) virou o saldo inicial da conta.
+          </p>
+        ) : null}
+      </Panel>
+    );
+  }
+
+  if (dismissed) return null;
+
+  return (
+    <Panel className="border-warn/40 p-5">
+      <p className="flex items-start gap-2 text-[14px] leading-relaxed text-ink">
+        <AlertTriangle size={17} className="mt-0.5 shrink-0 text-warn" />
+        <span>
+          <strong className="font-semibold">Diferença encontrada: {formatMoney(Math.abs(r.diff), { hidden })}.</strong> O banco diz {m(r.declared)} em{' '}
+          {formatDayShort(r.date)}; o app calcula {m(r.computed)} ({r.diff > 0 ? 'o banco tem mais' : 'o app tem mais'}).
+        </span>
+      </p>
+
+      {r.left.length ? (
+        <div className="mt-3 pl-6">
+          <p className="text-[12px] font-medium text-ink-2">Linhas do arquivo que ficaram de fora</p>
+          <ul className="mt-1 grid gap-0.5 text-[12.5px] text-ink-3">
+            {r.left.slice(0, 8).map((l, i) => (
+              <li key={`${l.date}-${i}`} className="flex justify-between gap-3">
+                <span className="truncate">
+                  {formatDayShort(l.date)} · {l.description}
+                </span>
+                <span className="tnum shrink-0">{m(l.signed)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {r.extra.length ? (
+        <div className="mt-3 pl-6">
+          <p className="text-[12px] font-medium text-ink-2">No app, no mesmo período, sem ter vindo deste arquivo</p>
+          <ul className="mt-1 grid gap-0.5 text-[12.5px] text-ink-3">
+            {r.extra.slice(0, 8).map((l, i) => (
+              <li key={`${l.date}-${i}`} className="flex justify-between gap-3">
+                <span className="truncate">
+                  {formatDayShort(l.date)} · {l.description}
+                </span>
+                <span className="tnum shrink-0">{m(l.signed)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-[12px] text-ink-3">Lançado à mão, vindo de outro arquivo, ou cobrança automática que o banco não fez — algum desses pode ser o que sobra.</p>
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap gap-2 pl-6">
+        <Button size="sm" variant="primary" onClick={() => navigate({ view: 'contas', param: r.accountId })}>
+          Ver o problema na conta
+        </Button>
+        <Button
+          size="sm"
+          disabled={adjusted}
+          onClick={async () => {
+            await setBalance({ spaceId, accountId: r.accountId, balance: r.declared, date: r.date, source: 'ajuste após importar' });
+            setAdjusted(true);
+            toast(`Ajuste de ${formatMoney(Math.abs(r.diff))} registrado. Ele aparece na conta, com nome — não é receita nem despesa.`);
+          }}
+        >
+          {adjusted ? 'Ajuste registrado' : `Corrigir com ajuste de ${formatMoney(Math.abs(r.diff), { hidden })}`}
+        </Button>
+        <Button size="sm" variant="quiet" onClick={() => setDismissed(true)}>
+          Ignorar por enquanto
+        </Button>
+      </div>
+    </Panel>
   );
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseAmountText, parseDateText, parseDelimited, parseOfx, parseStatementFile } from './statement';
+import { parseAmountText, parseDateText, parseDelimited, parseOfx, parseStatementFile, statementIntegrity } from './statement';
 
 /**
  * O leitor de extrato é a porta de entrada do dinheiro da pessoa. Cada caso
@@ -188,5 +188,33 @@ describe('planilha', () => {
       ['2026-09-30', -20050],
       ['2026-10-01', 500000],
     ]);
+  });
+});
+
+describe('o arquivo confere consigo mesmo', () => {
+  it('um valor lido com o sinal trocado aparece no dia exato', () => {
+    // o banco diz 3.500 depois do aluguel; se o aluguel fosse lido como +500, o dia não fecha
+    const csv = ['Data;Histórico;Valor;Saldo', '01/09/2026;SALDO ANTERIOR;;1.000,00', '02/09/2026;SALARIO;3.000,00;4.000,00', '03/09/2026;ALUGUEL;500,00;3.500,00'].join('\n');
+    const integ = statementIntegrity(parseDelimited(csv));
+    expect(integ.ok).toBe(false);
+    expect(integ.badDays).toEqual([{ date: '2026-09-03', expected: 450000, declared: 350000 }]);
+  });
+
+  it('dia listado em outra ordem ainda fecha', () => {
+    const csv = [
+      'Data;Histórico;Valor;Saldo',
+      '01/09/2026;SALDO ANTERIOR;;100,00',
+      '02/09/2026;B;-30,00;50,00',
+      '02/09/2026;A;-20,00;80,00',
+    ].join('\n');
+    // o saldo corrido está em outra ordem que a das linhas; o fim do dia é 50
+    const integ = statementIntegrity(parseDelimited(csv));
+    expect(integ.badDays).toEqual([]);
+  });
+
+  it('sem saldo nenhum no arquivo, não finge que conferiu', () => {
+    const integ = statementIntegrity(parseDelimited(['Data;Descrição;Valor', '02/09/2026;X;-10,00'].join('\n')));
+    expect(integ.checked).toBe(false);
+    expect(integ.ok).toBe(false);
   });
 });
