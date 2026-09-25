@@ -268,14 +268,27 @@ export async function applyRemote<T extends Syncable>(table: SyncTable, rows: T[
 
   let applied = 0;
   await d.transaction('rw', target, d.mutations, async () => {
-    const pending = new Set(
-      (await d.mutations.where('table').equals(table).toArray()).map((m) => m.recordId),
-    );
+    const pending = await d.mutations.where('table').equals(table).toArray();
+    const pendingSeqs = new Map<string, number[]>();
+    for (const m of pending) {
+      if (m.seq === undefined) continue;
+      pendingSeqs.set(m.recordId, [...(pendingSeqs.get(m.recordId) ?? []), m.seq]);
+    }
+
     for (const row of rows) {
-      if (pending.has(row.id)) continue;
       const local = await target.get(row.id);
+      /**
+       * Vale a edição mais nova, venha de onde vier.
+       *
+       * Antes, qualquer alteração local ainda na fila ganhava da remota, por
+       * mais velha que fosse — e subia por cima dela no push seguinte. Agora a
+       * remota mais nova entra e a local, vencida, sai da fila: subir uma
+       * versão que já perdeu só espalharia a versão errada.
+       */
       if (local && local.updatedAt >= row.updatedAt) continue;
       await target.put(row);
+      const stale = pendingSeqs.get(row.id);
+      if (stale?.length) await d.mutations.bulkDelete(stale);
       applied += 1;
     }
   });

@@ -1,6 +1,6 @@
 'use client';
 
-import { applyRemote, db, getSyncState, liveRows, setSyncState } from './db';
+import { applyRemote, db, getSyncState, liveRows, putRecord, setSyncState } from './db';
 import { ensureSpace } from './provision';
 import { RECEIPTS_BUCKET, requireSupabase, supabase, type CloudRecord } from './supabase';
 import type { Mutation, SyncTable } from './types';
@@ -108,6 +108,21 @@ async function push(spaceId: string): Promise<number> {
 /* ------------------------------------------------------------------ pull */
 
 /**
+ * Quanto voltar no tempo a cada pull.
+ *
+ * O carimbo do servidor é a hora em que a transação COMEÇOU. Uma gravação que
+ * começou antes e terminou depois de outra pode aparecer com um carimbo menor
+ * que a marca d'água que este aparelho já passou — e, sem margem, nunca desce.
+ * Reler dois minutos custa quase nada: o que já está aqui é pulado.
+ */
+const OVERLAP_MS = 2 * 60 * 1000;
+
+function rewind(watermark: string): string {
+  const t = Date.parse(watermark);
+  return Number.isFinite(t) ? new Date(t - OVERLAP_MS).toISOString() : watermark;
+}
+
+/**
  * Traz o que mudou desde a última marca d'água.
  *
  * O `data` de cada linha carrega o registro como o outro aparelho o conhece,
@@ -117,9 +132,18 @@ async function push(spaceId: string): Promise<number> {
 async function pull(spaceId: string, since: string | null): Promise<{ applied: number; watermark: string | null }> {
   const client = requireSupabase();
 
-  let cursor = since;
   let applied = 0;
   let watermark = since;
+  /**
+   * O cursor é o par (carimbo, id), não só o carimbo.
+   *
+   * Um import de extrato grava centenas de linhas numa transação, e todas
+   * saem com o MESMO carimbo. Com o cursor só no carimbo, a página que corta
+   * no meio desse grupo pulava o resto dele: "maior que 12:00:00" deixa de
+   * fora as outras linhas de 12:00:00. Foram 300 de 1.100 lançamentos que
+   * nunca chegaram ao outro aparelho, no teste que reproduziu isso.
+   */
+  let cursor: { at: string; id: string } | null = since ? { at: rewind(since), id: '' } : null;
 
   for (;;) {
     let query = client
@@ -127,9 +151,12 @@ async function pull(spaceId: string, since: string | null): Promise<{ applied: n
       .select('space_id, collection, id, data, updated_at, deleted_at')
       .eq('space_id', spaceId)
       .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
       .limit(PAGE);
 
-    if (cursor) query = query.gt('updated_at', cursor);
+    if (cursor) {
+      query = query.or(`updated_at.gt."${cursor.at}",and(updated_at.eq."${cursor.at}",id.gt."${cursor.id}")`);
+    }
 
     const { data, error } = await query;
     if (error) throw new Error(error.message);
@@ -154,8 +181,9 @@ async function pull(spaceId: string, since: string | null): Promise<{ applied: n
       );
     }
 
-    watermark = rows[rows.length - 1].updated_at;
-    cursor = watermark;
+    const last = rows[rows.length - 1];
+    cursor = { at: last.updated_at, id: last.id };
+    if (!watermark || last.updated_at > watermark) watermark = last.updated_at;
 
     if (rows.length < PAGE) break;
   }
@@ -200,7 +228,9 @@ async function pushAttachments(spaceId: string): Promise<number> {
     if (error && !/exists/i.test(error.message)) continue;
 
     const row = await d.attachments.get(attachment.id);
-    if (row) await d.attachments.put({ ...row, storagePath: path, uploaded: true });
+    // pela fila, e não direto na tabela: "já está na nuvem" precisa chegar aos
+    // outros aparelhos, senão eles mostram o comprovante como preso aqui
+    if (row) await putRecord('attachments', { ...row, storagePath: path, uploaded: true });
     sent += 1;
   }
 
@@ -240,11 +270,20 @@ export async function runSync(): Promise<SyncReport> {
   }
 
   try {
+    /**
+     * Primeiro desce, depois sobe.
+     *
+     * Na ordem inversa, o aparelho que passou a tarde offline subia a sua
+     * versão de um lançamento por cima da que o outro aparelho gravou depois —
+     * e os dois ficavam discordando para sempre, cada um achando que tinha a
+     * mais nova. Descendo antes, a edição mais recente vence aqui mesmo, e o
+     * que sobe já é só o que este aparelho tem de mais novo.
+     */
+    const { applied, watermark } = await pull(state.spaceId, state.pulledAt);
     const pushed = await push(state.spaceId);
     // os arquivos vão depois dos metadados: assim nenhum comprovante fica no
     // Storage sem o registro que diz de quem ele é
     await pushAttachments(state.spaceId);
-    const { applied, watermark } = await pull(state.spaceId, state.pulledAt);
 
     await setSyncState({ pulledAt: watermark, lastPushAt: at });
     return { phase: 'done', pushed, pulled: applied, error: null, at };
