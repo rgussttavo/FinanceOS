@@ -4,6 +4,7 @@ import { DEFAULT_DEBT_DAY, debtInstallmentIn } from './debts';
 import {
   balancesAt,
   cashNow,
+  ledgerAccounts,
   pendingDay,
   plannedItems,
   realizedPostings,
@@ -129,11 +130,41 @@ export function buildFlows(input: FlowInput, from: IsoDate, to: IsoDate): FlowIt
   const { today } = input;
   const out: FlowItem[] = [];
   const pastEnd = to < today ? to : today;
+  const accounts = ledgerAccounts(input.accounts);
+  const opensOn = new Map(accounts.map((a) => [a.id, a.openingDate ?? null]));
   if (from <= pastEnd) {
     for (const p of realizedPostings(input, pastEnd)) {
       if (p.date < from) continue;
+      // o que veio antes do saldo inicial da conta já está dentro dele: não soma de novo
+      const opens = opensOn.get(p.accountId);
+      if (opens && p.date < opens) continue;
       const item = fromPosting(p);
       if (item) out.push(item);
+    }
+    /**
+     * O saldo inicial de uma conta aberta no meio do intervalo. Sem esta linha,
+     * a curva do mês nunca somava o "hoje eu tenho 5.000" informado no dia 24,
+     * e o Início mostrava saldo de 5.000 com fim do mês em zero. Vale no fim da
+     * véspera, a mesma regra do saldo das Contas.
+     */
+    for (const a of accounts) {
+      if (!a.openingDate || !a.openingBalance) continue;
+      const day = addDaysIso(a.openingDate, -1);
+      if (day < from || day > pastEnd) continue;
+      out.push({
+        id: `abertura:${a.id}`,
+        date: day,
+        kind: a.openingBalance >= 0 ? 'in' : 'out',
+        source: 'adjustment',
+        label: `Saldo inicial · ${a.name}`,
+        amount: Math.abs(a.openingBalance),
+        categoryId: null,
+        settled: true,
+        overdue: false,
+        accountId: a.id,
+        internal: true,
+        opening: true,
+      });
     }
   }
   for (const p of plannedItems(input, to, from)) {

@@ -276,7 +276,14 @@ export async function setBalance(input: {
     (account.checkpoints?.length ?? 0) > 0 ||
     ledger.transfers.some((t) => t.kind === 'adjustment' && t.fromAccountId === accountId);
 
-  const checkpoint: BalanceCheckpoint = { date, amount: input.balance, source: input.source ?? 'informado', at: nowInstant() };
+  // dito para hoje, é o saldo deste instante; para um dia passado, o do fim daquele dia
+  const checkpoint: BalanceCheckpoint = {
+    date,
+    amount: input.balance,
+    source: input.source ?? 'informado',
+    at: nowInstant(),
+    ...(date === todayIso() ? { moment: true } : null),
+  };
 
   if (!hasStart) {
     // o saldo de hoje inclui o que já se realizou hoje: o inicial é o que sobra

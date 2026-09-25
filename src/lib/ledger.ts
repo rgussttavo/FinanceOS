@@ -63,6 +63,8 @@ export interface Posting {
   internal: boolean;
   kind?: FlowKind;
   categoryId?: string | null;
+  /** quando o movimento passou a existir no app: a baixa, ou a criação da transferência */
+  recordedAt?: string;
 }
 
 /** a conta que existe quando a pessoa ainda não cadastrou nenhuma */
@@ -175,6 +177,27 @@ export function signedOnAccount(o: Pick<Occurrence, 'kind' | 'amount' | 'withdra
  *  - transferência: sai de uma conta e entra na outra, no mesmo dia.
  */
 export function realizedPostings(input: LedgerInput, until: IsoDate): Posting[] {
+  /**
+   * O mesmo retrato pede as mesmas postagens várias vezes (saldo de hoje,
+   * saldo da véspera do mês, a lista do mês). Guardadas por entrada e data,
+   * saem uma vez só. A entrada é tratada como imutável — toda mudança na base
+   * produz uma entrada nova, e o cache dela vai embora junto.
+   */
+  let byDate = POSTINGS_CACHE.get(input);
+  if (!byDate) {
+    byDate = new Map();
+    POSTINGS_CACHE.set(input, byDate);
+  }
+  const hit = byDate.get(until);
+  if (hit) return hit;
+  const computed = computeRealizedPostings(input, until);
+  byDate.set(until, computed);
+  return computed;
+}
+
+const POSTINGS_CACHE = new WeakMap<LedgerInput, Map<IsoDate, Posting[]>>();
+
+function computeRealizedPostings(input: LedgerInput, until: IsoDate): Posting[] {
   const out: Posting[] = [];
   const accountOf = resolver(input);
   const onCard = cardRouter(input);
@@ -196,6 +219,7 @@ export function realizedPostings(input: LedgerInput, until: IsoDate): Posting[] 
         internal: false,
         kind: entry.kind,
         categoryId: entry.categoryId,
+        recordedAt: o.settlement?.at ?? entry.createdAt,
       });
     }
   }
@@ -275,7 +299,7 @@ export function realizedPostings(input: LedgerInput, until: IsoDate): Posting[] 
 
 /** os dois lados (ou o único lado) de uma transferência */
 export function transferPostings(t: Transfer, accountOf: (id: string | null | undefined) => string): Posting[] {
-  const base = { date: t.date, refId: t.id, label: t.description };
+  const base = { date: t.date, refId: t.id, label: t.description, recordedAt: t.createdAt };
   if (t.kind === 'adjustment') {
     return [
       {
@@ -431,17 +455,25 @@ export function auditAccount(input: LedgerInput, accountId: string, until: IsoDa
     lines.push({ ...p, running });
   }
 
-  const balanceOn = (date: IsoDate) => {
+  /**
+   * O saldo no fim de um dia — ou, com `cut`, no instante em que foi informado:
+   * do mesmo dia, só entra o que já existia no app naquela hora.
+   */
+  const balanceOn = (date: IsoDate, cut?: string) => {
     if (account.openingDate && date < account.openingDate) return null;
     let b = account.openingBalance;
-    for (const l of lines) if (l.date <= date) b += l.amount;
+    for (const l of lines) {
+      if (l.date > date) continue;
+      if (cut && l.date === date && l.recordedAt && l.recordedAt > cut) continue;
+      b += l.amount;
+    }
     return b;
   };
 
   const checkpoints: CheckpointResult[] = (account.checkpoints ?? [])
     .filter((c) => c.date <= until)
     .map((c) => {
-      const computed = balanceOn(c.date) ?? c.amount;
+      const computed = balanceOn(c.date, c.moment ? c.at : undefined) ?? c.amount;
       return { date: c.date, declared: c.amount, computed, diff: c.amount - computed, source: c.source };
     })
     .sort((a, b) => (a.date < b.date ? -1 : 1));

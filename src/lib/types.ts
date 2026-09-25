@@ -107,6 +107,13 @@ export interface BalanceCheckpoint {
   /** de onde veio: nome do arquivo importado, ou "informado" */
   source: string;
   at: IsoInstant;
+  /**
+   * Saldo de um instante, não do fim do dia: o "hoje eu tenho X" dito à mão.
+   * O que foi lançado depois, no mesmo dia, não entra na conferência dele —
+   * senão a transferência feita à tarde "quebraria" o saldo informado de
+   * manhã. O saldo de extrato é sempre de fim de dia.
+   */
+  moment?: boolean;
 }
 
 /* ----------------------------------------------------------- transferência */

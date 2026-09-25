@@ -116,3 +116,24 @@ describe('"hoje eu tenho X"', () => {
     expect((await loadLedger(SPACE)).transfers).toHaveLength(0);
   });
 });
+
+describe('saldo informado é o de um instante', () => {
+  it('a transferência feita depois, no mesmo dia, não quebra a conferência', async () => {
+    const { createAccount, createTransfer } = await import('./accounts');
+    const { todayIso } = await import('./dates');
+    const { vi } = await import('vitest');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-24T09:00:00'));
+    const hoje = todayIso();
+    await setBalance({ spaceId: SPACE, balance: 500000, date: hoje });
+    // a transferência vem à tarde
+    vi.setSystemTime(new Date('2026-09-24T15:00:00'));
+    const principal = (await loadLedger(SPACE, hoje)).accounts[0];
+    const poupanca = await createAccount({ spaceId: SPACE, name: 'Poupança', openingBalance: 100000, openingDate: hoje });
+    await createTransfer({ spaceId: SPACE, kind: 'account', amount: 30000, date: hoje, fromAccountId: principal.id, toAccountId: poupanca.id });
+    const ledger = await loadLedger(SPACE, hoje);
+    expect(balancesAt(ledger, hoje).total).toBe(600000);
+    expect(auditAccount(ledger, principal.id).ok).toBe(true);
+    vi.useRealTimers();
+  });
+});

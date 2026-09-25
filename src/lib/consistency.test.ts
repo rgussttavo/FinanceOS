@@ -110,3 +110,26 @@ describe('o mesmo número em toda tela', () => {
     expect(pendentes).toContain('Luz');
   });
 });
+
+describe('saldo inicial informado no meio do mês', () => {
+  it('a curva do mês parte dele, e o que veio antes não conta de novo', () => {
+    // a pessoa lançou um gasto no dia 10 e só no dia 24 disse "hoje eu tenho 5.000"
+    const c = account({ primary: true, openingBalance: 500000, openingDate: '2026-09-24' });
+    const i: LedgerInput = {
+      today: '2026-09-24',
+      accounts: [c],
+      cards: [],
+      cardsEnabled: true,
+      subscriptions: [],
+      debts: [],
+      entries: [paid('out', 20000, '2026-09-10'), entry('in', 400000, '2026-10-05', { description: 'Salário' })],
+      transfers: [],
+    };
+    const snap = cashSnapshot(i);
+    expect(snap.balanceNow).toBe(500000);
+    expect(snap.days.find((d) => d.date === '2026-09-24')?.balance).toBe(500000);
+    // nada previsto até o fim do mês: o fim do mês é o saldo de hoje
+    expect(snap.endOfMonth).toBe(500000);
+    expect(snap.safeUntilIncome).toBe(500000);
+  });
+});
