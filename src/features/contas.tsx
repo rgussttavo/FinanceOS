@@ -33,7 +33,8 @@ import { formatDateFull, formatDayShort, todayIso } from '@/lib/dates';
 import { auditAccount, balancesAt, type AccountAudit, type AccountBalance } from '@/lib/ledger';
 import { formatMoney, parseMoney } from '@/lib/money';
 import { ledgerInput, type FinanceBase } from '@/lib/picture';
-import type { Account, AccountKind, Cents, Transfer } from '@/lib/types';
+import { diagnose, type Finding } from '@/lib/diagnostics';
+import type { Account, AccountKind, Category, Cents, Transfer } from '@/lib/types';
 
 /**
  * As contas: quanto tem em cada uma, e de onde veio cada centavo.
@@ -59,19 +60,27 @@ export function ContasView({
   cardsEnabled,
   hidden,
   param,
+  categories,
 }: {
   spaceId: string;
   base: FinanceBase;
   cardsEnabled: boolean;
   hidden: boolean;
+  categories: Category[];
   /** conta aberta, vinda da URL */
   param?: string;
 }) {
   const today = todayIso();
   const input = React.useMemo(() => ledgerInput(base, cardsEnabled, today), [base, cardsEnabled, today]);
   const balances = React.useMemo(() => balancesAt(input, today), [input, today]);
+  const findings = React.useMemo(() => diagnose(input, categories), [input, categories]);
   const [creating, setCreating] = React.useState(false);
   const [transferring, setTransferring] = React.useState<Transfer | 'new' | null>(null);
+  const [autoOpened, setAutoOpened] = React.useState(false);
+  if (param === 'transferir' && !autoOpened) {
+    setAutoOpened(true);
+    setTransferring('new');
+  }
 
   if (!base.ready) {
     return (
@@ -141,6 +150,8 @@ export function ContasView({
         ) : null}
       </Panel>
 
+      <DataCheck findings={findings} />
+
       <CreateAccountSheet spaceId={spaceId} open={creating} onClose={() => setCreating(false)} />
       <TransferSheet
         spaceId={spaceId}
@@ -150,6 +161,50 @@ export function ContasView({
         onClose={() => setTransferring(null)}
       />
     </div>
+  );
+}
+
+/* ------------------------------------------------------------- conferência */
+
+/**
+ * O que a conferência dos dados achou na base.
+ *
+ * Só aponta: nenhum botão aqui apaga ou corrige em lote. Cada achado diz o
+ * que é e quais registros envolve; a pessoa abre e decide.
+ */
+function DataCheck({ findings }: { findings: Finding[] }) {
+  const errors = findings.filter((f) => f.severity === 'erro').length;
+  return (
+    <Panel className={cn('p-5', errors ? 'border-warn/40' : '')}>
+      <SectionTitle action={<span className="tnum text-[12px] text-ink-3">{findings.length}</span>}>Conferência dos dados</SectionTitle>
+      {findings.length ? (
+        <ul className="grid gap-3">
+          {findings.slice(0, 30).map((f) => (
+            <li key={f.id} className="rounded-field bg-surface-2 px-3 py-2.5">
+              <p className={cn('flex items-center gap-1.5 text-[13.5px] font-medium', f.severity === 'erro' ? 'text-warn' : 'text-ink')}>
+                <CircleAlert size={14} className="shrink-0" /> {f.title}
+              </p>
+              <p className="mt-1 text-[12.5px] leading-relaxed text-ink-2">{f.detail}</p>
+              {f.refs.length ? (
+                <ul className="mt-1.5 grid gap-0.5 text-[12px] text-ink-3">
+                  {f.refs.slice(0, 5).map((r) => (
+                    <li key={r.id} className="truncate">
+                      · {r.label}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="flex items-start gap-2 text-[13.5px] leading-relaxed text-ink-2">
+          <Check size={16} className="mt-0.5 shrink-0 text-in" strokeWidth={3} />
+          Nada fora do lugar: nenhum lançamento duplicado, nenhuma transferência pela metade, nenhum valor ou data inválidos, e todo saldo
+          conferido com o banco continua batendo.
+        </p>
+      )}
+    </Panel>
   );
 }
 

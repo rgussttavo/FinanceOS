@@ -386,7 +386,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       );
       break;
     case 'contas':
-      content = <ContasView spaceId={spaceId} base={base} cardsEnabled={cardsEnabled} hidden={hidden} param={route.param} />;
+      content = <ContasView spaceId={spaceId} base={base} cardsEnabled={cardsEnabled} hidden={hidden} param={route.param} categories={categories} />;
       break;
     case 'mais':
       content = <MaisView hiddenViews={hiddenViews} onGo={go} />;
@@ -563,8 +563,16 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
         entries={base.entries}
         cardsEnabled={cardsEnabled}
         onGo={go}
+        accounts={base.accounts.filter((a) => !a.archived)}
       />
-      <EntrySheet occurrence={openOccurrence} onClose={() => setOpenOccurrence(null)} categories={categories} cards={base.cards} hidden={hidden} />
+      <EntrySheet
+        occurrence={openOccurrence}
+        onClose={() => setOpenOccurrence(null)}
+        categories={categories}
+        cards={base.cards}
+        hidden={hidden}
+        accounts={base.accounts.filter((a) => !a.archived)}
+      />
       {signInSheet}
       <Toaster />
       <ConfirmHost />

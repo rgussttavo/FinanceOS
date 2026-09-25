@@ -9,7 +9,7 @@ import { addDaysIso, formatDateFull, formatMonthLabel, formatRelativeDay, monthK
 import { formatMoney, parseMoney } from '@/lib/money';
 import type { Occurrence } from '@/lib/occurrences';
 import { changeEntryFrom, rememberCategory, toggleSettled, updateEntry } from '@/lib/store';
-import type { Card, Category, Entry, RepeatKind } from '@/lib/types';
+import type { Account, Card, Category, Entry, RepeatKind } from '@/lib/types';
 import { Badge, Button, Field, Input, Select, Sheet, confirmAction, toast } from './ui';
 
 /**
@@ -44,12 +44,15 @@ export function EntrySheet({
   categories,
   cards,
   hidden,
+  accounts = [],
 }: {
   occurrence: Occurrence | null;
   onClose: () => void;
   categories: Category[];
   cards: Card[];
   hidden: boolean;
+  /** contas não arquivadas: com mais de uma, dá para dizer de qual é o lançamento */
+  accounts?: Account[];
 }) {
   const entryId = occurrence && !occurrence.virtual ? occurrence.entryId : null;
   const entry = useLiveQuery(async () => (entryId ? ((await db().entries.get(entryId)) ?? null) : null), [entryId]);
@@ -76,6 +79,7 @@ export function EntrySheet({
           occurrence={occurrence}
           categories={categories}
           cards={cards}
+          accounts={accounts}
           onCancel={() => setEditing(false)}
           onSaved={() => {
             setEditing(false);
@@ -253,7 +257,9 @@ function EditForm({
   cards,
   onCancel,
   onSaved,
+  accounts,
 }: {
+  accounts: Account[];
   entry: Entry;
   occurrence: Occurrence;
   categories: Category[];
@@ -266,6 +272,7 @@ function EditForm({
   const [date, setDate] = React.useState(entry.date);
   const [categoryId, setCategoryId] = React.useState(entry.categoryId ?? '');
   const [cardId, setCardId] = React.useState(entry.cardId ?? '');
+  const [accountId, setAccountId] = React.useState(entry.accountId ?? accounts.find((a) => a.primary)?.id ?? '');
   const [repeatKind, setRepeatKind] = React.useState<RepeatKind>(entry.repeat.kind);
   const [count, setCount] = React.useState(String(entry.repeat.count ?? 12));
   const [notes, setNotes] = React.useState(entry.notes);
@@ -291,6 +298,8 @@ function EditForm({
       amount,
       categoryId: categoryId || null,
       cardId: cardId || null,
+      // mudar a conta move o lançamento inteiro: o saldo de uma sobe, o da outra desce
+      ...(accounts.length > 1 && !cardId ? { accountId: accountId || null } : null),
       notes,
       ...(recurring ? {} : { date }),
       repeat:
@@ -385,6 +394,17 @@ function EditForm({
           </Field>
         ) : null}
       </div>
+      {accounts.length > 1 && !cardId ? (
+        <Field label="Conta" htmlFor="edit-account">
+          <Select id="edit-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
       <Field label="Observação" htmlFor="edit-notes">
         <Input id="edit-notes" value={notes} onChange={(e) => setNotes(e.target.value)} autoComplete="off" />
       </Field>

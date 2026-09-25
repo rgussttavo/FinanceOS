@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import {
+  ArrowLeftRight,
   ChevronDown,
   ChevronLeft,
   CreditCard,
@@ -29,7 +30,7 @@ import {
   rememberCategory,
   suggestCategory,
 } from '@/lib/store';
-import type { Card, Category, Cents, Entry, FlowKind, Goal, RepeatKind } from '@/lib/types';
+import type { Account, Card, Category, Cents, Entry, FlowKind, Goal, RepeatKind } from '@/lib/types';
 import { CodeScanner } from './entries';
 import { Button, Chip, Field, Input, Select, Sheet, toast } from './ui';
 
@@ -94,6 +95,7 @@ export function QuickAddSheet({
   entries,
   cardsEnabled,
   onGo,
+  accounts = [],
 }: {
   open: boolean;
   request: QuickAddRequest | null;
@@ -105,6 +107,8 @@ export function QuickAddSheet({
   entries: Entry[];
   cardsEnabled: boolean;
   onGo: (route: Route) => void;
+  /** contas não arquivadas: com mais de uma, o lançamento diz de qual é */
+  accounts?: Account[];
 }) {
   const [picked, setPicked] = React.useState<{ kind: QuickKind; scan: boolean; fromMenu: boolean } | null>(null);
 
@@ -152,6 +156,7 @@ export function QuickAddSheet({
           cards={cards}
           goals={activeGoals}
           entries={entries}
+          accounts={accounts}
           onDone={close}
           onGo={(route) => {
             close();
@@ -222,6 +227,9 @@ function Menu({
           <Chip onClick={() => onGo({ view: 'importar' })}>
             <FileUp size={15} /> Importar extrato
           </Chip>
+          <Chip onClick={() => onGo({ view: 'contas', param: 'transferir' })}>
+            <ArrowLeftRight size={15} /> Transferência entre contas
+          </Chip>
           {cardsAvailable ? (
             <Chip onClick={() => onGo({ view: 'cartoes', param: 'novo' })}>
               <CreditCard size={15} /> Novo cartão
@@ -271,7 +279,9 @@ function QuickForm({
   entries,
   onDone,
   onGo,
+  accounts,
 }: {
+  accounts: Account[];
   kind: QuickKind;
   startScan: boolean;
   onBack?: () => void;
@@ -296,6 +306,7 @@ function QuickForm({
   const [more, setMore] = React.useState(false);
   const [repeatKind, setRepeatKind] = React.useState<RepeatKind>('once');
   const [notes, setNotes] = React.useState('');
+  const [accountId, setAccountId] = React.useState(accounts.find((a) => a.primary)?.id ?? accounts[0]?.id ?? '');
   const [pickCategory, setPickCategory] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
@@ -381,6 +392,8 @@ function QuickForm({
           date,
           categoryId: categoryId || null,
           cardId: kind === 'card' ? cardId : null,
+          // com mais de uma conta, o lançamento sai (ou entra) na conta escolhida
+          accountId: kind === 'card' ? null : accountId || null,
           repeat:
             kind === 'card'
               ? installments > 1
@@ -617,6 +630,18 @@ function QuickForm({
           {date !== today && date !== yesterday ? <span className="text-[12px] text-ink-3">{formatDayShort(date)}</span> : null}
         </div>
       </div>
+
+      {kind !== 'card' && kind !== 'goal' && accounts.length > 1 ? (
+        <Field label={kind === 'in' ? 'Entrou em' : 'Saiu de'} htmlFor="qa-account">
+          <Select id="qa-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
 
       {kind !== 'card' && kind !== 'goal' ? (
         <div>
