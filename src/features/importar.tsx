@@ -1150,6 +1150,7 @@ const COLUMN_FIELDS: { key: keyof ColumnMap; label: string; optional: boolean }[
   { key: 'amount', label: 'Valor', optional: true },
   { key: 'credit', label: 'Crédito', optional: true },
   { key: 'debit', label: 'Débito', optional: true },
+  { key: 'balance', label: 'Saldo (confere, não soma)', optional: true },
 ];
 
 /**

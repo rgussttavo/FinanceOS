@@ -25,6 +25,26 @@ export interface StatementRow {
   amount: Cents;
   /** identificador do banco para a transação, quando o formato traz (OFX) */
   fitId: string | null;
+  /** o saldo que o banco mostra depois desta linha, quando o arquivo tem a coluna */
+  balanceAfter?: Cents;
+}
+
+/** um saldo que o próprio banco declarou no arquivo */
+export interface DeclaredBalance {
+  amount: Cents;
+  date: IsoDate;
+}
+
+/**
+ * Os saldos que o arquivo traz. São a régua da reconciliação: se o app chega
+ * num número diferente do que o banco escreveu, alguma linha está faltando,
+ * sobrando ou com valor trocado — e isso aparece, em vez de passar calado.
+ */
+export interface StatementBalance {
+  /** antes da primeira transação ("SALDO ANTERIOR") */
+  opening?: DeclaredBalance;
+  /** depois da última ("SALDO DO DIA", LEDGERBAL do OFX) */
+  closing?: DeclaredBalance;
 }
 
 /** uma célula de planilha já normalizada: data vira AAAA-MM-DD, número fica número */
@@ -41,6 +61,8 @@ export interface ColumnMap {
   debit: number;
   /** coluna "D/C" ou "tipo", que diz o sinal quando o valor vem sempre positivo */
   direction: number;
+  /** coluna de saldo corrido; nunca é valor de transação, mas confere cada linha */
+  balance: number;
 }
 
 export interface TableSource {
@@ -65,6 +87,8 @@ export interface ParsedStatement {
   accountKey: string | null;
   /** presente nos formatos de tabela: permite remapear colunas na revisão */
   table: TableSource | null;
+  /** saldos declarados pelo banco, quando o arquivo traz */
+  balance?: StatementBalance;
 }
 
 export class StatementError extends Error {}
@@ -168,9 +192,19 @@ export function parseOfx(text: string): ParsedStatement {
   let unreadable = 0;
 
   const blocks = text.match(/<STMTTRN>[\s\S]*?(?=<\/STMTTRN>|<STMTTRN>|<\/BANKTRANLIST>)/gi) ?? [];
+
+  /**
+   * Pela norma do OFX, o decimal é sempre o ponto: "1.500" é um real e meio.
+   * Há banco daqui que escreve "-50,00" mesmo assim; quando alguma linha do
+   * arquivo usa vírgula, o arquivo inteiro é lido com vírgula. Adivinhar valor
+   * a valor ("1.500" parece milhar) multiplicava tarifas por mil.
+   */
+  const amounts = blocks.map((b) => tag(b, 'TRNAMT') ?? '');
+  const decimal: Decimal = amounts.some((a) => a.includes(',')) ? ',' : '.';
+
   for (const block of blocks) {
     const date = parseOfxDate(tag(block, 'DTPOSTED') ?? tag(block, 'DTUSER') ?? '');
-    const amount = parseAmountText(tag(block, 'TRNAMT') ?? '', 'auto');
+    const amount = parseAmountText(tag(block, 'TRNAMT') ?? '', decimal);
     if (!date || amount === null) {
       unreadable += 1;
       continue;
@@ -189,7 +223,14 @@ export function parseOfx(text: string): ParsedStatement {
     throw new StatementError('O OFX não tem nenhuma transação no período exportado.');
   }
 
-  return { format: 'ofx', rows, ignored: 0, unreadable, creditCard, accountKey, table: null };
+  // o saldo contábil que o banco fecha no arquivo; é ele que a reconciliação persegue
+  const ledger = /<LEDGERBAL>([\s\S]*?)(?:<\/LEDGERBAL>|<AVAILBAL>|<\/STMTRS>|<\/CCSTMTRS>|$)/i.exec(text)?.[1] ?? '';
+  const ledgerAmount = parseAmountText(tag(ledger, 'BALAMT') ?? '', decimal);
+  const ledgerDate = parseOfxDate(tag(ledger, 'DTASOF') ?? '');
+  const balance: StatementBalance | undefined =
+    ledgerAmount !== null && ledgerDate ? { closing: { amount: ledgerAmount, date: ledgerDate } } : undefined;
+
+  return { format: 'ofx', rows, ignored: 0, unreadable, creditCard, accountKey, table: null, ...(balance ? { balance } : null) };
 }
 
 function tag(text: string, name: string): string | null {
@@ -206,11 +247,31 @@ const decodeEntities = (s: string) =>
     .replace(/&apos;/g, "'")
     .replace(/&amp;/g, '&');
 
-/** 20260903, 20260903120000, 20260903120000[-3:BRT] — só a data civil interessa */
+/** o fuso em que o dinheiro da pessoa vive; é nele que "dia 30" é dia 30 */
+const HOME_OFFSET_HOURS = -3;
+
+/**
+ * 20260903, 20260903120000, 20260903120000[-3:BRT], 20261001020000[0:GMT].
+ *
+ * Sem fuso, vale a data escrita. Com fuso diferente do de Brasília, a hora é
+ * convertida antes de tirar o dia: "01/10 às 02h em Greenwich" é 30/09 às 23h
+ * aqui, e é em 30/09 que a compra aconteceu para quem a fez.
+ */
 function parseOfxDate(raw: string): IsoDate | null {
-  const m = /^(\d{4})(\d{2})(\d{2})/.exec(raw.trim());
+  const s = raw.trim();
+  const m = /^(\d{4})(\d{2})(\d{2})(?:(\d{2})(\d{2})(\d{2})?(?:\.\d+)?)?\s*(?:\[([+-]?\d+(?:\.\d+)?)(?::[^\]]*)?\])?/.exec(s);
   if (!m) return null;
-  return validDate(Number(m[1]), Number(m[2]), Number(m[3]));
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const plainDate = validDate(y, mo, d);
+  if (!plainDate || m[4] === undefined || m[7] === undefined) return plainDate;
+
+  const offset = Number(m[7]);
+  if (!Number.isFinite(offset) || offset === HOME_OFFSET_HOURS) return plainDate;
+
+  // hora escrita no fuso do arquivo → instante UTC → hora de Brasília
+  const utcMs = Date.UTC(y, mo - 1, d, Number(m[4]), Number(m[5]), Number(m[6] ?? 0)) - offset * 3_600_000;
+  const home = new Date(utcMs + HOME_OFFSET_HOURS * 3_600_000);
+  return validDate(home.getUTCFullYear(), home.getUTCMonth() + 1, home.getUTCDate());
 }
 
 /** NAME e MEMO costumam repetir um ao outro; quando repetem, fica um só */
@@ -447,6 +508,7 @@ const HEADER_WORDS: Record<Exclude<keyof ColumnMap, 'memo'>, RegExp> = {
   credit: /^(credito|creditos|entrada|entradas|cred)\b/,
   debit: /^(debito|debitos|saida|saidas|deb)\b/,
   direction: /^(d\/c|c\/d|tipo|natureza|sinal)$/,
+  balance: /^saldo\b/,
 };
 
 const plain = (s: string) =>
@@ -468,19 +530,19 @@ export function fromGrid(format: StatementFormat, grid: Cell[][], sheet: string 
   }
 
   const table: TableSource = { sheet, grid, headerRow: detected.headerRow, map: detected.map };
-  const { rows, ignored, unreadable } = rowsFromTable(table);
+  const { rows, ignored, unreadable, balance } = rowsFromTable(table);
   if (!rows.length) {
     throw new StatementError('Achei a tabela, mas nenhuma linha com data e valor que eu consiga ler.');
   }
-  return { format, rows, ignored, unreadable, creditCard: false, accountKey: null, table };
+  return { format, rows, ignored, unreadable, creditCard: false, accountKey: null, table, ...(balance ? { balance } : null) };
 }
 
 /** relê a mesma grade com outro mapeamento, quando a pessoa corrige uma coluna */
 export function remapTable(parsed: ParsedStatement, map: ColumnMap): ParsedStatement {
   if (!parsed.table) return parsed;
   const table = { ...parsed.table, map };
-  const { rows, ignored, unreadable } = rowsFromTable(table);
-  return { ...parsed, rows, ignored, unreadable, table };
+  const { rows, ignored, unreadable, balance } = rowsFromTable(table);
+  return { ...parsed, rows, ignored, unreadable, table, balance };
 }
 
 function findHeaderRow(grid: Cell[][]): { row: number; map: Partial<ColumnMap> } | null {
@@ -519,7 +581,7 @@ function detectColumns(grid: Cell[][]): { headerRow: number; map: ColumnMap } | 
     return texts.length ? texts.reduce((a, t) => a + t.length, 0) / body.length : 0;
   });
 
-  const map: ColumnMap = { date: -1, description: -1, memo: -1, amount: -1, credit: -1, debit: -1, direction: -1 };
+  const map: ColumnMap = { date: -1, description: -1, memo: -1, amount: -1, credit: -1, debit: -1, direction: -1, balance: -1 };
   Object.assign(map, header?.map ?? {});
 
   if (map.date < 0) map.date = argmax(dateScore, 0.6);
@@ -539,14 +601,14 @@ function detectColumns(grid: Cell[][]): { headerRow: number; map: ColumnMap } | 
       // costuma ser o saldo, que nunca é o valor da transação
       const candidates = numScore
         .map((s, i) => ({ s, i }))
-        .filter(({ s, i }) => s >= 0.6 && i !== map.date);
+        .filter(({ s, i }) => s >= 0.6 && i !== map.date && i !== map.balance);
       if (!candidates.length) return null;
       map.amount = candidates[0].i;
     }
   }
 
   if (map.description < 0) {
-    const used = new Set([map.date, map.amount, map.credit, map.debit, map.direction, map.memo]);
+    const used = new Set([map.date, map.amount, map.credit, map.debit, map.direction, map.memo, map.balance]);
     map.description = argmax(textLen.map((l, i) => (used.has(i) ? 0 : l)), 0.5);
   }
 
@@ -576,30 +638,47 @@ function argmax(values: number[], min: number): number {
 /**
  * Linhas que aparecem em extrato mas não são transação. Importar "SALDO DO
  * DIA" como receita dobraria o dinheiro da pessoa na tela.
+ *
+ * A comparação é pela frase inteira, com datas e números tirados. Antes bastava
+ * a descrição COMEÇAR com "total" ou "saldo" — e "TOTAL ACADEMIA" ou "Saldo
+ * devedor cheque especial juros", que são cobranças de verdade, sumiam do
+ * extrato sem aviso.
  */
-const NOT_A_TRANSACTION =
-  /^(saldo|s a l d o|total|subtotal|saldo anterior|saldo do dia|saldo final|saldo inicial|saldo disponivel|saldo em conta|limite)\b/;
+const OPENING_ROW = /^(saldo anterior|saldo inicial|saldo inicial do periodo|saldo anterior do periodo)$/;
+const CLOSING_ROW = /^(saldo|s a l d o|saldo do dia|saldo final|saldo atual|saldo disponivel|saldo em conta|saldo total|saldo final do periodo|saldo contabil)$/;
+const SUMMARY_ROW = /^(total|subtotal|total geral|total do dia|total do periodo|total de (creditos|debitos|entradas|saidas)|limite|limite disponivel|limite da conta|saldo bloqueado)$/;
 
-function rowsFromTable(table: TableSource): { rows: StatementRow[]; ignored: number; unreadable: number } {
+const balanceKey = (desc: string) =>
+  plain(desc)
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\b(em|de|r)\b\s*$/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+function rowsFromTable(table: TableSource): {
+  rows: StatementRow[];
+  ignored: number;
+  unreadable: number;
+  balance?: StatementBalance;
+} {
   const { grid, headerRow, map } = table;
   const body = grid.slice(headerRow + 1);
+  const balanceCol = map.balance ?? -1;
 
   const dayOrder = detectDayOrder(body.map((r) => r[map.date]).filter((c): c is string => typeof c === 'string'));
-  const valueCols = [map.amount, map.credit, map.debit].filter((i) => i >= 0);
+  const valueCols = [map.amount, map.credit, map.debit, balanceCol].filter((i) => i >= 0);
   const decimal = detectDecimal(body.flatMap((r) => valueCols.map((i) => r[i])));
 
   const rows: StatementRow[] = [];
+  const openings: DeclaredBalance[] = [];
+  const closings: DeclaredBalance[] = [];
   let ignored = 0;
   let unreadable = 0;
 
   for (const r of body) {
     const description = joinDescription(cellText(r[map.description]), map.memo >= 0 ? cellText(r[map.memo]) : '');
-    const plainDesc = plain(description);
+    const key = balanceKey(description);
 
-    if (plainDesc && NOT_A_TRANSACTION.test(plainDesc)) {
-      ignored += 1;
-      continue;
-    }
     // cabeçalho repetido no meio do arquivo (quebra de página do banco)
     if (typeof r[map.date] === 'string' && HEADER_WORDS.date.test(plain(r[map.date] as string))) {
       ignored += 1;
@@ -607,6 +686,19 @@ function rowsFromTable(table: TableSource): { rows: StatementRow[]; ignored: num
     }
 
     const date = toDate(r[map.date] ?? null, dayOrder);
+    const balanceHere = balanceCol >= 0 ? toAmount(r[balanceCol] ?? null, decimal) : null;
+
+    if (key && (OPENING_ROW.test(key) || CLOSING_ROW.test(key) || SUMMARY_ROW.test(key))) {
+      ignored += 1;
+      // o saldo da linha vem da coluna de saldo; sem ela, da de valor
+      const declared = balanceHere ?? (map.amount >= 0 ? toAmount(r[map.amount] ?? null, decimal) : null);
+      if (date && declared !== null) {
+        if (OPENING_ROW.test(key)) openings.push({ amount: declared, date });
+        else if (CLOSING_ROW.test(key)) closings.push({ amount: declared, date });
+      }
+      continue;
+    }
+
     let amount: Cents | null = null;
 
     if (map.amount >= 0) {
@@ -635,10 +727,40 @@ function rowsFromTable(table: TableSource): { rows: StatementRow[]; ignored: num
       continue;
     }
 
-    rows.push({ date, description: description || 'Sem descrição', amount, fitId: null });
+    rows.push({
+      date,
+      description: description || 'Sem descrição',
+      amount,
+      fitId: null,
+      ...(balanceHere !== null ? { balanceAfter: balanceHere } : null),
+    });
   }
 
-  return { rows, ignored, unreadable };
+  /**
+   * Muito banco lista do mais novo para o mais antigo. A ordem do arquivo é a
+   * do saldo corrido; virar as linhas mantém saldo e transação juntos e deixa
+   * "primeira" e "última" querendo dizer o que dizem.
+   */
+  const descending = rows.length > 1 && rows[0].date > rows[rows.length - 1].date;
+  if (descending) rows.reverse();
+
+  const byDate = (a: DeclaredBalance, b: DeclaredBalance) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const opening = openings.sort(byDate)[0];
+  const closing = closings.sort(byDate)[closings.length - 1];
+
+  const balance: StatementBalance = {};
+  if (opening) balance.opening = opening;
+  else if (rows[0]?.balanceAfter !== undefined) {
+    // sem a linha "saldo anterior", ele é o saldo da primeira linha antes dela
+    balance.opening = { amount: rows[0].balanceAfter - rows[0].amount, date: rows[0].date };
+  }
+  if (closing && (!rows.length || closing.date >= rows[rows.length - 1].date)) balance.closing = closing;
+  else if (rows.length && rows[rows.length - 1].balanceAfter !== undefined) {
+    const last = rows[rows.length - 1];
+    balance.closing = { amount: last.balanceAfter as Cents, date: last.date };
+  }
+
+  return { rows, ignored, unreadable, ...(balance.opening || balance.closing ? { balance } : null) };
 }
 
 const cellText = (c: Cell | undefined): string =>
@@ -741,7 +863,8 @@ function toAmount(cell: Cell | undefined, decimal: Decimal): Cents | null {
   return parseAmountText(cell, decimal);
 }
 
-function isAmountLike(s: string): boolean {
+function isAmountLike(raw: string): boolean {
+  const s = raw.replace(/[−‒–—﹣－]/g, '-');
   return /^[-+(]?\s*(r\$)?\s*[-+]?\s*\d[\d.,\s]*\)?\s*[-+]?\s*[dc]?$/i.test(s.trim()) && /[.,]\d{2}\b|^\s*[-+]?\d+\s*$/.test(s);
 }
 
@@ -751,7 +874,9 @@ function isAmountLike(s: string): boolean {
  * "1,234.56", "50,00 D" e "50,00 C".
  */
 export function parseAmountText(raw: string, decimal: Decimal = 'auto'): Cents | null {
-  let s = raw.trim();
+  // menos tipográfico (−) e traços (– —) dizem o mesmo que o hífen; lidos
+  // como texto, sumiam, e a despesa entrava como receita
+  let s = raw.replace(/[−‒–—﹣－]/g, '-').trim();
   if (!s) return null;
 
   let negative = false;
