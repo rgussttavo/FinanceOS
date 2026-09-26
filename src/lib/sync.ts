@@ -1,9 +1,10 @@
 'use client';
 
-import { applyRemote, db, getSyncState, liveRows, putRecord, setSyncState } from './db';
+import { primaryIdFor } from './accounts';
+import { applyRemote, audit, db, getSyncState, liveRows, putRecord, setSyncState } from './db';
 import { ensureSpace } from './provision';
 import { RECEIPTS_BUCKET, requireSupabase, supabase, type CloudRecord } from './supabase';
-import type { Mutation, SyncTable } from './types';
+import type { Account, Mutation, SyncTable } from './types';
 
 /** a forma minima de todo registro que sincroniza */
 type Syncable = { id: string; spaceId: string; updatedAt: string; deletedAt: string | null };
@@ -44,6 +45,9 @@ const TABLES: SyncTable[] = [
 ];
 
 const PAGE = 500;
+
+/** a assinatura das coleções que esta versão lê; muda quando entra uma coleção nova */
+const COLLECTIONS = TABLES.slice().sort().join(',');
 
 export type SyncPhase = 'idle' | 'pushing' | 'pulling' | 'done' | 'offline' | 'error';
 
@@ -280,13 +284,15 @@ export async function runSync(): Promise<SyncReport> {
      * mais nova. Descendo antes, a edição mais recente vence aqui mesmo, e o
      * que sobe já é só o que este aparelho tem de mais novo.
      */
-    const { applied, watermark } = await pull(state.spaceId, state.pulledAt);
+    // coleções diferentes das da última leitura: recomeça do zero, uma vez
+    const since = state.collections === COLLECTIONS ? state.pulledAt : null;
+    const { applied, watermark } = await pull(state.spaceId, since);
     const pushed = await push(state.spaceId);
     // os arquivos vão depois dos metadados: assim nenhum comprovante fica no
     // Storage sem o registro que diz de quem ele é
     await pushAttachments(state.spaceId);
 
-    await setSyncState({ pulledAt: watermark, lastPushAt: at });
+    await setSyncState({ pulledAt: watermark, lastPushAt: at, collections: COLLECTIONS });
     return { phase: 'done', pushed, pulled: applied, error: null, at };
   } catch (err: unknown) {
     return {
@@ -390,10 +396,35 @@ async function joinExistingSpace(
 ): Promise<void> {
   const d = db();
 
-  let conteudo = 0;
+  /**
+   * A principal deste aparelho é a mesma conta da principal da nuvem — a
+   * conta do dia a dia da mesma pessoa. Ela nunca vai junto: levar as duas
+   * contaria o mesmo dinheiro duas vezes e deixaria o espaço com duas
+   * principais. O que estava nela passa para a principal da nuvem.
+   *
+   * Contas e transferências contam como conteúdo, exceto essa principal: ela
+   * nasce sozinha em todo aparelho, e contá-la faria todo aparelho novo
+   * parecer cheio.
+   */
+  const localPrimary = primaryIdFor(localId);
+  const localAccounts = await liveRows<Account>('accounts', localId);
+  let conteudo = localAccounts.filter((a) => a.id !== localPrimary).length + (await liveRows<Syncable>('transfers', localId)).length;
   for (const table of CONTENT_TABLES) {
     conteudo += (await liveRows<Syncable>(table, localId)).length;
   }
+  const dropped = localAccounts.find((a) => a.id === localPrimary);
+  if (dropped && (dropped.openingDate || dropped.openingBalance || dropped.checkpoints?.length)) {
+    // o saldo informado neste aparelho não se perde em silêncio: fica no diário
+    await audit(localId, 'account.updated', {
+      id: dropped.id,
+      note: 'principal deste aparelho descartada ao entrar na conta; a da nuvem vale',
+      openingBalance: dropped.openingBalance,
+      openingDate: dropped.openingDate ?? null,
+      checkpoints: dropped.checkpoints ?? [],
+    });
+  }
+  /** o que apontava para a principal deste aparelho passa a apontar para a da nuvem (null = principal) */
+  const repoint = (id: string | null | undefined) => (id === localPrimary ? null : (id ?? null));
 
   // a fila ainda tem as sementes deste aparelho apontando para o espaço velho
   await d.mutations.clear();
@@ -423,10 +454,21 @@ async function joinExistingSpace(
         continue;
       }
 
+      let moved: Record<string, unknown>[] = rows.map((row) => ({ ...row, spaceId: remoteId }));
+      if (table === 'accounts') {
+        // a principal deste aparelho fica; as outras vão, sem disputar a principal
+        await d.accounts.delete(localPrimary);
+        moved = moved.filter((a) => a.id !== localPrimary).map((a) => ({ ...a, primary: false }));
+      } else if (table === 'entries' || table === 'subscriptions' || table === 'cards') {
+        moved = moved.map((r) => ({ ...r, accountId: repoint(r.accountId as string | null) }));
+      } else if (table === 'transfers') {
+        moved = moved.map((t) => ({ ...t, fromAccountId: repoint(t.fromAccountId as string | null), toAccountId: repoint(t.toAccountId as string | null) }));
+      }
+
       const target = d[TABLE_OF[table]] as unknown as {
         bulkPut: (r: unknown[]) => Promise<unknown>;
       };
-      await target.bulkPut(rows.map((row) => ({ ...row, spaceId: remoteId })));
+      await target.bulkPut(moved);
     }
   }
 

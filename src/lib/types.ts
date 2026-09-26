@@ -506,4 +506,11 @@ export interface SyncState {
   lastPushAt: IsoInstant | null;
   spaceId: string | null;
   userId: string | null;
+  /**
+   * As coleções que este aparelho sabia ler na última leitura. Uma versão
+   * antiga pula as coleções que não conhece, mas avança a marca d'água além
+   * delas — e o que ela pulou nunca mais desceria. Quando esta lista muda, a
+   * próxima leitura recomeça do zero, uma vez.
+   */
+  collections?: string;
 }

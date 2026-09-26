@@ -202,7 +202,40 @@ export function invoiceReconciliation(rows: ReviewRow[]) {
 
 const INTERNAL = /transferencia entre contas|mesma titularidade|conta propria|entre suas contas|transf.*propria|mesmo titular/;
 const WITHDRAWAL = /\b(resgate|resg|resgatado|rendimento resgatado|resgate aplic\w*|resgate cdb|resgate lci|resgate lca|resgate tesouro|resgate poupanca)\b/;
-const ACCOUNT_CARD_BILL = /fatura|pagamento (de )?cartao|pgto cartao|pag cartao/;
+/**
+ * Uma linha de saída da conta é o pagamento da fatura de um cartão?
+ *
+ *   'card'   é: fala em cartão ("pagamento cartão", "cartão de crédito") ou
+ *            em fatura de um banco pelo nome ("pagamento fatura Nubank")
+ *   'maybe'  pode ser: "pagamento de fatura" sem dizer de quem
+ *   null     não é
+ *
+ * Duas regras nasceram de extratos reais:
+ *
+ *  - "fatura" sozinha não basta. Conta de luz, telefone e internet também se
+ *    chamam fatura ("FATURA CLARO", "DEB AUTOMATICO FATURA ENEL"); tratadas
+ *    como pagamento de cartão, sumiam das despesas e davam crédito ao cartão.
+ *    Concessionária e operadora no texto decidem: é conta de consumo.
+ *  - O teste é feito sobre o texto inteiro. A limpeza de descrição apaga
+ *    "pagamento cartão" por ser ruído para categorizar — e com isso
+ *    "PAGAMENTO CARTAO NUBANK" deixava de ser reconhecido e virava despesa,
+ *    contando em dobro com as compras do cartão.
+ */
+const UTILITY =
+  /\b(enel|cemig|copel|cpfl|light|equatorial|neoenergia|coelba|celpe|cosern|energisa|elektro|sabesp|cedae|caesb|sanepar|embasa|copasa|compesa|casan|corsan|comgas|naturgy|ultragaz|claro|vivo|tim|oi|net|sky|algar|nextel|telefonica|energia|eletrica|agua|esgoto|saneamento|gas|internet|fibra|banda larga|telefone|celular|condominio|aluguel|escola|faculdade|mensalidade|unimed|amil|hapvida|seguro)\b/;
+// "crédito" sozinho não: "pagamento crédito pessoal" é empréstimo, não cartão
+const CARD_WORDS = /\b(cartao|cartoes|card|visa|mastercard|elo|amex|hipercard)\b/;
+const BILL_PAYMENT = /\b(pagamento|pgto|pagto|pag|pg|deb|debito)\b.*\bfatura\b|\bfatura\b.*\b(pagamento|pgto|pagto|paga)\b/;
+
+export function cardBillKind(description: string): 'card' | 'maybe' | null {
+  const text = normalize(description);
+  if (UTILITY.test(text)) return null;
+  const paying = /\b(pagamento|pgto|pagto|pag|pg|debito automatico|deb aut)\b/.test(text);
+  if (paying && CARD_WORDS.test(text)) return 'card';
+  if (/\bfatura\b.*\b(cartao|credito)\b|\b(cartao|credito)\b.*\bfatura\b/.test(text)) return 'card';
+  if (BILL_PAYMENT.test(text) || (paying && /\bfatura\b/.test(text))) return bankInText(description) ? 'card' : 'maybe';
+  return null;
+}
 
 /**
  * Monta a lista que a pessoa revisa antes de gravar.
@@ -307,6 +340,8 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
     }
 
     const installment = target.type === 'card' ? detectInstallment(description) : null;
+    // na conta: esta saída é o pagamento de uma fatura de cartão?
+    const bill = target.type === 'account' && outflow ? cardBillKind(row.description) : null;
 
     let status: RowStatus = 'new';
     let match: ReviewRow['match'] = null;
@@ -358,20 +393,32 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
         status = hit.settlement || hit.cardId || target.type === 'card' ? 'similar' : 'settle';
         // parcela de uma compra que já está no app (veio de outra fatura): não entra de novo
         if (hit.installment && (installment || target.type === 'card')) status = 'imported';
-      } else if (target.type === 'account' && outflow && ACCOUNT_CARD_BILL.test(plainDesc)) {
-        // a fatura paga pela conta: com o cartão cadastrado, é pagamento e não despesa
+      } else if (target.type === 'account' && outflow && bill) {
+        // a fatura paga pela conta: com o cartão dela no app, é pagamento e não despesa
         const bank = bankInText(row.description);
-        const card = cardOfBank(liveCards, bank) ?? (liveCards.length === 1 ? liveCards[0] : null);
-        if (liveCards.length) {
+        const card = cardOfBank(liveCards, bank);
+        if (card) {
           status = 'transfer';
-          extra.payCardId = card?.id ?? null;
-          include = !!card;
-          extra.note = card
-            ? `pagamento da fatura ${card.name || card.institution}: sai da conta, as compras já contam no cartão`
-            : 'pagamento de fatura: escolha o cartão';
+          extra.payCardId = card.id;
+          include = true;
+          extra.note = `pagamento da fatura ${card.name || card.institution}: sai da conta, as compras já contam no cartão`;
+        } else if (bank || !liveCards.length) {
+          /**
+           * O cartão pago não está no app — o banco citado não tem cartão
+           * cadastrado, ou não há cartão nenhum. As compras dele também não
+           * estão aqui, então o pagamento é o gasto. Antes, com um cartão só
+           * cadastrado, a fatura do Itaú ia para o Nubank.
+           */
+          extra.note = `fatura de cartão${bank ? ` ${bank.name}` : ''} que não está no app: entra como gasto. Se importar a fatura depois, exclua esta linha.`;
         } else {
-          // sem cartão cadastrado, as compras não estão no app: o pagamento é o gasto
-          extra.note = 'fatura de cartão que não está no app: entra como gasto. Se importar a fatura depois, exclua esta linha.';
+          // não diz de qual cartão: a pessoa escolhe; até lá, fica de fora
+          status = 'transfer';
+          extra.payCardId = null;
+          include = false;
+          extra.note =
+            bill === 'maybe'
+              ? 'pagamento de fatura sem dizer de quem: escolha o cartão — ou desmarque, se for conta de consumo'
+              : 'pagamento de fatura de cartão: escolha qual';
         }
       }
     }
@@ -392,9 +439,7 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       match,
       installment: installment ? { index: installment.index, total: installment.total } : null,
       billPayment:
-        CARD_PAYMENT.test(fullDesc) ||
-        (target.type === 'card' && !outflow && CARD_CREDIT_PAYMENT.test(fullDesc)) ||
-        (target.type === 'account' && outflow && ACCOUNT_CARD_BILL.test(plainDesc)),
+        target.type === 'card' ? CARD_PAYMENT.test(fullDesc) || (!outflow && CARD_CREDIT_PAYMENT.test(fullDesc)) : bill !== null,
       ...extra,
     };
   }

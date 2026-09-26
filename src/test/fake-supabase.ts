@@ -22,6 +22,8 @@ export interface ServerRow {
 export class FakeServer {
   rows = new Map<string, ServerRow>();
   lww = true;
+  /** o espaço que a conta já tem; o create_space devolve ele em vez de criar outro (migração 0003) */
+  existingSpace: { id: string; name: string } | null = null;
   private tick = 0;
 
   /** carimbo do servidor: sempre crescente, com microssegundos como o Postgres */
@@ -48,7 +50,16 @@ export class FakeServer {
   }
 
   client() {
-    return { from: (table: string) => new Table(this, table), storage: { from: () => ({}) } };
+    return {
+      from: (table: string) => new Table(this, table),
+      storage: { from: () => ({}) },
+      rpc: (name: string, args: { space_id: string; space_name: string }) => ({
+        single: async () =>
+          name === 'create_space'
+            ? { data: this.existingSpace ?? { id: args.space_id, name: args.space_name }, error: null }
+            : { data: null, error: { message: `rpc ${name}` } },
+      }),
+    };
   }
 }
 

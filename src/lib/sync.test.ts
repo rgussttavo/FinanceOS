@@ -190,3 +190,100 @@ describe(`sincronização entre aparelhos (servidor ${lww ? 'com' : 'sem'} a gua
     expect((server.current as FakeServer).rows.size).toBe(20);
   });
 });
+
+describe('troca de versão (FIN-004)', () => {
+  beforeEach(() => {
+    (server.current as FakeServer).lww = true;
+  });
+
+  it('aparelho que rodou a versão sem transferências recebe as que pulou, depois de atualizar', async () => {
+    const { transfer, account } = await import('@/test/build');
+    await device('aparelho-a');
+    const a = await putRecord('accounts', account({ id: 'c1', spaceId: SPACE, primary: true }));
+    const b = await putRecord('accounts', account({ id: 'c2', spaceId: SPACE }));
+    await putRecord('transfers', transfer({ kind: 'account', amount: 30000, date: '2026-09-10', fromAccountId: a.id, toAccountId: b.id, spaceId: SPACE }));
+    await sync('aparelho-a');
+
+    // B rodou a versão antiga: desceu as contas, pulou a transferência (coleção
+    // que ela não conhecia) e guardou uma marca d'água posterior a ela
+    const rows = [...(server.current as FakeServer).rows.values()];
+    const last = rows.map((r) => r.updated_at).sort().at(-1) as string;
+    selectDatabase('aparelho-b');
+    for (const r of rows) if (r.collection === 'accounts') await db().accounts.put(r.data as never);
+    const later = new Date(Date.parse(last) + 10 * 60_000).toISOString();
+    await db().syncState.put({ id: 'singleton', pulledAt: later, lastPushAt: null, spaceId: SPACE, userId: 'u1' });
+
+    await sync('aparelho-b');
+    expect(await db().transfers.count()).toBe(1);
+  });
+
+  it('a releitura completa acontece uma vez só, não a cada sincronização', async () => {
+    await device('aparelho-a');
+    await putRecords('entries', Array.from({ length: 5 }, (_, i) => entry(`linha ${i}`)));
+    await sync('aparelho-a');
+    await sync('aparelho-b');
+    const first = await sync('aparelho-b');
+    expect(first.pulled).toBe(0);
+  });
+});
+
+describe('entrar numa conta que já existe (FIN-006, FIN-007)', () => {
+  const REMOTE = 'espaco-da-nuvem';
+
+  async function aparelhoNovo(name: string) {
+    selectDatabase(name);
+    await db().delete();
+    selectDatabase(`${name}-reset`);
+    selectDatabase(name);
+    const { ensureSpace } = await import('./provision');
+    const { ensurePrimaryAccount } = await import('./accounts');
+    const local = await ensureSpace();
+    const principal = await ensurePrimaryAccount(local.id);
+    (server.current as FakeServer).existingSpace = { id: REMOTE, name: 'Meu dinheiro' };
+    return { local, principal };
+  }
+
+  it('FIN-006: contas e transferências locais não são apagadas ao entrar', async () => {
+    const { local, principal } = await aparelhoNovo('entrar-1');
+    const { account, transfer } = await import('@/test/build');
+    const poupanca = await putRecord('accounts', account({ spaceId: local.id, name: 'Poupança', openingBalance: 100000, openingDate: '2026-09-01' }));
+    await putRecord('transfers', transfer({ spaceId: local.id, kind: 'account', amount: 30000, date: '2026-09-10', fromAccountId: principal.id, toAccountId: poupanca.id }));
+
+    const { adoptLocalSpace } = await import('./sync');
+    await adoptLocalSpace('u1');
+
+    const accounts = (await db().accounts.toArray()).filter((a) => !a.deletedAt);
+    const transfers = (await db().transfers.toArray()).filter((t) => !t.deletedAt);
+    expect(accounts.map((a) => [a.name, a.spaceId])).toEqual([['Poupança', REMOTE]]);
+    expect(transfers).toHaveLength(1);
+    // o lado da principal deste aparelho passa a ser a principal da nuvem
+    expect(transfers[0]).toMatchObject({ spaceId: REMOTE, fromAccountId: null, toAccountId: poupanca.id });
+  });
+
+  it('FIN-007: a principal deste aparelho não vira uma segunda principal na nuvem', async () => {
+    const { local, principal } = await aparelhoNovo('entrar-2');
+    await putRecord('accounts', { ...principal, openingBalance: 500000, openingDate: '2026-09-20' });
+    await putRecord('entries', { ...entry('Mercado'), spaceId: local.id, accountId: principal.id });
+    await putRecord('entries', { ...entry('Padaria'), spaceId: local.id, accountId: null });
+
+    const { adoptLocalSpace } = await import('./sync');
+    await adoptLocalSpace('u1');
+
+    const accounts = (await db().accounts.toArray()).filter((a) => !a.deletedAt);
+    expect(accounts.filter((a) => a.primary)).toHaveLength(0); // a principal é a da nuvem, que desce no pull
+    expect(accounts.find((a) => a.id === principal.id)).toBeUndefined();
+    const entries = (await db().entries.toArray()).filter((e) => !e.deletedAt);
+    expect(entries.map((e) => [e.description, e.spaceId, e.accountId])).toEqual([
+      ['Mercado', REMOTE, null],
+      ['Padaria', REMOTE, null],
+    ]);
+  });
+
+  it('aparelho sem nada além do começo padrão continua sendo descartado', async () => {
+    await aparelhoNovo('entrar-3');
+    const { adoptLocalSpace } = await import('./sync');
+    await adoptLocalSpace('u1');
+    expect((await db().accounts.toArray()).filter((a) => !a.deletedAt)).toHaveLength(0);
+    expect((await db().entries.toArray()).filter((e) => !e.deletedAt)).toHaveLength(0);
+  });
+});

@@ -160,3 +160,90 @@ describe('o que não é receita nem despesa', () => {
     expect(cashNow(await loadLedger(SPACE, '2026-09-30'))).toBe(94410);
   });
 });
+
+describe('pagamento de fatura na conta (FIN-001, FIN-002, FIN-003)', () => {
+  async function revisar(linhas: string[], cartoes: { name: string; institution: string }[]) {
+    const cards: Card[] = [];
+    for (const c of cartoes) cards.push(await putRecord('cards', makeCard(c)));
+    // o cartão padrão do beforeEach sai: aqui cada teste diz quais cartões existem
+    await putRecord('cards', { ...cartao, deletedAt: '2026-01-01T00:00:00.000Z' });
+    const parsed = parseDelimited(csv(...linhas));
+    const rows = await buildReview(parsed, { spaceId: SPACE, target: { type: 'account' }, invert: false, categories });
+    const nome = (id: string | null | undefined) => cards.find((c) => c.id === id)?.name ?? null;
+    return { rows, cards, nome, parsed };
+  }
+
+  it('FIN-001: conta de consumo chamada "fatura" é gasto, não pagamento de cartão', async () => {
+    const { rows } = await revisar(
+      ['10/09/2026;FATURA CLARO;-129,90;', '11/09/2026;DEB AUTOMATICO FATURA ENEL;-214,35;', '12/09/2026;PAG FATURA VIVO FIBRA;-99,90;'],
+      [{ name: 'Nubank', institution: 'Nubank' }],
+    );
+    for (const r of rows) {
+      expect(r).toMatchObject({ status: 'new', kind: 'out', include: true });
+      expect(r.payCardId ?? null).toBeNull();
+      expect(r.billPayment).toBeFalsy();
+    }
+  });
+
+  it('FIN-001: no saldo, a despesa aparece e o cartão não ganha crédito', async () => {
+    const nubank = await putRecord('cards', makeCard({ name: 'Nubank', institution: 'Nubank', closingDay: 25, dueDay: 5 }));
+    await putRecord('cards', { ...cartao, deletedAt: '2026-01-01T00:00:00.000Z' });
+    await putRecord('entries', { ...(await import('@/test/build')).entry('out', 50000, '2026-08-10', { cardId: nubank.id }) });
+    const parsed = parseDelimited(csv('05/09/2026;PAGAMENTO FATURA NUBANK;-500,00;', '10/09/2026;FATURA CLARO;-129,90;'));
+    const rows = await buildReview(parsed, { spaceId: SPACE, target: { type: 'account' }, invert: false, categories });
+    await commitReview(rows, { spaceId: SPACE, target: { type: 'account' }, source: 'csv' });
+    const l = await loadLedger(SPACE, '2026-09-30');
+    expect((await resumo('2026-09')).expense).toBe(12990);
+    const { cardBalance } = await import('./cards');
+    expect(cardBalance(nubank, l.entries, l.subscriptions, l.transfers, '2026-09-30').debt).toBe(0);
+  });
+
+  it('FIN-002: fatura de um banco sem cartão no app não cai no único cartão cadastrado', async () => {
+    const { rows } = await revisar(['15/09/2026;PAGAMENTO FATURA ITAU;-850,00;'], [{ name: 'Nubank', institution: 'Nubank' }]);
+    expect(rows[0].payCardId ?? null).toBeNull();
+    // o cartão do Itaú não está no app: as compras dele também não; o pagamento é o gasto
+    expect(rows[0]).toMatchObject({ status: 'new', kind: 'out', include: true, billPayment: true });
+  });
+
+  it('FIN-003: "pagamento cartão" sem a palavra fatura é reconhecido, no cartão certo', async () => {
+    const { rows, nome } = await revisar(
+      ['15/09/2026;PAGAMENTO CARTAO NUBANK;-850,00;', '16/09/2026;PGTO CARTAO CREDITO ITAU;-300,00;', '17/09/2026;PAGAMENTO FATURA NUBANK;-120,00;'],
+      [{ name: 'Nubank', institution: 'Nubank' }, { name: 'Itaú', institution: 'Itaú' }],
+    );
+    expect(rows.map((r) => [r.status, nome(r.payCardId), r.include])).toEqual([
+      ['transfer', 'Nubank', true],
+      ['transfer', 'Itaú', true],
+      ['transfer', 'Nubank', true],
+    ]);
+  });
+
+  it('pagamento de fatura sem dizer de qual cartão: fica desmarcado para a pessoa decidir', async () => {
+    const { rows } = await revisar(['15/09/2026;PAGAMENTO DE FATURA;-400,00;'], [{ name: 'Nubank', institution: 'Nubank' }, { name: 'Itaú', institution: 'Itaú' }]);
+    expect(rows[0]).toMatchObject({ status: 'transfer', include: false });
+    expect(rows[0].payCardId ?? null).toBeNull();
+  });
+});
+
+describe('o que é pagamento de fatura de cartão', () => {
+  const casos: [string, 'card' | 'maybe' | null][] = [
+    ['PAGAMENTO FATURA NUBANK', 'card'],
+    ['PAGAMENTO CARTAO NUBANK', 'card'],
+    ['PGTO CARTAO CREDITO ITAU', 'card'],
+    ['PAG FATURA CARTAO', 'card'],
+    ['DEBITO AUTOMATICO FATURA CARTAO INTER', 'card'],
+    ['PAGAMENTO DE FATURA', 'maybe'],
+    ['FATURA CLARO', null],
+    ['DEB AUTOMATICO FATURA ENEL', null],
+    ['PAG FATURA VIVO FIBRA', null],
+    ['PAGAMENTO FATURA INTERNET NET', null],
+    ['PAGAMENTO CREDITO PESSOAL', null],
+    ['PAGAMENTO BOLETO CONDOMINIO', null],
+    ['MERCADO EXTRA', null],
+  ];
+  for (const [texto, esperado] of casos) {
+    it(`"${texto}" → ${esperado ?? 'não é'}`, async () => {
+      const { cardBillKind } = await import('./importer');
+      expect(cardBillKind(texto)).toBe(esperado);
+    });
+  }
+});
