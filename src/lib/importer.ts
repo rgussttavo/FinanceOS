@@ -1,5 +1,5 @@
 import { ensurePrimaryAccount, loadLedger, primaryIdFor } from './accounts';
-import { bankInText, buildInvoice, cardOfBank, dueDateOf, invoiceMonthOf } from './cards';
+import { bankInText, buildInvoice, cardOfBank, dueDateOf, invoiceMonthOf, realizedCharges, realizedKey } from './cards';
 import { categorize, cleanDescription, normalize, type LearnedRule } from './categories';
 import { addDaysIso, addMonthsToKey, clampDayToMonth, diffDays, monthKeyOf, monthKeyParts, nowInstant, partsToIso, todayIso } from './dates';
 import { audit, db, entriesUpTo, liveRows, putRecord, putRecords } from './db';
@@ -284,6 +284,36 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
   const takenTransfers = new Set<string>();
   const subs = (opts.subscriptions ?? []).filter((s) => !s.deletedAt);
 
+  /**
+   * No máximo uma cobrança por assinatura por mês (FIN-009).
+   *
+   * Antes cada linha era comparada sozinha, e a compra de R$ 21,90 na Amazon
+   * perto do dia do Prime virava "a cobrança do Prime" — junto com a cobrança
+   * de verdade, se ela também estivesse no arquivo. Agora as candidatas de
+   * cada assinatura, em cada mês, disputam uma vaga: ganha a de valor mais
+   * perto do cadastrado (e, empatado, a de dia mais perto). A vaga de um mês
+   * que já tem a cobrança real no app, vinda de outro arquivo, já está
+   * ocupada.
+   */
+  const subOf = new Map<StatementRow, Subscription>();
+  if (subs.length) {
+    const held = realizedCharges(await entriesUpTo(spaceId, monthKeyOf(rows[rows.length - 1].date)));
+    const best = new Map<string, { row: StatementRow; score: number; sub: Subscription }>();
+    for (const row of rows) {
+      const signedAmount = opts.invert ? -row.amount : row.amount;
+      if (signedAmount >= 0) continue;
+      const candidates = subscriptionCandidates(subs, cleanDescription(row.description), -signedAmount, row.date);
+      const top = candidates[0];
+      if (!top) continue;
+      const slot = realizedKey(top.sub.id, monthKeyOf(row.date));
+      // a cobrança deste mês que já veio de outro arquivo só é reconhecida por ser ela mesma
+      if (held.has(slot) && !already.has(idOf.get(row) ?? '')) continue;
+      const current = best.get(slot);
+      if (!current || top.score < current.score) best.set(slot, { row, score: top.score, sub: top.sub });
+    }
+    for (const { row, sub } of best.values()) subOf.set(row, sub);
+  }
+
   const out: ReviewRow[] = [];
   for (let i = 0; i < rows.length; i++) {
     // cede a vez ao navegador de tempos em tempos: a barra de progresso anda
@@ -348,7 +378,7 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
     let include: boolean | null = null;
     const extra: Partial<ReviewRow> = {};
 
-    const sub = outflow ? matchSubscription(subs, plainDesc, amount, row.date) : null;
+    const sub = outflow ? (subOf.get(row) ?? null) : null;
     const isWithdrawal = target.type === 'account' && !outflow && WITHDRAWAL.test(fullDesc);
     const linked = !already.has(externalId) ? matchTransfer(row.date, amount, outflow) : null;
 
@@ -449,18 +479,23 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
  * A assinatura que esta linha provavelmente é: nome parecido, valor perto (o
  * reajuste de preço acontece) e cobrança perto do dia cadastrado.
  */
-function matchSubscription(subs: Subscription[], plainDesc: string, amount: Cents, date: IsoDate): Subscription | null {
+function subscriptionCandidates(subs: Subscription[], plainDesc: string, amount: Cents, date: IsoDate): { sub: Subscription; score: number }[] {
   const day = Number(date.slice(8));
+  const out: { sub: Subscription; score: number }[] = [];
   for (const s of subs) {
     if (s.canceledAt && s.canceledAt < date) continue;
     const words = normalize(s.name).split(' ').filter((w) => w.length >= 3);
     if (!words.length || !words.some((w) => plainDesc.includes(w))) continue;
-    if (Math.abs(amount - s.amount) > Math.max(300, s.amount * 0.15)) continue;
+    const diff = Math.abs(amount - s.amount);
+    // a variação aceita é a de sempre: reajuste de preço acontece
+    if (diff > Math.max(300, s.amount * 0.15)) continue;
     const gap = Math.abs(day - s.billingDay);
-    if (Math.min(gap, 31 - gap) > 4) continue;
-    return s;
+    const dayGap = Math.min(gap, 31 - gap);
+    if (dayGap > 4) continue;
+    // valor pesa mais que o dia: centavos de diferença vêm antes de um dia de diferença
+    out.push({ sub: s, score: diff * 100 + dayGap });
   }
-  return null;
+  return out.sort((a, b) => a.score - b.score);
 }
 
 async function occurrencesCovering(spaceId: string, from: IsoDate, to: IsoDate): Promise<Occurrence[]> {

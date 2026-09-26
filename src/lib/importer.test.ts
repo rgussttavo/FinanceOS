@@ -247,3 +247,25 @@ describe('o que é pagamento de fatura de cartão', () => {
     });
   }
 });
+
+describe('FIN-009: no máximo uma cobrança por assinatura por mês', () => {
+  it('a cobrança real vira a da assinatura; a compra parecida da mesma loja vira gasto normal', async () => {
+    const prime = await putRecord('subscriptions', makeSub({ name: 'Amazon Prime', amount: 1990, billingDay: 12, startedAt: '2026-01-01' }));
+    const parsed = parseDelimited(csv('12/09/2026;AMAZON PRIME;-19,90;', '13/09/2026;AMAZON MARKETPLACE LIVRO;-21,90;'));
+    const rows = await buildReview(parsed, { spaceId: SPACE, target: { type: 'account' }, invert: false, categories, subscriptions: [prime] });
+    expect(rows.map((r) => [r.description, r.status, r.subscriptionId ?? null])).toEqual([
+      ['Amazon Prime', 'subscription', prime.id],
+      ['Amazon Marketplace Livro', 'new', null],
+    ]);
+  });
+
+  it('a mais parecida ganha, mesmo vindo depois no arquivo', async () => {
+    const prime = await putRecord('subscriptions', makeSub({ name: 'Amazon Prime', amount: 1990, billingDay: 12, startedAt: '2026-01-01' }));
+    const parsed = parseDelimited(csv('10/09/2026;AMAZON COMPRA;-21,90;', '12/09/2026;AMAZON PRIME;-19,90;'));
+    const rows = await buildReview(parsed, { spaceId: SPACE, target: { type: 'account' }, invert: false, categories, subscriptions: [prime] });
+    expect(rows.map((r) => [r.description, r.status])).toEqual([
+      ['Amazon Compra', 'new'],
+      ['Amazon Prime', 'subscription'],
+    ]);
+  });
+});

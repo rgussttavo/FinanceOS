@@ -77,3 +77,20 @@ describe('conferência dos dados', () => {
     expect(f[0].detail).toContain('diferença de');
   });
 });
+
+describe('FIN-008', () => {
+  it('gasto lançado à mão sem conta (versão antiga) e o mesmo gasto importado na principal', () => {
+    const p = account({ id: 'principal-x', primary: true });
+    const manual = paid('out', 4590, '2026-09-10', { description: 'Farmácia', accountId: null });
+    const importado = paid('out', 4590, '2026-09-10', { description: 'FARMACIA', accountId: 'principal-x', externalId: 'csv:acct:1' });
+    expect(titles(base({ accounts: [p], entries: [manual, importado] }))).toContain('Possível lançamento duplicado');
+  });
+
+  it('o mesmo gasto em contas diferentes não é duplicata', () => {
+    const p = account({ id: 'principal-x', primary: true });
+    const outra = account({ id: 'poupanca' });
+    const a = paid('out', 4590, '2026-09-10', { description: 'Farmácia', accountId: null });
+    const b = paid('out', 4590, '2026-09-10', { description: 'FARMACIA', accountId: 'poupanca', externalId: 'csv:acct:poupanca:1' });
+    expect(titles(base({ accounts: [p, outra], entries: [a, b] }))).not.toContain('Possível lançamento duplicado');
+  });
+});

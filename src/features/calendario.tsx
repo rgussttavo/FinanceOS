@@ -117,7 +117,8 @@ export function CalendarioView({
               </p>
             ) : null}
             <p className="mt-1 text-[12px] text-ink-3">
-              Parte de {formatMoney(data.opening, { hidden })}, o saldo {month > cash.month ? 'previsto para' : 'das contas n'}o fim do mês anterior. Aqui vale o
+              Parte de {formatMoney(data.opening, { hidden })},{' '}
+              {month > cash.month ? 'o saldo previsto para o fim do mês anterior' : 'o saldo das contas no fim do mês anterior'}. Aqui vale o
               dia em que o dinheiro sai da conta: a compra no cartão sai quando a fatura vence, e o aporte, no dia dele — por isso o total pode
               diferir dos gastos do mês em Movimentos.
             </p>
