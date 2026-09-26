@@ -6,6 +6,7 @@ import { balancesAt, type LedgerInput } from './ledger';
 import { formatMoney } from './money';
 import { occurrencesInMonth, projectMonth, summarizeMonth } from './occurrences';
 import { wealthNow } from './wealth';
+import type { Entry } from './types';
 
 /**
  * A regra de ouro: o mesmo valor em qualquer tela.
@@ -131,5 +132,42 @@ describe('saldo inicial informado no meio do mês', () => {
     // nada previsto até o fim do mês: o fim do mês é o saldo de hoje
     expect(snap.endOfMonth).toBe(500000);
     expect(snap.safeUntilIncome).toBe(500000);
+  });
+});
+
+describe('contas vencidas de meses anteriores (FIN-005, opção A)', () => {
+  const base = (entries: Entry[]): LedgerInput => ({
+    today: '2026-09-20',
+    accounts: [account({ primary: true, openingBalance: 100000, openingDate: '2026-01-01' })],
+    cards: [],
+    cardsEnabled: true,
+    subscriptions: [],
+    debts: [],
+    transfers: [],
+    entries,
+  });
+
+  it('boleto avulso vencido no mês passado continua devido e pesa na projeção', () => {
+    const s = cashSnapshot(
+      base([entry('out', 30000, '2026-08-25', { description: 'Condomínio de agosto' }), entry('out', 10000, '2026-09-10', { description: 'Luz de setembro' })]),
+    );
+    expect(s.balanceNow).toBe(100000);
+    expect(s.overdue).toBe(40000);
+    expect(s.overdueCount).toBe(2);
+    expect(s.endOfMonth).toBe(60000);
+  });
+
+  it('recorrente antigo que ninguém marcou não vira uma pilha de vencidos', () => {
+    const aluguel = entry('out', 185000, '2026-01-06', { description: 'Aluguel', repeat: { kind: 'monthly' }, settled: { '2026-01': { at: 'x' } } });
+    const s = cashSnapshot(base([aluguel]));
+    expect(s.overdueCount).toBe(1); // só o de setembro, como antes
+    expect(s.overdue).toBe(185000);
+  });
+
+  it('o mês seguinte no Calendário começa do fim do mês do Início, vencidos inclusos', () => {
+    const i = base([entry('out', 30000, '2026-08-25'), entry('out', 10000, '2026-09-10'), entry('in', 50000, '2026-09-28')]);
+    const s = cashSnapshot(i);
+    const outubro = dayBalances(i, '2026-10-01', '2026-10-31');
+    expect(outubro.opening).toBe(s.endOfMonth);
   });
 });

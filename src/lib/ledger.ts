@@ -529,11 +529,28 @@ export function plannedItems(input: LedgerInput, to: IsoDate, from: IsoDate = mo
   const lastMonth = monthKeyOf(to);
   // assinatura e dívida só têm previsto do dia de hoje em diante
   const firstMonth = from > today ? monthKeyOf(from) : monthKeyOf(today);
+  const currentMonthStart = monthStartOf(today);
+  const tomorrow = pendingDay(today);
+  const coversPending = from <= tomorrow && tomorrow <= to;
 
   for (const entry of input.entries) {
     if (entry.deletedAt || onCard(entry) || entry.tags.includes(OPENING_TAG)) continue;
     for (const o of occurrencesUntil(entry, to, today)) {
-      if (realizedOccurrence(input, entry, o) || o.date < from) continue;
+      if (realizedOccurrence(input, entry, o)) continue;
+      const overdue = o.date <= today;
+      /**
+       * Vencido de mês anterior (FIN-005, opção A).
+       *
+       * O avulso — o boleto, o condomínio lançado para um dia — continua
+       * devido até ser pago, e pesa na projeção. A ocorrência antiga de algo
+       * que se repete, não: o aluguel "todo mês" que ninguém marcou em março
+       * quase certamente foi pago, e contá-lo empilharia meses de vencidos
+       * falsos. Desses, só o do mês corrente pesa, como sempre.
+       */
+      if (overdue && entry.repeat.kind !== 'once' && o.date < currentMonthStart) continue;
+      // vencido pesa amanhã: entra em todo intervalo que contém amanhã, mesmo
+      // que a data original seja anterior a ele
+      if (o.date < from && !(overdue && coversPending)) continue;
       out.push({
         id: `e:${entry.id}:${o.key}`,
         accountId: accountOf(entry.accountId),
