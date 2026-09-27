@@ -19,6 +19,10 @@ saldo da conta num dia = saldo inicial (no começo de openingDate)
   paga continua na conta (e aparece como vencida). Receita futura não é
   dinheiro de hoje.
 - O que aconteceu antes do saldo inicial já está dentro dele e não conta de novo.
+- O que **não diz de qual conta é** (lançamento de antes das contas, a fatura
+  de todo cartão) vai para a conta que era a principal **no dia em que
+  aconteceu**. Trocar a principal vale de amanhã em diante e não muda o saldo
+  passado de nenhuma conta. A principal não pode ser excluída nem arquivada.
 
 Quem lê daqui: Início, Contas, Calendário, Patrimônio, Cartões (limite e
 fatura paga), assistente e a conferência dos dados.
@@ -29,6 +33,9 @@ fatura paga), assistente e a conferência dos dados.
   Nenhuma conta em reais com ponto flutuante.
 - Arredonda-se **uma vez, na entrada** (texto do extrato ou do formulário →
   centavos). Depois disso, só soma e subtração de inteiros.
+- A conversão é feita **nos dígitos**, não em ponto flutuante: meio para cima,
+  sobre o valor absoluto (2,675 → 2,68; −1,005 → −1,01). Vale igual para
+  formulário, extrato em texto, célula de planilha e Pix copia e cola.
 - Divisão (parcela, rateio) usa `splitCents`: a sobra de centavos vai, um a um,
   para as primeiras partes. R$ 100 em 3× = 33,34 + 33,33 + 33,33.
 
@@ -160,14 +167,50 @@ qual ("Sai da conta" × "Saídas do mês"). O saldo de hoje é um só.
 - `diagnostics.ts` — conferência dos dados (só aponta, nunca apaga).
 - `statement.ts` — saldos declarados do extrato + integridade do arquivo.
 - Diário local de auditoria (`audit`): importação, transferência, ajuste,
-  pagamento, migração.
+  pagamento, migração, troca de principal.
+- `Account.primaryPeriods` — de quando a quando cada conta foi a principal;
+  o livro-caixa resolve o que não diz a conta pela principal do dia.
+- `db.ts` — o carimbo de uma edição nunca é anterior ao da versão que ela
+  substitui (anterior + 1 ms), com o relógio do aparelho certo ou errado.
+
+## Segunda rodada: diagnóstico com a skill `finance-app-auditor`
+
+Diagnóstico primeiro, correção só com aprovação, um teste de regressão por
+achado (que falha na versão anterior) e os números medidos antes e depois.
+
+| ID | Gravidade | O que acontecia | Antes → depois (medido) |
+|---|---|---|---|
+| FIN-001 | Crítico | "FATURA CLARO", "DEB AUTOMATICO FATURA ENEL" viravam pagamento do cartão | despesa de setembro R$ 0 → R$ 129,90; crédito falso de R$ 129,90 no cartão → R$ 0 |
+| FIN-002 | Alto | fatura de banco sem cartão no app caía no único cartão cadastrado | R$ 850 do Itaú no Nubank → gasto, com aviso para importar a fatura |
+| FIN-003 | Alto | "PAGAMENTO CARTAO NUBANK" não era reconhecido e contava em dobro com as compras | reconhecido como pagamento de fatura |
+| FIN-004 | Alto | aparelho que rodou a versão sem transferências nunca as recebia | 0 → 1 transferência depois de atualizar |
+| FIN-005 | Alto | conta avulsa vencida de mês anterior sumia da projeção (opção A) | vencido R$ 100 → R$ 400; fim do mês R$ 900 → R$ 600 |
+| FIN-006 | Alto | entrar numa conta existente apagava contas e transferências locais | nada se perde |
+| FIN-007 | Médio | e levava a principal do aparelho como segunda principal | uma principal só |
+| FIN-008 | Médio | gasto lançado à mão sem conta e o mesmo importado não eram acusados como duplicata | acusados |
+| FIN-009 | Médio | compra de R$ 21,90 na Amazon virava "cobrança do Prime" | uma cobrança por mês; valor diferente do cadastrado pede confirmação |
+| FIN-010 | Baixo | arredondamento em ponto flutuante | 1,005: R$ 1,00 → R$ 1,01; célula −2,675: −R$ 2,67 → −R$ 2,68 |
+| FIN-011 | Alto | migrações 0003, 0004 e 0005 sem confirmação no servidor | rodadas e conferidas |
+| FIN-012 | Médio | com relógio errado, a edição feita depois de ver a do outro aparelho era descartada | aluguel editado para R$ 1.700: voltava a R$ 1.600 → R$ 1.700 nos dois aparelhos |
+| FIN-013 | Baixo | principal excluída renascia só no aparelho, a cada abertura | volta sincronizada; a principal não pode mais ser excluída |
+| FIN-014 | Baixo | "parao fim do mês" no Calendário | corrigido |
+| FIN-015 | Alto | excluir a principal com lançamentos sem conta a apagava e levava o dinheiro para outra conta | Poupança R$ 500 → R$ 1.300; agora a exclusão é recusada e nada muda |
+| FIN-016 | Alto | "Tornar principal" levava junto o histórico sem conta | Principal conferida em R$ 500 ia a R$ 1.000 (R$ 500 de diferença no extrato) → continua R$ 500 |
+
+FIN-015 e FIN-016 apareceram ao confirmar o FIN-013 e foram apresentados antes
+da correção. As duas decisões de produto foram do responsável: o passado fica
+na conta onde aconteceu, e a principal não pode ser excluída.
 
 ## Testes
 
-119 testes em 8 arquivos (`npm test`):
+213 testes em 11 arquivos (`npm test`):
 
 - `statement.test.ts` — formatos de valor e data, OFX, CSV, XLSX, integridade.
-- `sync.test.ts` — dois aparelhos, com e sem a guarda do servidor.
+- `money.test.ts` — texto e número para centavos, a regra única de arredondamento.
+- `scan.test.ts` — Pix copia e cola.
+- `accounts.test.ts` — a principal não sai; trocar a principal não muda o passado.
+- `sync.test.ts` — dois aparelhos, com e sem a guarda do servidor; relógio
+  errado; troca de versão; entrar numa conta que já existe.
 - `ledger.test.ts` — cenários 43 e 62 do documento, transferência, cartão,
   parcelas, assinatura, dívida, conferência.
 - `migrate.test.ts` — migração do saldo antigo; "hoje eu tenho X".
@@ -185,11 +228,13 @@ aparelho da pessoa); roda sozinha na próxima abertura do app.
 
 ## Riscos que continuam
 
-1. **A migração 0005 precisa ser rodada no Supabase.** Sem ela, a corrida
-   entre descer e subir (segundos) ainda permite uma versão velha sobrescrever.
-   As migrações 0003 e 0004 também, se ainda não foram.
-2. "Vale a edição mais nova" usa o relógio de cada aparelho. Relógio muito
-   errado decide errado.
+1. Edição realmente simultânea — dois aparelhos mexendo no mesmo registro sem
+   um ter visto a versão do outro — ainda é decidida pela hora de cada
+   aparelho; relógio muito errado decide essa disputa errado. A edição feita
+   depois de ver a outra vale sempre (FIN-012).
+2. Troca de principal feita antes da correção do FIN-016 não tem data
+   registrada: o histórico sem conta daquela época continua na principal atual.
+   A regra vale da primeira troca feita depois dela.
 3. Sem pagamento registrado, a fatura vencida é tida como paga inteira no
    vencimento — como o app sempre supôs. Quem não paga a fatura inteira precisa
    importar o extrato da conta ou registrar o pagamento.
@@ -201,3 +246,6 @@ aparelho da pessoa); roda sozinha na próxima abertura do app.
 8. Auditoria visual completa de todas as telas em todos os tamanhos não foi
    feita nesta fase; foram verificadas no navegador Início, Contas,
    Calendário, Patrimônio, Cartões, Importação, Assistente e o primeiro acesso.
+   Na segunda rodada o navegador ficou indisponível a partir do FIN-010: o
+   aviso que substitui "Excluir conta" na principal foi conferido por teste e
+   tipos, não na tela.
