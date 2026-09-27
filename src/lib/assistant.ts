@@ -1,5 +1,5 @@
 import { normalize } from './categories';
-import { MONTHS_PT, addMonthsToKey, formatDayShort, formatMonthLabel, monthKeyParts } from './dates';
+import { MONTHS_PT, addMonthsToKey, formatDayShort, formatMonthLabel, monthKeyParts, todayIso } from './dates';
 import { formatMoney, formatPercent, ratio } from './money';
 import { buildInvoice, futureInstallments, invoiceMonthOf } from './cards';
 import type { CashSnapshot } from './cashflow';
@@ -11,6 +11,7 @@ import type { Asset, Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscri
 import type { MoneyToDecide } from './decision';
 import type { Checkup } from './checkup';
 import { answerAvailable, answerSpend, isSpendQuestion, parseSpend } from './decision-answers';
+import { answerGoalQuestion, answerSaveMore, isGoalQuestion, isSaveMoreQuestion } from './plan-answers';
 import {
   TESTS,
   answerGoalLag,
@@ -508,6 +509,22 @@ type Named = (ctx: AssistantContext, slots: Slots) => Answer;
 
 /** perguntas que não são "quanto/quais de alguma coisa" e precisam de resposta própria */
 const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
+  {
+    id: 'objetivo',
+    /**
+     * "Quero viajar em dezembro, consigo?" — objetivo com prazo no futuro.
+     * Vem antes do "posso gastar": comprar algo daqui a meses é plano, não
+     * gasto de hoje.
+     */
+    test: (p) => isGoalQuestion(p.raw, todayOf()),
+    answer: (ctx) => answerGoalQuestion(ctx, normalize(lastQuestion), lastQuestion),
+  },
+  {
+    id: 'se-economizar',
+    /** "Se eu economizar R$ 500 por mês, o que acontece?" — o efeito nas metas */
+    test: (p) => isSaveMoreQuestion(p.raw, lastQuestion),
+    answer: (ctx) => answerSaveMore(ctx, lastQuestion),
+  },
   {
     id: 'posso-gastar',
     /**
@@ -1128,6 +1145,9 @@ const NAMED_LINKS: Record<string, { label: string; route: Route }> = {
 
 /** a pergunta crua da vez; os temas que precisam de número leem daqui */
 let lastQuestion = '';
+/** o dia do contexto da pergunta em curso: os testes dos temas não recebem o contexto */
+let lastToday = '';
+const todayOf = () => lastToday || todayIso();
 
 /** a meta citada pelo nome; sem nome, a primeira ativa */
 function pickGoal(ctx: AssistantContext): Goal | null {
@@ -1208,6 +1228,7 @@ const FALLBACK = [
  */
 export function ask(rawQuestion: string, ctx: AssistantContext): Answer {
   lastQuestion = rawQuestion;
+  lastToday = ctx.today;
   const parsed = parse(rawQuestion);
   if (parsed.raw.length < 2) {
     return { text: 'Pode perguntar. Comece por "como estou?" ou toque numa das sugestões.' };
@@ -1270,6 +1291,8 @@ export const SUGGESTIONS = [
   'Quanto posso gastar?',
   'Posso gastar R$ 300?',
   'Como está minha vida financeira?',
+  'Quero viajar em dezembro com R$ 8 mil, consigo?',
+  'Se eu economizar R$ 500 por mês, o que acontece?',
   'Por que meu dinheiro some?',
   'Estou gastando demais?',
   'Por que minha fatura está tão alta?',

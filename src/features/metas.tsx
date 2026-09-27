@@ -10,19 +10,23 @@ import {
   Input,
   Panel,
   SectionTitle,
+  Segmented,
   Select,
   Sheet,
   Skeleton,
+  Switch,
   confirmAction,
   toast,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import { currentMonthKey, formatDateFull, formatMonthLabel } from '@/lib/dates';
+import { currentMonthKey, formatDateFull, formatMonthLabel, todayIso } from '@/lib/dates';
+import { PRIORITY_LABEL, goalPlan, priorityOf, type Allocation, type GoalPlan, type ScenarioId } from '@/lib/goal-plan';
 import { GOAL_ICONS, goalPace, goalProgress } from '@/lib/goals';
 import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
-import type { FinanceBase } from '@/lib/picture';
+import { moneyStory } from '@/lib/money-story';
+import { monthOccurrences, type FinanceBase } from '@/lib/picture';
 import { createGoal, depositIntoGoal, removeGoal, setGoalPaused, updateGoal } from '@/lib/store';
-import type { Category, Entry, Goal, GoalSource, MonthKey } from '@/lib/types';
+import type { Category, Entry, Goal, GoalPriority, GoalSource, MonthKey } from '@/lib/types';
 
 /* ------------------------------------------------------------------- anel */
 
@@ -97,6 +101,11 @@ export function MetasView({
   const month = currentMonthKey();
   const goals = base.goals;
   const entries = base.entries;
+  // o que as metas pedem contra o que sobra, e os três cenários
+  const plan = React.useMemo(() => {
+    const today = todayIso();
+    return goalPlan(goals, entries, moneyStory((m) => monthOccurrences(base, m, today), entries, today), today);
+  }, [base, goals, entries]);
   const [sheet, setSheet] = React.useState<{ open: boolean; editing: Goal | null }>({
     open: false,
     editing: null,
@@ -170,6 +179,8 @@ export function MetasView({
           <Plus size={15} /> Nova meta
         </Button>
       </div>
+
+      {active.length ? <GoalPlanPanel plan={plan} hidden={hidden} /> : null}
 
       <ul className="grid gap-4 md:grid-cols-2">
         {active.map((goal) => (
@@ -264,6 +275,10 @@ function GoalCard({
           <ProgressRing ratio={p.ratio} icon={goal.icon} color={goal.color || 'var(--accent)'} size={76} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-[17px] font-semibold text-ink">{goal.name}</p>
+            <p className="text-[12px] text-ink-3">
+              Prioridade {PRIORITY_LABEL[priorityOf(goal)]}
+              {goal.fixedDeadline && goal.deadline ? ' · prazo fixo' : ''}
+            </p>
             <p className="tnum mt-0.5 text-[14px] text-ink-2">
               {formatMoney(p.current, { hidden })} <span className="text-ink-3">/ {formatMoney(p.target, { hidden })}</span>
             </p>
@@ -399,6 +414,8 @@ function GoalSheet({
   const [sourceValue, setSourceValue] = React.useState('manual');
   const [savedText, setSavedText] = React.useState('');
   const [deadline, setDeadline] = React.useState('');
+  const [priority, setPriority] = React.useState<GoalPriority>('media');
+  const [fixedDeadline, setFixedDeadline] = React.useState(false);
   const [depositText, setDepositText] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
@@ -415,6 +432,8 @@ function GoalSheet({
     );
     setSavedText(editing ? String(editing.saved / 100).replace('.', ',') : '');
     setDeadline(editing?.deadline ?? '');
+    setPriority(editing ? priorityOf(editing) : 'media');
+    setFixedDeadline(!!editing?.fixedDeadline);
     setDepositText('');
     setError(null);
   }
@@ -444,6 +463,8 @@ function GoalSheet({
         categoryId,
         saved: parseMoney(savedText) ?? 0,
         deadline: deadline || null,
+        priority,
+        fixedDeadline: !!deadline && fixedDeadline,
       };
       if (editing) await updateGoal(editing, payload);
       else await createGoal(payload);
@@ -567,6 +588,30 @@ function GoalSheet({
           <Input id="goal-deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
         </Field>
 
+        {deadline ? (
+          <Switch
+            checked={fixedDeadline}
+            onChange={setFixedDeadline}
+            label="Prazo fixo"
+            detail="Data que não muda, como uma viagem marcada. No plano, recebe antes das metas de prazo flexível com a mesma prioridade."
+          />
+        ) : null}
+
+        <div>
+          <p className="mb-2 text-[13px] font-medium text-ink-2">Prioridade</p>
+          <Segmented
+            label="Prioridade"
+            value={priority}
+            onChange={setPriority}
+            options={[
+              { value: 'alta', label: 'Alta' },
+              { value: 'media', label: 'Média' },
+              { value: 'baixa', label: 'Baixa' },
+            ]}
+          />
+          <p className="mt-1.5 text-[12px] leading-relaxed text-ink-3">Quando a sobra não dá para todas, a prioridade decide quem recebe primeiro.</p>
+        </div>
+
         {editing && editing.source === 'manual' && (
           <div className="rounded-card border border-line bg-surface-2 p-3">
             <p className="text-[13px] font-medium text-ink-2">Guardar mais um tanto</p>
@@ -598,5 +643,100 @@ function GoalSheet({
         {error && <p className="text-[13px] text-out">{error}</p>}
       </div>
     </Sheet>
+  );
+}
+
+/* ------------------------------------------------------------------ plano */
+
+const SCENARIO_OPTIONS: { value: ScenarioId; label: string }[] = [
+  { value: 'conservador', label: 'Conservador' },
+  { value: 'equilibrado', label: 'Equilibrado' },
+  { value: 'acelerado', label: 'Acelerado' },
+];
+
+/** quando a meta chega neste cenário, e se chega no prazo */
+function reachText(r: Allocation): string {
+  if (!r.reaches) return r.onTime === null ? 'espera a vez' : 'não chega no prazo';
+  const when = formatMonthLabel(r.reaches);
+  if (r.onTime === true) return `chega em ${when}, no prazo`;
+  if (r.onTime === false) return `chega em ${when}, ${r.delay} ${r.delay === 1 ? 'mês' : 'meses'} depois do prazo`;
+  return `chega em ${when}`;
+}
+
+/**
+ * O plano das metas: o que elas pedem contra o que sobra, e três cenários
+ * de divisão. Só mostra consequências — nenhuma meta muda sozinha.
+ */
+function GoalPlanPanel({ plan, hidden }: { plan: GoalPlan; hidden: boolean }) {
+  const [id, setId] = React.useState<ScenarioId>('equilibrado');
+  if (!plan.needs.length) return null;
+  const m = (v: number) => formatMoney(v, { hidden });
+  const scenario = plan.scenarios.find((s) => s.id === id) ?? plan.scenarios[1];
+  const description: Record<ScenarioId, string> = {
+    conservador: `70% da sobra vai para as metas (${m(plan.scenarios[0].budget)} por mês); o resto fica de folga.`,
+    equilibrado: `Toda a sobra média (${m(plan.scenarios[1].budget)} por mês) vai para as metas, pela prioridade.`,
+    acelerado: `Toda a sobra e mais ${m(plan.extraCut)} por mês — 10% dos gastos variáveis, se você cortar.`,
+  };
+
+  if (plan.capacity === null) {
+    return (
+      <Panel className="px-5 py-4">
+        <SectionTitle>Plano das metas</SectionTitle>
+        <p className="text-[14px] leading-relaxed text-ink-2">
+          Com um mês completo de movimento, eu comparo o que as metas pedem com o que sobra por mês e mostro cenários.
+        </p>
+      </Panel>
+    );
+  }
+
+  const months = `nos últimos ${plan.months.length} ${plan.months.length === 1 ? 'mês' : 'meses'}`;
+  return (
+    <Panel className="px-5 py-4">
+      <SectionTitle>Plano das metas</SectionTitle>
+      <p className="text-[14px] leading-relaxed text-ink-2">
+        {plan.asked > 0 ? <>As metas com prazo pedem <strong className="font-semibold text-ink">{m(plan.asked)}</strong> por mês; </> : 'Nenhuma meta com prazo em aberto; '}
+        {plan.capacity > 0 ? (
+          <>
+            {months} sobraram <strong className="font-semibold text-ink">{m(plan.capacity)}</strong> por mês, em média.
+          </>
+        ) : (
+          <>{months} não sobrou dinheiro ({formatMoney(plan.capacity, { hidden, signed: plan.capacity < 0 })} por mês): as metas dependem de cortar gastos ou aumentar a renda.</>
+        )}
+      </p>
+      {plan.asked > 0 ? (
+        <p className={cn('mt-1.5 text-[14px] font-medium', plan.conflict ? 'text-warn' : 'text-in')}>
+          {plan.conflict
+            ? `Elas competem pelo mesmo dinheiro: faltam ${m(plan.gap)} por mês para todas chegarem no prazo.`
+            : 'Cabe: com a sobra atual, todas as metas com prazo chegam a tempo.'}
+        </p>
+      ) : null}
+
+      <Segmented className="mt-4" label="Cenário" value={id} onChange={setId} options={SCENARIO_OPTIONS} />
+      <p className="mt-2 text-[12px] leading-relaxed text-ink-3">{description[id]}</p>
+
+      <ul className="mt-2 divide-y divide-line">
+        {scenario.rows.map((r) => (
+          <li key={r.goal.id} className="flex items-center justify-between gap-3 py-2.5">
+            <span className="min-w-0">
+              <span className="block truncate text-[14px] text-ink">
+                {r.goal.icon} {r.goal.name}
+              </span>
+              <span className="block text-[12px] text-ink-3">
+                prioridade {PRIORITY_LABEL[r.priority]}
+                {r.fixed ? ' · prazo fixo' : ''}
+              </span>
+            </span>
+            <span className="shrink-0 text-right">
+              <span className="tnum block text-[14px] font-medium text-ink">{r.monthly > 0 ? `${m(r.monthly)}/mês` : 'sem aporte'}</span>
+              <span className={cn('block text-[12px]', r.onTime === false ? 'text-warn' : 'text-ink-3')}>{reachText(r)}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {scenario.leftover > 0 ? <p className="mt-2 text-[12px] text-ink-3">Sobram {m(scenario.leftover)} por mês sem destino.</p> : null}
+      <p className="mt-3 border-t border-line pt-2.5 text-[12px] leading-relaxed text-ink-3">
+        Nada muda sozinho: para seguir um cenário, ajuste os aportes, os prazos ou as prioridades das metas.
+      </p>
+    </Panel>
   );
 }

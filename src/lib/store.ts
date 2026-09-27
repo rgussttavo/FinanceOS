@@ -31,6 +31,7 @@ import type {
   FlowKind,
   Folder,
   Goal,
+  GoalPriority,
   GoalSource,
   IsoDate,
   MonthKey,
@@ -455,6 +456,8 @@ export interface NewGoalInput {
   saved: Cents;
   deadline: IsoDate | null;
   color?: string;
+  priority?: GoalPriority;
+  fixedDeadline?: boolean;
 }
 
 export async function createGoal(input: NewGoalInput): Promise<Goal> {
@@ -472,6 +475,8 @@ export async function createGoal(input: NewGoalInput): Promise<Goal> {
     categoryId: input.source === 'category' ? input.categoryId : null,
     saved: input.source === 'manual' ? Math.max(0, Math.round(input.saved)) : 0,
     deadline: input.deadline,
+    ...(input.priority ? { priority: input.priority } : null),
+    ...(input.fixedDeadline !== undefined ? { fixedDeadline: input.fixedDeadline } : null),
     color: input.color ?? '#c9a36b',
     archivedAt: null,
   };

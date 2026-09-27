@@ -38,7 +38,7 @@ function categoryName(ctx: AssistantContext, id: string): string {
   return ctx.categories.find((c) => c.id === id)?.name ?? 'Sem categoria';
 }
 
-function expander(ctx: AssistantContext): ExpandMonth {
+export function expander(ctx: AssistantContext): ExpandMonth {
   return (month) => (month === ctx.month ? ctx.occurrences : ctx.expand ? ctx.expand(month) : occurrencesInMonth(ctx.entries, month, ctx.today));
 }
 

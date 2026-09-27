@@ -26,7 +26,7 @@ planejar, simular, orientar e acompanhar.
 | 1 | Dinheiro para decidir: saldo, comprometido, disponível, margem, "posso gastar R$ X?" | feita |
 | 2 | Diagnóstico por áreas (sem nota geral), "o que merece atenção", confiança dos dados | feita |
 | 3 | Perguntas vagas no assistente ("por que meu dinheiro some"), resposta em camadas | feita |
-| 4 | Metas como plano vivo: prioridade, conflito, previsão pelo ritmo real, cenários | a fazer |
+| 4 | Metas como plano vivo: prioridade, conflito, previsão pelo ritmo real, cenários | feita |
 | 5 | Primeiro acesso com 3 ou 4 perguntas, perfil e objetivos de vida | a fazer |
 | 6 | Estratégias em fases, estágios, próxima melhor ação, check-ins | a fazer |
 | 7 | Comportamento observado e frases contextuais (poucas) | a fazer |
@@ -146,3 +146,36 @@ Código: `src/lib/money-story.ts` (números) e `src/lib/story-answers.ts`
 
 A resposta segue sempre a mesma ordem: a resposta direta, o porquê em
 números, o que dá para fazer. A conta vai na lista de detalhes.
+
+## Fase 4 — metas como plano vivo
+
+Código: `src/lib/goal-plan.ts` (divisão da sobra e cenários),
+`src/lib/plan-answers.ts` (assistente) e o painel "Plano das metas" em
+`src/features/metas.tsx`. Testes: `goal-plan.test.ts` e
+`plan-answers.test.ts`.
+
+- **Cada meta** ganha prioridade (alta, média, baixa; ausente = média) e
+  prazo fixo ou flexível (ausente = flexível). O cartão continua mostrando o
+  ritmo real e quando chega nele.
+- **Capacidade:** a sobra média dos 3 meses completos (renda − fixos −
+  parcelas − variáveis), a mesma de "por que meu dinheiro some".
+- **Conflito:** as metas com prazo pedem, somadas, mais do que a sobra. A
+  tela diz quanto falta por mês para todas chegarem no prazo.
+- **Divisão da sobra**, igual nos três cenários: prioridade alta, média,
+  baixa; na mesma prioridade, prazo fixo antes do flexível; empatadas dividem
+  na proporção do que pedem; metas sem prazo ficam com o resto, peso 3, 2, 1.
+
+| Cenário | Quanto entra na divisão |
+|---|---|
+| Conservador | 70% da sobra média; 30% fica de folga |
+| Equilibrado | toda a sobra média |
+| Acelerado | toda a sobra e mais 10% dos gastos variáveis, se cortados |
+
+- **Nada muda sozinho.** Os cenários mostram o novo prazo de cada meta; a
+  pessoa ajusta aportes, prazos ou prioridades.
+- **Assistente:** "Quero X até tal data, consigo?" compara o que o objetivo
+  pede por mês com o que sobra depois das metas atuais (dinheiro não é
+  contado duas vezes) e dá as saídas — custo, prazo, sobra, prioridade. "Se
+  eu economizar R$ X por mês" mostra a sobra nova e quanto cada meta
+  adianta. Comprar algo com prazo no futuro é tratado como objetivo, não como
+  gasto de hoje.

@@ -323,7 +323,13 @@ export interface Goal extends SyncFields {
   pausedAt?: IsoInstant | null;
   /** aportes feitos numa meta manual, para o histórico e o ritmo */
   deposits?: { at: IsoInstant; amount: Cents }[];
+  /** prioridade entre as metas, para dividir a sobra; ausente = média */
+  priority?: GoalPriority;
+  /** prazo que não muda (viagem marcada, casamento); ausente = flexível */
+  fixedDeadline?: boolean;
 }
+
+export type GoalPriority = 'alta' | 'media' | 'baixa';
 
 /* ------------------------------------------------------------------ dívida */
 
