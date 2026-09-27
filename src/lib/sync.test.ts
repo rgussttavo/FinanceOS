@@ -22,7 +22,7 @@ vi.mock('./supabase', () => ({
   },
 }));
 
-import { db, putRecord, putRecords, selectDatabase } from './db';
+import { db, deleteRecord, putRecord, putRecords, selectDatabase } from './db';
 import { runSync } from './sync';
 import type { Entry } from './types';
 
@@ -171,7 +171,6 @@ describe(`sincronização entre aparelhos (servidor ${lww ? 'com' : 'sem'} a gua
     const e = await putRecord('entries', entry('Assinatura cancelada'));
     await sync('aparelho-a');
     await sync('aparelho-b');
-    const { deleteRecord } = await import('./db');
     await device('aparelho-b');
     await deleteRecord('entries', e.id);
     await sync('aparelho-b');
@@ -285,5 +284,105 @@ describe('entrar numa conta que já existe (FIN-006, FIN-007)', () => {
     await adoptLocalSpace('u1');
     expect((await db().accounts.toArray()).filter((a) => !a.deletedAt)).toHaveLength(0);
     expect((await db().entries.toArray()).filter((e) => !e.deletedAt)).toHaveLength(0);
+  });
+});
+
+describe('relógio errado num aparelho (FIN-012)', () => {
+  /**
+   * "Vale a edição mais nova" compara a hora que cada aparelho carimba na
+   * edição. Quem edita depois de ver a versão de outro aparelho está, de fato,
+   * editando depois — e a edição dele precisa valer, marque o relógio o que
+   * marcar. Produção tem a guarda da 0005 ligada.
+   */
+  const HOUR = 3_600_000;
+
+  beforeEach(() => {
+    (server.current as FakeServer).lww = true;
+    vi.useFakeTimers({ toFake: ['Date'] });
+  });
+
+  /** o relógio de cada aparelho: a hora real mais o erro dele */
+  const clock = (skew: Record<string, number>) => (name: string, real: string) =>
+    vi.setSystemTime(new Date(Date.parse(real) + (skew[name] ?? 0)));
+
+  const onServer = (id: string) => [...(server.current as FakeServer).rows.values()].find((r) => r.id === id)?.data;
+
+  async function inDevice(name: string, id: string) {
+    await device(name);
+    return db().entries.get(id);
+  }
+
+  const casos: [string, Record<string, number>][] = [
+    ['B com o relógio 1 hora atrasado', { 'aparelho-b': -HOUR }],
+    ['A com o relógio 1 hora adiantado', { 'aparelho-a': HOUR }],
+  ];
+
+  for (const [caso, skew] of casos) {
+    it(`${caso}: a edição que B faz depois de ver a de A vale nos dois aparelhos`, async () => {
+      const at = clock(skew);
+      at('aparelho-a', '2026-09-24T10:00:00Z');
+      await device('aparelho-a');
+      const original = await putRecord('entries', entry('Aluguel', 150000));
+      await sync('aparelho-a');
+
+      at('aparelho-a', '2026-09-24T10:05:00Z');
+      await device('aparelho-a');
+      await putRecord('entries', { ...((await db().entries.get(original.id)) as Entry), amount: 160000, description: 'Aluguel (A)' });
+      await sync('aparelho-a');
+
+      // B desce às 10:10, vê a edição de A e edita por cima dela
+      at('aparelho-b', '2026-09-24T10:10:00Z');
+      await sync('aparelho-b');
+      const seen = (await db().entries.get(original.id)) as Entry;
+      expect(seen.description).toBe('Aluguel (A)');
+      await putRecord('entries', { ...seen, amount: 170000, description: 'Aluguel (B)' });
+      await sync('aparelho-b');
+
+      at('aparelho-a', '2026-09-24T10:20:00Z');
+      await sync('aparelho-a');
+      at('aparelho-b', '2026-09-24T10:25:00Z');
+      await sync('aparelho-b');
+
+      expect(onServer(original.id)).toMatchObject({ description: 'Aluguel (B)', amount: 170000 });
+      expect(await inDevice('aparelho-a', original.id)).toMatchObject({ description: 'Aluguel (B)', amount: 170000 });
+      expect(await inDevice('aparelho-b', original.id)).toMatchObject({ description: 'Aluguel (B)', amount: 170000 });
+    });
+  }
+
+  it('a exclusão feita no aparelho atrasado chega ao outro', async () => {
+    const at = clock({ 'aparelho-b': -HOUR });
+    at('aparelho-a', '2026-09-24T10:00:00Z');
+    await device('aparelho-a');
+    const original = await putRecord('entries', entry('Academia', 9990));
+    await sync('aparelho-a');
+
+    at('aparelho-b', '2026-09-24T10:10:00Z');
+    await sync('aparelho-b');
+    await deleteRecord('entries', original.id);
+    await sync('aparelho-b');
+
+    at('aparelho-a', '2026-09-24T10:20:00Z');
+    await sync('aparelho-a');
+    expect(onServer(original.id)?.deletedAt).toBeTruthy();
+    expect((await inDevice('aparelho-a', original.id))?.deletedAt).toBeTruthy();
+  });
+
+  it('a gravação em lote (import) no aparelho atrasado também vale', async () => {
+    const at = clock({ 'aparelho-b': -HOUR });
+    at('aparelho-a', '2026-09-24T10:00:00Z');
+    await device('aparelho-a');
+    const original = await putRecord('entries', entry('Farmácia', 5000));
+    await sync('aparelho-a');
+
+    at('aparelho-b', '2026-09-24T10:10:00Z');
+    await sync('aparelho-b');
+    const seen = (await db().entries.get(original.id)) as Entry;
+    await putRecords('entries', [{ ...seen, notes: 'conferido no extrato' }]);
+    await sync('aparelho-b');
+
+    at('aparelho-a', '2026-09-24T10:20:00Z');
+    await sync('aparelho-a');
+    expect(onServer(original.id)?.notes).toBe('conferido no extrato');
+    expect((await inDevice('aparelho-a', original.id))?.notes).toBe('conferido no extrato');
   });
 });

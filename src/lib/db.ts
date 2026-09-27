@@ -197,6 +197,22 @@ const SYNC_TABLES: Record<SyncTable, keyof NorteDB> = {
 type Syncable = { id: string; spaceId: string; updatedAt: string; deletedAt: string | null };
 
 /**
+ * O carimbo de uma edição: a hora do aparelho, mas nunca antes da versão que
+ * ela substitui (FIN-012).
+ *
+ * "Vale a edição mais nova" compara esse carimbo, aqui (applyRemote) e no
+ * servidor (0005). Com o relógio do aparelho atrasado, a edição feita depois
+ * de ver a de outro aparelho saía com hora anterior à dela e era descartada
+ * sem aviso. Quem edita já viu a versão anterior: a edição vem depois dela,
+ * marque o relógio o que marcar.
+ */
+function stampAfter(previous: string | undefined, now: string): string {
+  const before = previous ? Date.parse(previous) : Number.NaN;
+  if (!Number.isFinite(before) || Date.parse(now) > before) return now;
+  return new Date(before + 1).toISOString();
+}
+
+/**
  * Grava um registro e enfileira a mutacao, numa transacao so.
  *
  * Se a gravacao entrar e a fila nao, o outro aparelho nunca ve a mudanca; se a
@@ -205,10 +221,12 @@ type Syncable = { id: string; spaceId: string; updatedAt: string; deletedAt: str
  */
 export async function putRecord<T extends Syncable>(table: SyncTable, record: T): Promise<T> {
   const d = db();
-  const stamped = { ...record, updatedAt: nowInstant() } as T;
   const target = d[SYNC_TABLES[table]] as unknown as Table<T, string>;
+  let stamped = record;
 
   await d.transaction('rw', target, d.mutations, async () => {
+    const existing = await target.get(record.id);
+    stamped = { ...record, updatedAt: stampAfter(existing?.updatedAt, nowInstant()) } as T;
     await target.put(stamped);
     await d.mutations.add({
       table,
@@ -234,10 +252,12 @@ export async function putRecords<T extends Syncable>(table: SyncTable, records: 
   if (!records.length) return [];
   const d = db();
   const at = nowInstant();
-  const stamped = records.map((r) => ({ ...r, updatedAt: at }) as T);
   const target = d[SYNC_TABLES[table]] as unknown as Table<T, string>;
+  let stamped: T[] = [];
 
   await d.transaction('rw', target, d.mutations, async () => {
+    const existing = await target.bulkGet(records.map((r) => r.id));
+    stamped = records.map((r, i) => ({ ...r, updatedAt: stampAfter(existing[i]?.updatedAt, at) }) as T);
     await target.bulkPut(stamped);
     await d.mutations.bulkAdd(
       stamped.map((r) => ({
@@ -270,7 +290,8 @@ export async function deleteRecord(table: SyncTable, id: string): Promise<void> 
   await d.transaction('rw', target, d.mutations, async () => {
     const existing = await target.get(id);
     if (!existing) return;
-    const stamped: Syncable = { ...existing, deletedAt: nowInstant(), updatedAt: nowInstant() };
+    const now = nowInstant();
+    const stamped: Syncable = { ...existing, deletedAt: now, updatedAt: stampAfter(existing.updatedAt, now) };
     await target.put(stamped);
     await d.mutations.add({
       table,
