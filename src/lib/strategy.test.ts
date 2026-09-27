@@ -219,3 +219,18 @@ describe('no assistente', () => {
     expect(ask('Como estou?', ctx).highlight?.label).toBe('Resultado do mês');
   });
 });
+
+describe('estou evoluindo?', () => {
+  it('só com evidência: as sequências, e sem sequência diz que ainda não dá para comparar', () => {
+    const base = { month: '2026-09', entries: [], summary: summarizeMonth([], '2026-09', '2026-09-18'), occurrences: [], projection: [], history: [], categories: [], cards: [], subscriptions: [], goals: [], debts: [], market: null, today: '2026-09-18' };
+    const withHabits: AssistantContext = {
+      ...base,
+      strategy: { stage: null, actions: [], getHabits: () => ({ positiveStreak: 3, noNegativeStreak: 1, saving: { months: 4, of: 6 } }) },
+    };
+    expect(ask('Estou evoluindo?', withHabits).text).toBe(
+      'Pelo que os dados mostram: 3 meses seguidos com as entradas acima das saídas; guardou dinheiro em 4 dos últimos 6 meses.',
+    );
+    const without: AssistantContext = { ...base, strategy: { stage: null, actions: [], getHabits: () => ({ positiveStreak: 1, noNegativeStreak: 0, saving: { months: 0, of: 1 } }) } };
+    expect(ask('Estou evoluindo financeiramente?', without).text).toContain('Ainda não há uma sequência de meses');
+  });
+});

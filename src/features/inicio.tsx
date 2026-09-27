@@ -147,7 +147,7 @@ export function InicioView(props: InicioProps) {
           {!empty && props.strategy.actions[0] ? <NextActionCard action={props.strategy.actions[0]} hidden={hidden} onGo={onGo} /> : null}
           <MainCard {...props} />
           {props.strategy.review ? (
-            <MonthlyCheckin review={props.strategy.review} settings={settings} categories={props.categories} hidden={hidden} onGo={onGo} />
+            <MonthlyCheckin review={props.strategy.review} habits={props.strategy.habits ?? props.strategy.getHabits()} settings={settings} categories={props.categories} hidden={hidden} onGo={onGo} />
           ) : null}
           {!empty && props.strategy.quarterly ? <QuarterlyReview checkup={props.checkup} stage={props.strategy.stage} settings={settings} onGo={onGo} /> : null}
           {empty ? <FirstSteps onQuick={props.onQuick} onGo={onGo} /> : null}

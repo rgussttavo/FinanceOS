@@ -9,6 +9,7 @@ import { monthUse, type ExpandMonth, type MoneyStory } from './money-story';
 import type { Route } from './nav';
 import type { Category, Cents, Entry, Goal, IsoDate, MonthKey, Subscription } from './types';
 import { subscriptionChargeIn } from './cards';
+import type { Habits } from './behavior';
 
 /**
  * Estratégia e acompanhamento (fase 6): em que etapa a situação está, qual é
@@ -351,6 +352,10 @@ export interface StrategyView {
   review: MonthReview | null;
   /** hora de revisar o plano */
   quarterly: boolean;
+  /** o comportamento observado, calculado só quando o fechamento do mês aparece */
+  habits: Habits | null;
+  /** o mesmo cálculo, sob demanda (o assistente pergunta "estou evoluindo?") */
+  getHabits: () => Habits;
 }
 
 /* ------------------------------------------------------- os check-ins */

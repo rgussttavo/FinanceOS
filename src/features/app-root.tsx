@@ -22,6 +22,7 @@ import { buildCheckup } from '@/lib/checkup';
 import { goalPlan } from '@/lib/goal-plan';
 import { moneyStory } from '@/lib/money-story';
 import { monthReview, monthlyDue, nextActions, quarterlyDue, stageOf, type StrategyView } from '@/lib/strategy';
+import { habitsOf } from '@/lib/behavior';
 import { moneyToDecide, safetyBuffer } from '@/lib/decision';
 import { ledgerInput, monthOccurrences, useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
 import { toggleSettled, useBootstrap, useCategories, useSettings } from '@/lib/store';
@@ -142,13 +143,18 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
     const story = moneyStory(expandMonth, base.entries, today);
     const plan = goalPlan(base.goals, base.entries, story, today);
     const reviewing = monthlyDue(today, settings?.checkins?.monthly);
+    // as sequências custam o saldo dia a dia de meses: só quando alguém vai olhar
+    let habits: ReturnType<typeof habitsOf> | null = null;
+    const getHabits = () => (habits ??= habitsOf(expandMonth, base.entries, ledgerInput(base, cardsEnabled, today), today));
     return {
       stage: stageOf(checkup),
       actions: nextActions({ checkup, cash, decide, story, plan, subscriptions: base.subscriptions, categories, today }),
       review: reviewing ? monthReview(expandMonth, base.entries, base.goals, today, reviewing) : null,
       quarterly: quarterlyDue(today, settings?.checkins?.quarterly, settings?.createdAt?.slice(0, 10) ?? null),
+      habits: reviewing ? getHabits() : null,
+      getHabits,
     };
-  }, [base, cash, decide, checkup, categories, settings]);
+  }, [base, cash, decide, checkup, categories, settings, cardsEnabled]);
   // de quanto o mês aberto parte: o saldo das contas na véspera do dia 1
   const monthOpening = React.useMemo(
     () => dayBalances(ledgerInput(base, cardsEnabled), `${month}-01`, `${month}-01`).opening,
@@ -616,6 +622,8 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
         cardsEnabled={cardsEnabled}
         onGo={go}
         accounts={base.accounts.filter((a) => !a.archived)}
+        decide={decide}
+        spendContext={{ subscriptions: base.subscriptions, transfers: base.transfers }}
       />
       <EntrySheet
         occurrence={openOccurrence}

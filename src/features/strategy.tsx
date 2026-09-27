@@ -9,6 +9,7 @@ import { putRecord } from '@/lib/db';
 import { formatMonthLabel, todayIso } from '@/lib/dates';
 import type { Route } from '@/lib/nav';
 import { STAGES, reviewText, type MonthReview, type NextAction, type Stage } from '@/lib/strategy';
+import { habitLines, type Habits } from '@/lib/behavior';
 import type { Category, Settings } from '@/lib/types';
 import { ProfileSheet } from './profile';
 
@@ -52,18 +53,21 @@ export function NextActionCard({ action, hidden, onGo }: { action: NextAction; h
 
 export function MonthlyCheckin({
   review,
+  habits,
   settings,
   categories,
   hidden,
   onGo,
 }: {
   review: MonthReview;
+  habits: Habits;
   settings: Settings | null;
   categories: Category[];
   hidden: boolean;
   onGo: (route: Route) => void;
 }) {
   const t = reviewText(review, (id) => categories.find((c) => c.id === id)?.name ?? 'Sem categoria');
+  const streaks = habitLines(habits);
   return (
     <Panel className="p-5">
       <SectionTitle>Como foi {formatMonthLabel(review.month)}</SectionTitle>
@@ -72,6 +76,13 @@ export function MonthlyCheckin({
         <ul className="mt-2 grid gap-1 text-[14px] leading-relaxed text-ink-2">
           {t.lines.map((l) => (
             <li key={l}>{mask(l, hidden)}</li>
+          ))}
+        </ul>
+      ) : null}
+      {streaks.length ? (
+        <ul className="mt-2 grid gap-1 text-[14px] leading-relaxed text-in">
+          {streaks.map((l) => (
+            <li key={l}>{l}</li>
           ))}
         </ul>
       ) : null}

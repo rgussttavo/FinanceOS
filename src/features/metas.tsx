@@ -24,6 +24,7 @@ import { PRIORITY_LABEL, goalPlan, priorityOf, type Allocation, type GoalPlan, t
 import { GOAL_ICONS, goalPace, goalProgress } from '@/lib/goals';
 import { formatMoney, formatPercent, parseMoney } from '@/lib/money';
 import { moneyStory } from '@/lib/money-story';
+import { depositMessage } from '@/lib/behavior';
 import { monthOccurrences, type FinanceBase } from '@/lib/picture';
 import { createGoal, depositIntoGoal, removeGoal, setGoalPaused, updateGoal } from '@/lib/store';
 import type { Category, Entry, Goal, GoalPriority, GoalSource, MonthKey } from '@/lib/types';
@@ -264,8 +265,7 @@ function GoalCard({
     await depositIntoGoal(goal, amount);
     setDepositText('');
     setDepositing(false);
-    const after = p.current + amount;
-    toast(after >= p.target ? `Meta ${goal.name} batida! 🎉` : `${formatMoney(amount)} guardados em ${goal.name}.`);
+    toast(depositMessage(goal, p.current, amount, p.target, todayIso()) ?? `${formatMoney(amount)} guardados em ${goal.name}.`);
   }
 
   return (
@@ -629,7 +629,9 @@ function GoalSheet({
                 onClick={async () => {
                   const amount = parseMoney(depositText);
                   if (!amount || amount <= 0) return;
+                  const before = goalProgress(editing, [], currentMonthKey());
                   await depositIntoGoal(editing, amount);
+                  toast(depositMessage(editing, before.current, amount, before.target, todayIso()) ?? `${formatMoney(amount)} guardados em ${editing.name}.`);
                   setDepositText('');
                   onClose();
                 }}

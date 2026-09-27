@@ -3,6 +3,7 @@ import { normalize } from './categories';
 import { MONTHS_PT, addMonthsToKey, formatMonthLabel, monthKeyOf } from './dates';
 import { expander } from './story-answers';
 import { STAGES, monthReview, reviewText } from './strategy';
+import { habitLines } from './behavior';
 import type { MonthKey } from './types';
 
 /**
@@ -15,6 +16,7 @@ export const STRATEGY_TESTS = {
   nextStep: (raw: string) =>
     /\b(o que (eu )?(faco|devo fazer|fazer|posso fazer)( agora| primeiro| hoje)?\b|por onde (eu )?comeco|proximo passo|o que priorizar|qual (e )?(a )?(minha )?prioridade)/.test(raw),
   stage: (raw: string) => /\b(em que|qual|que) (etapa|fase|estagio)\b|\bminha trilha\b/.test(raw),
+  progress: (raw: string) => /\b(estou|to|tou|eu estou) (evoluindo|melhorando|progredindo|indo bem)\b|\bminha evolucao\b|\bevoluindo financeiramente\b/.test(raw),
   monthReview: (raw: string) =>
     /\bcomo foi (o )?(meu )?(mes|ultimo mes|mes passado)\b|\bfechamento do mes\b/.test(raw) ||
     new RegExp(`\\bcomo foi (o mes de )?(${MONTHS_PT.map((m) => normalize(m)).join('|')})\\b`).test(raw),
@@ -68,4 +70,17 @@ export function answerMonthReview(ctx: AssistantContext, raw: string): Answer {
     basis: r.averageResult !== null ? 'comparado com a média dos três meses anteriores' : undefined,
     link: { label: 'Ver as saídas', route: { view: 'movimentos', param: 'saidas' } },
   };
+}
+
+/** "Estou evoluindo?": as sequências, o patrimônio e a etapa — com evidência, sem motivação vazia */
+export function answerProgress(ctx: AssistantContext): Answer {
+  const s = ctx.strategy;
+  const wealth = ctx.checkup?.areas.find((a) => a.id === 'patrimonio');
+  const lines = s?.getHabits ? habitLines(s.getHabits()) : [];
+  const parts: string[] = [];
+  if (lines.length) parts.push(`Pelo que os dados mostram: ${lines.map((l) => l.replace(/\.$/, '').replace(/^./, (c) => c.toLowerCase())).join('; ')}.`);
+  else parts.push('Ainda não há uma sequência de meses para mostrar evolução: com dois meses completos seguidos, eu começo a comparar.');
+  if (wealth && wealth.label !== 'sem dados') parts.push(`Patrimônio em três meses: ${wealth.label}.`);
+  if (s?.stage) parts.push(s.stage.situation);
+  return { text: parts.join(' '), link: { label: 'Ver o diagnóstico', route: { view: 'checkup' } } };
 }

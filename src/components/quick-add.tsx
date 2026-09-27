@@ -30,7 +30,9 @@ import {
   rememberCategory,
   suggestCategory,
 } from '@/lib/store';
-import type { Account, Card, Category, Cents, Entry, FlowKind, Goal, RepeatKind } from '@/lib/types';
+import type { Account, Card, Category, Cents, Entry, FlowKind, Goal, RepeatKind, Subscription, Transfer } from '@/lib/types';
+import { MOMENT_PHRASES, depositMessage, isBigSpend, spendImpact } from '@/lib/behavior';
+import { checkSpend, type MoneyToDecide } from '@/lib/decision';
 import { CodeScanner } from './entries';
 import { Button, Chip, Field, Input, Select, Sheet, toast } from './ui';
 
@@ -96,6 +98,8 @@ export function QuickAddSheet({
   cardsEnabled,
   onGo,
   accounts = [],
+  decide,
+  spendContext,
 }: {
   open: boolean;
   request: QuickAddRequest | null;
@@ -109,6 +113,9 @@ export function QuickAddSheet({
   onGo: (route: Route) => void;
   /** contas não arquivadas: com mais de uma, o lançamento diz de qual é */
   accounts?: Account[];
+  /** o disponível para gastar: a compra grande mostra o impacto antes de salvar */
+  decide?: MoneyToDecide;
+  spendContext?: { subscriptions: Subscription[]; transfers: Transfer[] };
 }) {
   const [picked, setPicked] = React.useState<{ kind: QuickKind; scan: boolean; fromMenu: boolean } | null>(null);
 
@@ -157,6 +164,8 @@ export function QuickAddSheet({
           goals={activeGoals}
           entries={entries}
           accounts={accounts}
+          decide={decide}
+          spendContext={spendContext}
           onDone={close}
           onGo={(route) => {
             close();
@@ -280,8 +289,12 @@ function QuickForm({
   onDone,
   onGo,
   accounts,
+  decide,
+  spendContext,
 }: {
   accounts: Account[];
+  decide?: MoneyToDecide;
+  spendContext?: { subscriptions: Subscription[]; transfers: Transfer[] };
   kind: QuickKind;
   startScan: boolean;
   onBack?: () => void;
@@ -347,6 +360,20 @@ function QuickForm({
   // a primeira parcela leva a sobra de centavos; o total vai junto com a compra
   const perInstallment = amount && kind === 'card' ? (splitCents(amount, installments)[0] ?? null) : null;
 
+  // compra grande: o impacto no disponível aparece antes de salvar (fase 7)
+  const impact = (() => {
+    if (!decide || amount === null || amount <= 0 || (kind !== 'out' && kind !== 'card')) return null;
+    if (kind === 'out' && date > todayIso()) return null;
+    const card = kind === 'card' ? (cards.find((c) => c.id === cardId) ?? null) : null;
+    if (kind === 'card' && !card) return null;
+    const check = checkSpend(
+      decide,
+      { amount, method: kind === 'card' ? 'card' : 'account', card, installments },
+      { entries, subscriptions: spendContext?.subscriptions ?? [], transfers: spendContext?.transfers ?? [] },
+    );
+    return isBigSpend(check, decide) ? { check, text: spendImpact(check, decide) } : null;
+  })();
+
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
     if (amount === null || amount <= 0) {
@@ -363,6 +390,8 @@ function QuickForm({
 
     setSaving(true);
     setError(null);
+    // o aporte que bate a meta, ou o primeiro da reserva, é um momento: a mensagem diz isso com o número
+    const goalBefore = kind === 'goal' && goal ? goalProgress(goal, entries, todayIso().slice(0, 7)) : null;
     try {
       let created: Entry | null = null;
 
@@ -410,7 +439,8 @@ function QuickForm({
       const undo = created
         ? { label: 'Desfazer', onClick: () => void deleteRecord('entries', created!.id) }
         : undefined;
-      toast(DONE[kind], { action: undo });
+      const moment = goal && goalBefore ? depositMessage(goal, goalBefore.current, amount, goalBefore.target, todayIso()) : null;
+      toast(moment ?? DONE[kind], { action: undo });
 
       // escolher a categoria na mão ensina; na segunda vez igual, pergunta se vira regra
       if (touched && categoryId && description.trim()) {
@@ -481,6 +511,18 @@ function QuickForm({
           <p className="text-[12px] text-ink-3">
             {installments}× de {formatMoney(perInstallment)}
           </p>
+        ) : null}
+        {impact ? (
+          <div
+            role="status"
+            className={cn(
+              'mt-1 rounded-card border px-3 py-2.5 text-[13px] leading-relaxed',
+              impact.check.verdict === 'fits' ? 'border-line bg-surface-2 text-ink-2' : 'border-warn/40 bg-warn-soft text-ink',
+            )}
+          >
+            <p className="font-medium">{MOMENT_PHRASES.compraGrande}</p>
+            <p className="mt-0.5">{impact.text}</p>
+          </div>
         ) : null}
       </div>
 

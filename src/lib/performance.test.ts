@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { account, card, entry, paid, subscription } from '@/test/build';
 import { cashSnapshot, virtualOccurrences } from './cashflow';
 import { buildCheckup } from './checkup';
+import { habitsOf } from './behavior';
 import { moneyToDecide, safetyBuffer } from './decision';
 import { diagnose } from './diagnostics';
 import { auditAccount, balancesAt, type LedgerInput } from './ledger';
@@ -69,7 +70,10 @@ describe('desempenho', () => {
       const diagnostico = time(() => {
         const history = [resumo.value];
         const decide = moneyToDecide(input, retrato.value, safetyBuffer(null, history, [], input.today));
-        return buildCheckup({ ledger: input, cash: retrato.value, decide, history, categories: [], goals: [], assets: [], settings: null });
+        const checkup = buildCheckup({ ledger: input, cash: retrato.value, decide, history, categories: [], goals: [], assets: [], settings: null });
+        // as sequências do acompanhamento: o saldo dia a dia dos últimos meses
+        habitsOf((m) => occurrencesInMonth(input.entries, m, input.today), input.entries, input, input.today);
+        return checkup;
       });
 
       // o retrato e o saldo concordam mesmo com 50 mil linhas

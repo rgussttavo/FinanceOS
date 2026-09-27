@@ -29,7 +29,7 @@ planejar, simular, orientar e acompanhar.
 | 4 | Metas como plano vivo: prioridade, conflito, previsão pelo ritmo real, cenários | feita |
 | 5 | Primeiro acesso com 3 ou 4 perguntas, perfil e objetivos de vida | feita |
 | 6 | Estratégias em fases, estágios, próxima melhor ação, check-ins | feita |
-| 7 | Comportamento observado e frases contextuais (poucas) | a fazer |
+| 7 | Comportamento observado e frases contextuais (poucas) | feita |
 
 Decisões do responsável (27/09/2026): começar pela fase 1; a nota "Saúde do
 mês" (0 a 100) sai e vira situação por área na fase 2; primeiro acesso com
@@ -244,3 +244,26 @@ do ritmo → completar a reserva → objetivo de longo prazo.
   metas", "Rever respostas" e "Está tudo certo".
 - **Assistente:** "o que eu faço agora?", "em que etapa estou?", "como foi
   meu mês?" / "como foi agosto?".
+
+## Fase 7 — comportamento e os momentos
+
+Código: `src/lib/behavior.ts`. Testes: `behavior.test.ts`.
+
+Decisão do responsável: frases **só em momentos**, uma por vez, sempre ao lado
+de um número. Nenhuma frase fixa na tela.
+
+| Momento | O que aparece |
+|---|---|
+| Meta batida | "Meta Viagem batida: R$ 5.000 juntados em 5 meses. Você não chegou aqui por acaso…" |
+| Primeiro aporte numa meta de reserva | "Primeiro aporte da Reserva: R$ 200. Primeiro construa segurança…" |
+| Compra grande no lançamento rápido | antes de salvar: "Antes de comprar, olhe o impacto no restante do mês." e o efeito no disponível (sobra, entra na margem, descobre conta, passa do limite, ou só pesa na fatura depois do recebimento) |
+| Fechamento do mês | as sequências, quando há duas ou mais: meses seguidos com entradas acima das saídas, meses seguidos sem saldo negativo, meses com aporte |
+
+- **Compra grande:** a que não cabe folgada (entra na margem, descobre conta,
+  passa do limite) ou que leva 30% ou mais do disponível para gastar. Só para
+  gasto de hoje ou já feito; gasto agendado no futuro não é decisão de agora.
+- **Hábitos:** só o que os dados mostram, nos últimos 6 meses completos, e só
+  dito a partir de dois meses seguidos. O assistente responde "estou
+  evoluindo?" com eles, o patrimônio e a etapa.
+- **Custo:** as sequências recalculam o saldo dia a dia de meses; por isso só
+  são calculadas quando o fechamento do mês aparece ou alguém pergunta.

@@ -12,7 +12,8 @@ import type { MoneyToDecide } from './decision';
 import type { Checkup } from './checkup';
 import type { FinancialProfile } from './types';
 import type { NextAction, Stage } from './strategy';
-import { STRATEGY_TESTS, answerMonthReview, answerNextStep, answerStage } from './strategy-answers';
+import { STRATEGY_TESTS, answerMonthReview, answerNextStep, answerProgress, answerStage } from './strategy-answers';
+import type { Habits } from './behavior';
 import { answerAvailable, answerSpend, isSpendQuestion, parseSpend } from './decision-answers';
 import { answerGoalQuestion, answerSaveMore, isGoalQuestion, isSaveMoreQuestion } from './plan-answers';
 import {
@@ -84,7 +85,7 @@ export interface AssistantContext {
   /** o momento declarado pela pessoa: ordena as sugestões */
   profile?: FinancialProfile;
   /** a etapa e os próximos passos: os mesmos do Início e do diagnóstico */
-  strategy?: { stage: Stage | null; actions: NextAction[] };
+  strategy?: { stage: Stage | null; actions: NextAction[]; getHabits?: () => Habits };
 }
 
 export interface Answer {
@@ -683,6 +684,7 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
   { id: 'proximo-passo', test: (p) => STRATEGY_TESTS.nextStep(p.raw), answer: (ctx) => answerNextStep(ctx) },
   { id: 'etapa', test: (p) => STRATEGY_TESTS.stage(p.raw), answer: (ctx) => answerStage(ctx) },
   { id: 'como-foi-mes', test: (p) => STRATEGY_TESTS.monthReview(p.raw), answer: (ctx) => answerMonthReview(ctx, normalize(lastQuestion)) },
+  { id: 'evolucao', test: (p) => STRATEGY_TESTS.progress(p.raw), answer: (ctx) => answerProgress(ctx) },
   /*
    * As perguntas vagas (fase 3): a pergunta vira diagnóstico. Ficam à frente
    * dos temas genéricos de cartão, meta e dívida, que responderiam só o total.
