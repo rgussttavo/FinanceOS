@@ -28,7 +28,7 @@ planejar, simular, orientar e acompanhar.
 | 3 | Perguntas vagas no assistente ("por que meu dinheiro some"), resposta em camadas | feita |
 | 4 | Metas como plano vivo: prioridade, conflito, previsão pelo ritmo real, cenários | feita |
 | 5 | Primeiro acesso com 3 ou 4 perguntas, perfil e objetivos de vida | feita |
-| 6 | Estratégias em fases, estágios, próxima melhor ação, check-ins | a fazer |
+| 6 | Estratégias em fases, estágios, próxima melhor ação, check-ins | feita |
 | 7 | Comportamento observado e frases contextuais (poucas) | a fazer |
 
 Decisões do responsável (27/09/2026): começar pela fase 1; a nota "Saúde do
@@ -200,3 +200,47 @@ Código: `src/lib/profile.ts` (regras) e `src/features/profile.tsx`
   que mede isso; quem quer investir vê antes a reserva e as dívidas; as
   sugestões do assistente começam pelas do foco; renda variável lembra que
   uma referência maior de reserva costuma fazer sentido.
+
+## Fase 6 — estratégia e acompanhamento
+
+Código: `src/lib/strategy.ts` (etapa, ações, fechamento do mês),
+`src/lib/strategy-answers.ts` (assistente) e `src/features/strategy.tsx`.
+Testes: `strategy.test.ts`.
+
+### A trilha
+
+Sempre sobre a situação ("sua situação pede foco em…"), nunca sobre a pessoa.
+
+| Etapa | Quando | O que falta para sair dela |
+|---|---|---|
+| Estabilizar | fluxo em atenção ou alerta | cobrir as contas; fechar meses com entradas acima das saídas |
+| Proteger | reserva abaixo de 1 mês de despesas essenciais | guardar até o primeiro mês |
+| Reduzir dívidas | parcelas acima de 15% da renda ou cartão acima de 30% do limite | trazer os dois para dentro dos limites |
+| Objetivos | reserva abaixo da referência ou metas fora do ritmo | completar a reserva, pôr as metas no ritmo |
+| Patrimônio | tudo de pé | dar direção ao que sobra |
+
+O marco de 1 mês de reserva em "Proteger" é o primeiro colchão (§81:
+proteger o caixa antes de atacar dívidas); a referência completa continua
+sendo a da área Reserva (6 meses, ajustável).
+
+### A próxima ação
+
+Uma só no topo do Início, com motivo e impacto em números; as três primeiras
+no diagnóstico e no assistente ("o que eu faço agora?"). Ordem de urgência:
+conta vencida (fato) → dados com confiança abaixo de 60% (sem dado certo o
+resto não se sustenta) → conta descoberta → saídas acima das entradas (rever a
+maior categoria variável) → reserva abaixo de 1 mês → dívidas e cartão →
+assinaturas (3 ou mais, fora da etapa Patrimônio) → metas em conflito ou fora
+do ritmo → completar a reserva → objetivo de longo prazo.
+
+### Acompanhamento
+
+- **Fechamento do mês:** do dia 1 ao 7, "Como foi <mês>": entrou, saiu, o
+  resultado contra a média dos três meses anteriores, as categorias que mais
+  mudaram, o que entrou nas metas. Celebra com evidência; mês pior vira "vale
+  ver o que mudou". Some ao tocar em "Entendi".
+- **Revisão do plano:** a cada três meses (a primeira, três meses depois de
+  começar): a etapa, as metas e a data das respostas do perfil, com "Rever
+  metas", "Rever respostas" e "Está tudo certo".
+- **Assistente:** "o que eu faço agora?", "em que etapa estou?", "como foi
+  meu mês?" / "como foi agosto?".

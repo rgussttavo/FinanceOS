@@ -502,6 +502,9 @@ export interface Settings extends SyncFields {
 
   /** o momento financeiro, nas palavras da pessoa: declarado, não medido */
   profile?: FinancialProfile;
+
+  /** acompanhamento já visto: o mês fechado dispensado e a última revisão do plano */
+  checkins?: { monthly?: MonthKey | null; quarterly?: IsoDate | null };
 }
 
 export type ProfileFocus = 'vermelho' | 'gastos' | 'dividas' | 'cartoes' | 'reserva' | 'objetivo' | 'investir' | 'organizar';

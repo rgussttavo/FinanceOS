@@ -19,6 +19,9 @@ import type { MovFilter, SubId, ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
 import type { AssistantContext } from '@/lib/assistant';
 import { buildCheckup } from '@/lib/checkup';
+import { goalPlan } from '@/lib/goal-plan';
+import { moneyStory } from '@/lib/money-story';
+import { monthReview, monthlyDue, nextActions, quarterlyDue, stageOf, type StrategyView } from '@/lib/strategy';
 import { moneyToDecide, safetyBuffer } from '@/lib/decision';
 import { ledgerInput, monthOccurrences, useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
 import { toggleSettled, useBootstrap, useCategories, useSettings } from '@/lib/store';
@@ -132,6 +135,20 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       }),
     [base, cardsEnabled, cash, decide, todayHistory, categories, settings],
   );
+  // a estratégia: etapa, próximos passos e acompanhamento — o mesmo no Início, no diagnóstico e no assistente
+  const strategy = React.useMemo<StrategyView>(() => {
+    const today = cash.today;
+    const expandMonth = (m: MonthKey) => monthOccurrences(base, m, today);
+    const story = moneyStory(expandMonth, base.entries, today);
+    const plan = goalPlan(base.goals, base.entries, story, today);
+    const reviewing = monthlyDue(today, settings?.checkins?.monthly);
+    return {
+      stage: stageOf(checkup),
+      actions: nextActions({ checkup, cash, decide, story, plan, subscriptions: base.subscriptions, categories, today }),
+      review: reviewing ? monthReview(expandMonth, base.entries, base.goals, today, reviewing) : null,
+      quarterly: quarterlyDue(today, settings?.checkins?.quarterly, settings?.createdAt?.slice(0, 10) ?? null),
+    };
+  }, [base, cash, decide, checkup, categories, settings]);
   // de quanto o mês aberto parte: o saldo das contas na véspera do dia 1
   const monthOpening = React.useMemo(
     () => dayBalances(ledgerInput(base, cardsEnabled), `${month}-01`, `${month}-01`).opening,
@@ -185,8 +202,9 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       decision: { decide, transfers: base.transfers, cardsEnabled },
       checkup,
       profile: settings?.profile,
+      strategy,
     }),
-    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled, decide, checkup, settings],
+    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled, decide, checkup, settings, strategy],
   );
 
   const toggleHidden = React.useCallback(async () => {
@@ -384,6 +402,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           cash={cash}
           decide={decide}
           checkup={checkup}
+          strategy={strategy}
           picture={todayPicture}
           history={todayHistory}
           categories={categories}
@@ -487,7 +506,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       content = <CategoriasView spaceId={spaceId} categories={categories} />;
       break;
     case 'checkup':
-      content = <CheckupView checkup={checkup} settings={settings} hidden={hidden} onGo={go} />;
+      content = <CheckupView checkup={checkup} strategy={strategy} settings={settings} hidden={hidden} onGo={go} />;
       break;
     case 'ajustes':
       content = (

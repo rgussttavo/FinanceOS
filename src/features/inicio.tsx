@@ -44,6 +44,8 @@ import { availableLines, type MoneyToDecide, type SafetyBuffer } from '@/lib/dec
 import type { Checkup } from '@/lib/checkup';
 import { AreasSummary } from './checkup';
 import { ProfilePrompt } from './profile';
+import { MonthlyCheckin, NextActionCard, QuarterlyReview } from './strategy';
+import type { StrategyView } from '@/lib/strategy';
 import { holidaysBetween } from '@/lib/holidays';
 import { buildInsights, headline, type Insight, type Severity } from '@/lib/insights';
 import { formatMoney, parseMoney } from '@/lib/money';
@@ -77,6 +79,8 @@ export interface InicioProps {
   decide: MoneyToDecide;
   /** o diagnóstico por áreas: no lugar da antiga nota do mês */
   checkup: Checkup;
+  /** etapa, próximos passos e acompanhamento */
+  strategy: StrategyView;
   picture: MonthPicture;
   history: MonthSummary[];
   categories: Category[];
@@ -140,7 +144,12 @@ export function InicioView(props: InicioProps) {
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
         <div className="grid gap-4">
+          {!empty && props.strategy.actions[0] ? <NextActionCard action={props.strategy.actions[0]} hidden={hidden} onGo={onGo} /> : null}
           <MainCard {...props} />
+          {props.strategy.review ? (
+            <MonthlyCheckin review={props.strategy.review} settings={settings} categories={props.categories} hidden={hidden} onGo={onGo} />
+          ) : null}
+          {!empty && props.strategy.quarterly ? <QuarterlyReview checkup={props.checkup} stage={props.strategy.stage} settings={settings} onGo={onGo} /> : null}
           {empty ? <FirstSteps onQuick={props.onQuick} onGo={onGo} /> : null}
           {!hiddenBlocks.has('perfil') ? <ProfilePrompt settings={settings} /> : null}
           {!empty && !hiddenBlocks.has('cobertura') ? <Coverage {...props} /> : null}

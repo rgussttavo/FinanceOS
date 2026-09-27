@@ -11,6 +11,8 @@ import type { Asset, Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscri
 import type { MoneyToDecide } from './decision';
 import type { Checkup } from './checkup';
 import type { FinancialProfile } from './types';
+import type { NextAction, Stage } from './strategy';
+import { STRATEGY_TESTS, answerMonthReview, answerNextStep, answerStage } from './strategy-answers';
 import { answerAvailable, answerSpend, isSpendQuestion, parseSpend } from './decision-answers';
 import { answerGoalQuestion, answerSaveMore, isGoalQuestion, isSaveMoreQuestion } from './plan-answers';
 import {
@@ -81,6 +83,8 @@ export interface AssistantContext {
   checkup?: Checkup;
   /** o momento declarado pela pessoa: ordena as sugestões */
   profile?: FinancialProfile;
+  /** a etapa e os próximos passos: os mesmos do Início e do diagnóstico */
+  strategy?: { stage: Stage | null; actions: NextAction[] };
 }
 
 export interface Answer {
@@ -675,6 +679,10 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
       };
     },
   },
+  /* a estratégia (fase 6): próximo passo, etapa e fechamento do mês */
+  { id: 'proximo-passo', test: (p) => STRATEGY_TESTS.nextStep(p.raw), answer: (ctx) => answerNextStep(ctx) },
+  { id: 'etapa', test: (p) => STRATEGY_TESTS.stage(p.raw), answer: (ctx) => answerStage(ctx) },
+  { id: 'como-foi-mes', test: (p) => STRATEGY_TESTS.monthReview(p.raw), answer: (ctx) => answerMonthReview(ctx, normalize(lastQuestion)) },
   /*
    * As perguntas vagas (fase 3): a pergunta vira diagnóstico. Ficam à frente
    * dos temas genéricos de cartão, meta e dívida, que responderiam só o total.
@@ -1293,7 +1301,9 @@ export const SUGGESTIONS = [
   'Como estou?',
   'Quanto posso gastar?',
   'Posso gastar R$ 300?',
+  'O que eu faço agora?',
   'Como está minha vida financeira?',
+  'Como foi meu mês?',
   'Quero viajar em dezembro com R$ 8 mil, consigo?',
   'Se eu economizar R$ 500 por mês, o que acontece?',
   'Por que meu dinheiro some?',

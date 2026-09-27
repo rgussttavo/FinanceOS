@@ -10,6 +10,8 @@ import { putRecord } from '@/lib/db';
 import type { Route } from '@/lib/nav';
 import type { Settings } from '@/lib/types';
 import { FocusPanel } from './profile';
+import { ActionsPanel, TrailPanel } from './strategy';
+import type { StrategyView } from '@/lib/strategy';
 
 /**
  * "Como está sua vida financeira?"
@@ -76,11 +78,13 @@ export function AreasSummary({ checkup, hidden, onGo }: { checkup: Checkup; hidd
 
 export function CheckupView({
   checkup,
+  strategy,
   settings,
   hidden,
   onGo,
 }: {
   checkup: Checkup;
+  strategy: StrategyView;
   settings: Settings | null;
   hidden: boolean;
   onGo: (route: Route) => void;
@@ -96,6 +100,8 @@ export function CheckupView({
       </Panel>
 
       <FocusPanel checkup={checkup} settings={settings} />
+      <TrailPanel stage={strategy.stage} />
+      <ActionsPanel actions={strategy.actions} hidden={hidden} onGo={onGo} />
 
       {attention.length ? (
         <Panel className="px-5 py-4">
