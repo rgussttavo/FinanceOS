@@ -103,15 +103,29 @@ export function primaryAccountId(accounts: Account[]): string {
   return live.slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))[0].id;
 }
 
+export type AccountOf = (id: string | null | undefined, date: IsoDate) => string;
+
 /**
  * Para qual conta um movimento vai. Lançamento sem conta, ou com uma conta
  * que foi excluída, cai na principal — dinheiro não pode sumir porque a conta
  * dele sumiu. O diagnóstico aponta esses casos.
+ *
+ * É a principal do DIA do movimento, não a de hoje (FIN-016). Quando a pessoa
+ * troca a principal, o que já aconteceu sem dizer a conta fica onde estava:
+ * senão o saldo das duas contas mudava para trás, e a conferência com o
+ * extrato da antiga passava a acusar diferença.
  */
-function resolver(input: Pick<LedgerInput, 'accounts'>) {
-  const live = new Set(ledgerAccounts(input.accounts).map((a) => a.id));
+export function accountResolver(input: Pick<LedgerInput, 'accounts'>): AccountOf {
+  const accounts = ledgerAccounts(input.accounts);
+  const live = new Set(accounts.map((a) => a.id));
   const primary = primaryAccountId(input.accounts);
-  return (id: string | null | undefined) => (id && live.has(id) ? id : primary);
+  const periods = accounts
+    .flatMap((a) => (a.primaryPeriods ?? []).map((p) => ({ id: a.id, from: p.from ?? '', to: p.to ?? '9999-12-31' })))
+    // se dois períodos se sobrepõem, vale o que começou por último
+    .sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : 0));
+  if (!periods.length) return (id) => (id && live.has(id) ? id : primary);
+  const principalOn = (date: IsoDate) => periods.find((p) => p.from <= date && date <= p.to)?.id ?? primary;
+  return (id, date) => (id && live.has(id) ? id : principalOn(date));
 }
 
 /**
@@ -199,7 +213,7 @@ const POSTINGS_CACHE = new WeakMap<LedgerInput, Map<IsoDate, Posting[]>>();
 
 function computeRealizedPostings(input: LedgerInput, until: IsoDate): Posting[] {
   const out: Posting[] = [];
-  const accountOf = resolver(input);
+  const accountOf = accountResolver(input);
   const onCard = cardRouter(input);
   const realized = realizedCharges(input.entries);
 
@@ -209,7 +223,7 @@ function computeRealizedPostings(input: LedgerInput, until: IsoDate): Posting[] 
       if (!realizedOccurrence(input, entry, o)) continue;
       out.push({
         id: `e:${entry.id}:${o.key}`,
-        accountId: accountOf(entry.accountId),
+        accountId: accountOf(entry.accountId, o.date),
         date: o.date,
         amount: signedOnAccount(o),
         source: 'entry',
@@ -233,7 +247,7 @@ function computeRealizedPostings(input: LedgerInput, until: IsoDate): Posting[] 
       if (!charge || charge.date > until || realized.has(realizedKey(sub.id, m))) continue;
       out.push({
         id: `s:${sub.id}:${m}`,
-        accountId: accountOf(sub.accountId),
+        accountId: accountOf(sub.accountId, charge.date),
         date: charge.date,
         amount: -charge.amount,
         source: 'subscription',
@@ -254,7 +268,7 @@ function computeRealizedPostings(input: LedgerInput, until: IsoDate): Posting[] 
       if (!inst || inst.date > until || realized.has(realizedKey(debt.id, m))) continue;
       out.push({
         id: `d:${debt.id}:${m}`,
-        accountId: accountOf(null),
+        accountId: accountOf(null, inst.date),
         date: inst.date,
         amount: -debt.installment,
         source: 'debt',
@@ -275,7 +289,7 @@ function computeRealizedPostings(input: LedgerInput, until: IsoDate): Posting[] 
       for (const auto of bal.autoPaid) {
         out.push({
           id: `f:${card.id}:${auto.month}`,
-          accountId: accountOf(card.accountId),
+          accountId: accountOf(card.accountId, auto.dueOn),
           date: auto.dueOn,
           amount: -auto.amount,
           source: 'invoice',
@@ -298,14 +312,14 @@ function computeRealizedPostings(input: LedgerInput, until: IsoDate): Posting[] 
 }
 
 /** os dois lados (ou o único lado) de uma transferência */
-export function transferPostings(t: Transfer, accountOf: (id: string | null | undefined) => string): Posting[] {
+export function transferPostings(t: Transfer, accountOf: AccountOf): Posting[] {
   const base = { date: t.date, refId: t.id, label: t.description, recordedAt: t.createdAt };
   if (t.kind === 'adjustment') {
     return [
       {
         ...base,
         id: `t:${t.id}`,
-        accountId: accountOf(t.fromAccountId),
+        accountId: accountOf(t.fromAccountId, t.date),
         amount: t.direction === 'in' ? t.amount : -t.amount,
         source: 'adjustment',
         internal: true,
@@ -317,7 +331,7 @@ export function transferPostings(t: Transfer, accountOf: (id: string | null | un
       {
         ...base,
         id: `t:${t.id}`,
-        accountId: accountOf(t.fromAccountId),
+        accountId: accountOf(t.fromAccountId, t.date),
         amount: -t.amount,
         source: 'card-payment',
         internal: false,
@@ -326,8 +340,8 @@ export function transferPostings(t: Transfer, accountOf: (id: string | null | un
     ];
   }
   return [
-    { ...base, id: `t:${t.id}:de`, accountId: accountOf(t.fromAccountId), amount: -t.amount, source: 'transfer', internal: true },
-    { ...base, id: `t:${t.id}:para`, accountId: accountOf(t.toAccountId), amount: t.amount, source: 'transfer', internal: true },
+    { ...base, id: `t:${t.id}:de`, accountId: accountOf(t.fromAccountId, t.date), amount: -t.amount, source: 'transfer', internal: true },
+    { ...base, id: `t:${t.id}:para`, accountId: accountOf(t.toAccountId, t.date), amount: t.amount, source: 'transfer', internal: true },
   ];
 }
 
@@ -523,7 +537,7 @@ export interface PlannedItem {
 export function plannedItems(input: LedgerInput, to: IsoDate, from: IsoDate = monthStartOf(input.today)): PlannedItem[] {
   const { today } = input;
   const out: PlannedItem[] = [];
-  const accountOf = resolver(input);
+  const accountOf = accountResolver(input);
   const onCard = cardRouter(input);
   const realized = realizedCharges(input.entries);
   const lastMonth = monthKeyOf(to);
@@ -553,7 +567,7 @@ export function plannedItems(input: LedgerInput, to: IsoDate, from: IsoDate = mo
       if (o.date < from && !(overdue && coversPending)) continue;
       out.push({
         id: `e:${entry.id}:${o.key}`,
-        accountId: accountOf(entry.accountId),
+        accountId: accountOf(entry.accountId, o.date),
         date: o.date,
         amount: Math.abs(signedOnAccount(o)),
         source: 'entry',
@@ -576,7 +590,7 @@ export function plannedItems(input: LedgerInput, to: IsoDate, from: IsoDate = mo
       if (!charge || charge.date <= today || charge.date > to || realized.has(realizedKey(sub.id, m))) continue;
       out.push({
         id: `s:${sub.id}:${m}`,
-        accountId: accountOf(sub.accountId),
+        accountId: accountOf(sub.accountId, charge.date),
         date: charge.date,
         amount: charge.amount,
         source: 'subscription',
@@ -598,7 +612,7 @@ export function plannedItems(input: LedgerInput, to: IsoDate, from: IsoDate = mo
       if (!inst || inst.date <= today || inst.date > to || realized.has(realizedKey(debt.id, m))) continue;
       out.push({
         id: `d:${debt.id}:${m}`,
-        accountId: accountOf(null),
+        accountId: accountOf(null, inst.date),
         date: inst.date,
         amount: debt.installment,
         source: 'debt',
@@ -627,7 +641,7 @@ export function plannedItems(input: LedgerInput, to: IsoDate, from: IsoDate = mo
         if (st.dueOn > today && st.dueOn < from) continue;
         out.push({
           id: `f:${card.id}:${m}`,
-          accountId: accountOf(card.accountId),
+          accountId: accountOf(card.accountId, st.dueOn),
           date: st.dueOn,
           amount: st.remaining,
           source: 'invoice',

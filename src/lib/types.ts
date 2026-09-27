@@ -92,12 +92,26 @@ export interface Account extends SyncFields {
    */
   primary?: boolean;
   /**
+   * De quando a quando esta conta foi a principal (FIN-016). O que não diz de
+   * qual conta é vai para a principal do dia em que aconteceu: trocar a
+   * principal não leva junto o passado. Sem nenhum período registrado em
+   * conta alguma, vale a principal atual para tudo.
+   */
+  primaryPeriods?: PrimaryPeriod[];
+  /**
    * Saldos que o banco declarou (extrato importado ou conferido à mão). São
    * conferidos o tempo todo: se um lançamento some ou muda depois, a conta
    * volta a mostrar a diferença, em vez de o saldo "conferido" mentir calado.
    */
   checkpoints?: BalanceCheckpoint[];
   archived: boolean;
+}
+
+export interface PrimaryPeriod {
+  /** primeiro dia como principal; null = desde sempre */
+  from: IsoDate | null;
+  /** último dia, inclusive; null = até hoje */
+  to: IsoDate | null;
 }
 
 export interface BalanceCheckpoint {

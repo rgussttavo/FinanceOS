@@ -1,5 +1,5 @@
 import { cleanDescription } from './categories';
-import { auditAccount, invoiceStatus, ledgerAccounts, primaryAccountId, type LedgerInput } from './ledger';
+import { accountResolver, auditAccount, invoiceStatus, ledgerAccounts, type LedgerInput } from './ledger';
 import { formatMoney } from './money';
 import { OPENING_TAG } from './occurrences';
 import type { Category, Entry } from './types';
@@ -43,7 +43,7 @@ export function diagnose(input: LedgerInput, categories: Category[]): Finding[] 
   const liveCards = new Set(input.cards.filter((c) => !c.deletedAt).map((c) => c.id));
   const anyCard = new Set(input.cards.map((c) => c.id));
   const liveCategories = new Set(categories.filter((c) => !c.deletedAt).map((c) => c.id));
-  const primary = primaryAccountId(input.accounts);
+  const accountOf = accountResolver(input);
   const label = (e: Entry) => `${e.description} · ${e.date}`;
 
   // o mesmo identificador de extrato em dois lançamentos: importado duas vezes
@@ -67,10 +67,10 @@ export function diagnose(input: LedgerInput, categories: Category[]): Finding[] 
   const seen = new Map<string, Entry[]>();
   for (const e of entries) {
     if (e.repeat.kind !== 'once') continue;
-    // sem conta (ou com conta excluída) é a principal — a mesma regra do saldo.
+    // sem conta (ou com conta excluída) é a principal do dia — a mesma regra do saldo.
     // Antes, o lançado à mão na versão sem contas (conta vazia) e o importado
     // na principal pareciam de contas diferentes, e a duplicata passava
-    const where = e.cardId ?? (e.accountId && liveAccounts.has(e.accountId) ? e.accountId : primary);
+    const where = e.cardId ?? accountOf(e.accountId, e.date);
     const k = `${e.date}|${e.amount}|${e.kind}|${where}|${cleanDescription(e.description)}`;
     seen.set(k, [...(seen.get(k) ?? []), e]);
   }

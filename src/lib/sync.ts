@@ -456,9 +456,10 @@ async function joinExistingSpace(
 
       let moved: Record<string, unknown>[] = rows.map((row) => ({ ...row, spaceId: remoteId }));
       if (table === 'accounts') {
-        // a principal deste aparelho fica; as outras vão, sem disputar a principal
+        // a principal deste aparelho fica; as outras vão, sem disputar a principal —
+        // nem pelo histórico de quando foram principal aqui (FIN-016)
         await d.accounts.delete(localPrimary);
-        moved = moved.filter((a) => a.id !== localPrimary).map((a) => ({ ...a, primary: false }));
+        moved = moved.filter((a) => a.id !== localPrimary).map((a) => ({ ...a, primary: false, primaryPeriods: [] }));
       } else if (table === 'entries' || table === 'subscriptions' || table === 'cards') {
         moved = moved.map((r) => ({ ...r, accountId: repoint(r.accountId as string | null) }));
       } else if (table === 'transfers') {

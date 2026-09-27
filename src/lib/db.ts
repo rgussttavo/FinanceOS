@@ -43,6 +43,8 @@ export interface AuditEvent {
     | 'transfer.deleted'
     | 'account.created'
     | 'account.updated'
+    | 'account.primary'
+    | 'account.revived'
     | 'statement.imported'
     | 'statement.reconciled'
     | 'invoice.paid'

@@ -24,6 +24,7 @@ vi.mock('./supabase', () => ({
 
 import { db, deleteRecord, putRecord, putRecords, selectDatabase } from './db';
 import { runSync } from './sync';
+import { ensurePrimaryAccount, primaryIdFor } from './accounts';
 import type { Entry } from './types';
 
 const SPACE = 'espaco-1';
@@ -384,5 +385,34 @@ describe('relógio errado num aparelho (FIN-012)', () => {
     await sync('aparelho-a');
     expect(onServer(original.id)?.notes).toBe('conferido no extrato');
     expect((await inDevice('aparelho-a', original.id))?.notes).toBe('conferido no extrato');
+  });
+});
+
+describe('principal excluída numa versão anterior (FIN-013)', () => {
+  beforeEach(() => {
+    (server.current as FakeServer).lww = true;
+  });
+
+  it('volta em todos os aparelhos, e não só neste, a cada abertura', async () => {
+    const id = primaryIdFor(SPACE);
+    await device('aparelho-a');
+    await ensurePrimaryAccount(SPACE);
+    await sync('aparelho-a');
+    // a versão anterior deixava excluir a principal
+    await device('aparelho-a');
+    await deleteRecord('accounts', id);
+    await sync('aparelho-a');
+
+    // a abertura seguinte, já nesta versão
+    await device('aparelho-a');
+    await ensurePrimaryAccount(SPACE);
+    await sync('aparelho-a');
+
+    const onServer = [...(server.current as FakeServer).rows.values()].find((r) => r.id === id);
+    expect(onServer?.data.deletedAt).toBeNull();
+    await sync('aparelho-b');
+    expect((await db().accounts.get(id))?.deletedAt).toBeNull();
+    await device('aparelho-a');
+    expect((await db().accounts.get(id))?.deletedAt).toBeNull();
   });
 });

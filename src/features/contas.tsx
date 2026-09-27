@@ -30,7 +30,7 @@ import {
 } from '@/lib/accounts';
 import { cn } from '@/lib/cn';
 import { formatDateFull, formatDayShort, todayIso } from '@/lib/dates';
-import { auditAccount, balancesAt, type AccountAudit, type AccountBalance } from '@/lib/ledger';
+import { auditAccount, balancesAt, primaryAccountId, type AccountAudit, type AccountBalance } from '@/lib/ledger';
 import { formatMoney, parseMoney } from '@/lib/money';
 import { ledgerInput, type FinanceBase } from '@/lib/picture';
 import { diagnose, type Finding } from '@/lib/diagnostics';
@@ -569,6 +569,10 @@ function EditAccountSheet({ account, accounts, open, onClose }: { account: Accou
     onClose();
   }
 
+  // a principal não sai: responde pelo que não diz de qual conta é (FIN-013, FIN-015)
+  const active = accounts.filter((a) => !a.archived);
+  const isPrincipal = primaryAccountId(accounts) === account.id;
+
   async function remove() {
     const ok = await confirmAction({
       title: `Excluir ${account.name}?`,
@@ -577,10 +581,19 @@ function EditAccountSheet({ account, accounts, open, onClose }: { account: Accou
       danger: true,
     });
     if (!ok) return;
-    const r = await removeAccount(account);
-    toast(r === 'archived' ? 'A conta tinha movimentos: foi arquivada.' : 'Conta excluída.');
-    onClose();
-    navigate({ view: 'contas' });
+    try {
+      const r = await removeAccount(account);
+      toast(r === 'archived' ? 'A conta tinha movimentos: foi arquivada.' : 'Conta excluída.');
+      onClose();
+      navigate({ view: 'contas' });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Não consegui excluir a conta.', { tone: 'error' });
+    }
+  }
+
+  async function promote() {
+    await makePrimary(account);
+    toast('Agora é a conta principal. O que já aconteceu fica onde estava.');
   }
 
   return (
@@ -593,14 +606,22 @@ function EditAccountSheet({ account, accounts, open, onClose }: { account: Accou
           <Button variant="primary" size="lg" className="w-full" onClick={() => void save()}>
             Salvar
           </Button>
-          {!account.primary && accounts.filter((a) => !a.archived).length > 1 ? (
-            <Button className="w-full" onClick={() => void makePrimary(account).then(() => toast('Agora é a conta principal.'))}>
+          {!isPrincipal && !account.archived && active.length > 1 ? (
+            <Button className="w-full" onClick={() => void promote()}>
               Tornar principal
             </Button>
           ) : null}
-          <Button variant="danger" className="w-full" onClick={() => void remove()}>
-            Excluir conta
-          </Button>
+          {isPrincipal ? (
+            <p className="px-2 text-center text-[12px] text-ink-3">
+              {active.length > 1
+                ? 'Esta é a conta principal. Para excluí-la, torne outra conta principal antes.'
+                : 'Esta é a sua única conta, e o app sempre precisa de uma.'}
+            </p>
+          ) : (
+            <Button variant="danger" className="w-full" onClick={() => void remove()}>
+              Excluir conta
+            </Button>
+          )}
         </div>
       }
     >

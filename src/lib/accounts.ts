@@ -1,5 +1,5 @@
 import { audit, db, deleteRecord, liveRows, putRecord } from './db';
-import { nowInstant, todayIso } from './dates';
+import { addDaysIso, nowInstant, todayIso } from './dates';
 import { balancesAt, invoiceStatus, primaryAccountId, realizedPostings, type LedgerInput } from './ledger';
 import { uid } from './provision';
 import type {
@@ -13,6 +13,7 @@ import type {
   EntrySource,
   IsoDate,
   MonthKey,
+  PrimaryPeriod,
   Settings,
   Subscription,
   Transfer,
@@ -98,13 +99,44 @@ export async function updateAccount(account: Account, patch: Partial<Account>): 
   return saved;
 }
 
-/** torna esta a principal: onde cai o lançamento que não diz de qual conta é */
+/**
+ * Torna esta a principal: onde cai o lançamento que não diz de qual conta é.
+ *
+ * Vale de amanhã em diante (FIN-016). O que já aconteceu sem dizer a conta,
+ * hoje inclusive, continua na conta que era a principal quando aconteceu:
+ * trocar a principal não muda o saldo passado de nenhuma das duas, nem a
+ * conferência com o extrato.
+ */
 export async function makePrimary(account: Account): Promise<void> {
   const all = await liveRows<Account>('accounts', account.spaceId);
-  for (const a of all) {
-    const want = a.id === account.id;
-    if (!!a.primary !== want) await putRecord('accounts', { ...a, primary: want });
+  const current = primaryAccountId(all);
+  if (current === account.id) {
+    // já é a principal de fato (a mais antiga, sem marca): só ganha a marca
+    const fresh = all.find((a) => a.id === account.id);
+    if (fresh && !fresh.primary) await putRecord('accounts', { ...fresh, primary: true });
+    return;
   }
+
+  const today = todayIso();
+  const from = addDaysIso(today, 1);
+  for (const a of all) {
+    if (a.id === account.id) {
+      await putRecord('accounts', { ...a, primary: true, primaryPeriods: [...closePeriods(a.primaryPeriods, today), { from, to: null }] });
+    } else if (a.id === current) {
+      // sem período registrado, ela foi a principal desde sempre
+      await putRecord('accounts', { ...a, primary: false, primaryPeriods: closePeriods(a.primaryPeriods ?? [{ from: null, to: null }], today) });
+    } else if (a.primary) {
+      await putRecord('accounts', { ...a, primary: false });
+    }
+  }
+  await audit(account.spaceId, 'account.primary', { from: current, to: account.id, effective: from });
+}
+
+/** fecha hoje o período em aberto; o que só começaria amanhã (troca desfeita no mesmo dia) sai */
+function closePeriods(periods: PrimaryPeriod[] | undefined, today: IsoDate): PrimaryPeriod[] {
+  return (periods ?? [])
+    .map((p) => (p.to === null ? { ...p, to: today } : p))
+    .filter((p) => p.from === null || p.to === null || p.from <= p.to);
 }
 
 /**
@@ -113,10 +145,19 @@ export async function makePrimary(account: Account): Promise<void> {
  * Conta com movimento vira conta arquivada: some das escolhas, mas o dinheiro
  * que passou por ela continua explicado. Apagar levaria junto a metade de
  * cada transferência que ela fez — e deixaria a outra metade órfã.
+ *
+ * A principal não sai (FIN-013, FIN-015): é ela que responde pelo que não diz
+ * de qual conta é, e o app sempre precisa de uma. Antes, outra vira a
+ * principal; aí ela sai como qualquer conta, contando como movimento o que
+ * aconteceu sem conta enquanto ela era a principal.
  */
 export async function removeAccount(account: Account): Promise<'deleted' | 'archived'> {
   const ledger = await loadLedger(account.spaceId);
+  if (primaryAccountId(ledger.accounts) === account.id) {
+    throw new Error('A conta principal não pode ser excluída. Torne outra conta principal antes.');
+  }
   const moved =
+    realizedPostings(ledger, ledger.today).some((p) => p.accountId === account.id) ||
     ledger.entries.some((e) => e.accountId === account.id) ||
     ledger.transfers.some((t) => t.fromAccountId === account.id || t.toAccountId === account.id) ||
     ledger.cards.some((c) => c.accountId === account.id) ||
@@ -319,8 +360,24 @@ export async function setBalance(input: {
  */
 export async function ensurePrimaryAccount(spaceId: string): Promise<Account> {
   const live = await liveRows<Account>('accounts', spaceId);
-  const found = live.find((a) => a.primary) ?? live[0];
-  if (found) return found;
+  if (live.length) {
+    const id = primaryAccountId(live);
+    return live.find((a) => a.id === id) ?? live[0];
+  }
+
+  /**
+   * Excluída numa versão que ainda deixava (FIN-013): volta de verdade, com a
+   * hora de agora, e sobe para a nuvem. Regravada com a data do começo dos
+   * tempos, como antes, o servidor ficava com a exclusão, mais nova, e ela
+   * renascia só neste aparelho, a cada abertura.
+   */
+  const previous = await db().accounts.get(primaryIdFor(spaceId));
+  if (previous) {
+    const revived = await putRecord('accounts', { ...previous, deletedAt: null, archived: false, primary: true });
+    await audit(spaceId, 'account.revived', { id: revived.id, deletedAt: previous.deletedAt });
+    return revived;
+  }
+
   const epoch = '2000-01-01T00:00:00.000Z';
   const account: Account = {
     id: primaryIdFor(spaceId),
