@@ -11,6 +11,15 @@ import type { Asset, Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscri
 import type { MoneyToDecide } from './decision';
 import type { Checkup } from './checkup';
 import { answerAvailable, answerSpend, isSpendQuestion, parseSpend } from './decision-answers';
+import {
+  TESTS,
+  answerGoalLag,
+  answerHighInvoice,
+  answerIncomeRose,
+  answerSpendingTooMuch,
+  answerWhereMoneyGoes,
+  answerWhichDebt,
+} from './story-answers';
 import { wealthHistory } from './wealth';
 
 /**
@@ -646,6 +655,16 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
       };
     },
   },
+  /*
+   * As perguntas vagas (fase 3): a pergunta vira diagnóstico. Ficam à frente
+   * dos temas genéricos de cartão, meta e dívida, que responderiam só o total.
+   */
+  { id: 'salario-subiu', test: (p) => TESTS.salarioSubiu(p.raw), answer: (ctx) => answerIncomeRose(ctx) },
+  { id: 'dinheiro-some', test: (p) => TESTS.dinheiroSome(p.raw), answer: (ctx) => answerWhereMoneyGoes(ctx, normalize(lastQuestion)) },
+  { id: 'gastando-demais', test: (p) => TESTS.gastandoDemais(p.raw), answer: (ctx) => answerSpendingTooMuch(ctx) },
+  { id: 'fatura-alta', test: (p) => TESTS.faturaAlta(p.raw), answer: (ctx) => answerHighInvoice(ctx, normalize(lastQuestion)) },
+  { id: 'meta-nao-chega', test: (p) => TESTS.metaNaoChega(p.raw), answer: (ctx) => answerGoalLag(ctx, pickGoal(ctx)) },
+  { id: 'qual-divida', test: (p) => TESTS.qualDivida(p.raw), answer: (ctx) => answerWhichDebt(ctx) },
   {
     id: 'resumo',
     test: (p) => p.tags.has('RESUMO') || /\bcomo (estou|vou|ando|anda)\b/.test(p.raw),
@@ -1251,6 +1270,9 @@ export const SUGGESTIONS = [
   'Quanto posso gastar?',
   'Posso gastar R$ 300?',
   'Como está minha vida financeira?',
+  'Por que meu dinheiro some?',
+  'Estou gastando demais?',
+  'Por que minha fatura está tão alta?',
   'Quanto vou gastar com cartão mês que vem?',
   'Quanto tenho em parcelas futuras?',
   'Quanto falta para minha meta?',

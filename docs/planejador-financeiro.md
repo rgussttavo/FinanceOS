@@ -25,7 +25,7 @@ planejar, simular, orientar e acompanhar.
 |---|---|---|
 | 1 | Dinheiro para decidir: saldo, comprometido, disponível, margem, "posso gastar R$ X?" | feita |
 | 2 | Diagnóstico por áreas (sem nota geral), "o que merece atenção", confiança dos dados | feita |
-| 3 | Perguntas vagas no assistente ("por que meu dinheiro some"), resposta em camadas | a fazer |
+| 3 | Perguntas vagas no assistente ("por que meu dinheiro some"), resposta em camadas | feita |
 | 4 | Metas como plano vivo: prioridade, conflito, previsão pelo ritmo real, cenários | a fazer |
 | 5 | Primeiro acesso com 3 ou 4 perguntas, perfil e objetivos de vida | a fazer |
 | 6 | Estratégias em fases, estágios, próxima melhor ação, check-ins | a fazer |
@@ -128,3 +128,21 @@ no lugar da antiga nota de 0 a 100). Testes: `checkup.test.ts`.
   partir de 60%. Cada item em falta diz como resolver.
 - **Sem dados, sem veredito:** sem fluxo para ler, o resumo diz que faltam
   dados — "nenhuma dívida" não vira "está tudo bem".
+
+## Fase 3 — perguntas vagas
+
+Código: `src/lib/money-story.ts` (números) e `src/lib/story-answers.ts`
+(linguagem e o reconhecimento de cada pergunta). Testes:
+`story-answers.test.ts`.
+
+| Pergunta | O que o app calcula |
+|---|---|
+| "Por que meu dinheiro some?", "não sobra", "meu salário é suficiente?" | renda média dos 3 meses completos contra fixos (contas que se repetem, assinaturas, parcelas de dívida), compras parceladas e variáveis; a sobra e o que mais pesa |
+| "Estou gastando demais?" | o mês atual, com o previsto, contra a média dos 3 anteriores; as categorias que mais subiram; a renda média; os tetos de orçamento passados |
+| "Por que minha fatura está alta / não baixa?" | a próxima fatura contra a média das 3 anteriores; quanto é parcela antiga (e até quando vem), assinatura e compra deste ciclo |
+| "Meu salário subiu e continuo sem dinheiro" | renda e gastos dos 3 meses mais recentes contra os 3 anteriores; o que cresceu. Só com 3 meses completos de cada lado |
+| "Por que minha meta nunca chega?" | o aporte que o prazo pede contra o ritmo real; quando chega no ritmo atual; as saídas (aporte, prazo, valor) |
+| "Qual dívida olho primeiro?" | os dois critérios lado a lado — maior juro e menor saldo — sem escolher pela pessoa |
+
+A resposta segue sempre a mesma ordem: a resposta direta, o porquê em
+números, o que dá para fazer. A conta vai na lista de detalhes.
