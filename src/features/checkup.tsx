@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { ArrowRight, Check, CircleAlert, CircleDashed, Info, TriangleAlert } from 'lucide-react';
 import { Meter, Panel, SectionTitle, Select, toast } from '@/components/ui';
-import type { Area, AreaStatus, Checkup } from '@/lib/checkup';
+import type { Area, AreaId, AreaStatus, Checkup } from '@/lib/checkup';
 import { LIMITS } from '@/lib/checkup';
 import { cn } from '@/lib/cn';
 import { putRecord } from '@/lib/db';
@@ -40,8 +40,21 @@ const mask = (text: string, hidden: boolean) => (hidden ? text.replace(/[−-]?R
 
 /* ------------------------------------------------------ o resumo do Início */
 
-export function AreasSummary({ checkup, hidden, onGo }: { checkup: Checkup; hidden: boolean; onGo: (route: Route) => void }) {
+export function AreasSummary({
+  checkup,
+  hidden,
+  onGo,
+  first,
+}: {
+  checkup: Checkup;
+  hidden: boolean;
+  onGo: (route: Route) => void;
+  /** as áreas que o foco declarado põe na frente; as outras seguem na ordem de sempre */
+  first?: AreaId[];
+}) {
   const { confidence } = checkup;
+  const rank = (id: AreaId) => (first?.includes(id) ? first.indexOf(id) : (first?.length ?? 0) + checkup.areas.findIndex((a) => a.id === id));
+  const areas = first?.length ? [...checkup.areas].sort((a, b) => rank(a.id) - rank(b.id)) : checkup.areas;
   return (
     <Panel className="p-5">
       <SectionTitle
@@ -55,7 +68,7 @@ export function AreasSummary({ checkup, hidden, onGo }: { checkup: Checkup; hidd
       </SectionTitle>
       <p className="mb-3 text-[14px] leading-relaxed text-ink-2">{checkup.summary.text}</p>
       <ul className="grid gap-2">
-        {checkup.areas.map((a) => (
+        {areas.map((a) => (
           <li key={a.id} className="flex items-center justify-between gap-3 text-[14px]">
             <span className="flex min-w-0 items-center gap-2 text-ink">
               <StatusIcon status={a.status} />

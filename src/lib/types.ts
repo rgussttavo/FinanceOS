@@ -511,6 +511,8 @@ export type ProfileFocus = 'vermelho' | 'gastos' | 'dividas' | 'cartoes' | 'rese
 export type ProfileSituation = 'tranquila' | 'organizada' | 'apertada' | 'sem-dinheiro' | 'endividado' | 'nao-sei';
 export type ProfileMonthEnd = 'quase-sempre' | 'as-vezes' | 'raramente' | 'nunca';
 export type ProfileIncome = 'fixa' | 'variavel' | 'mista';
+export type ProfileDebts = 'nao' | 'em-dia' | 'atrasadas';
+export type ProfileReserve = 'nao' | 'pouca' | 'meses' | 'nao-sei';
 
 /**
  * As respostas do primeiro acesso (ou do convite no Início). Tudo opcional:
@@ -521,8 +523,13 @@ export interface FinancialProfile {
   /** o que a pessoa quer melhorar, na ordem em que escolheu */
   focus: ProfileFocus[];
   situation: ProfileSituation | null;
+  /** das primeiras versões; o formulário de hoje não pergunta mais, mas a resposta antiga continua valendo */
   monthEnd: ProfileMonthEnd | null;
   income: ProfileIncome | null;
+  /** tem dívidas, e se alguma está atrasada; ausente em respostas antigas */
+  debts?: ProfileDebts | null;
+  /** tem reserva para emergências; ausente em respostas antigas */
+  reserve?: ProfileReserve | null;
   /** quando respondeu; null quando só dispensou o convite */
   answeredAt: IsoInstant | null;
   /** dispensou o convite: não pergunta de novo */

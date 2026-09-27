@@ -44,6 +44,8 @@ import { availableLines, type MoneyToDecide, type SafetyBuffer } from '@/lib/dec
 import type { Checkup } from '@/lib/checkup';
 import { AreasSummary } from './checkup';
 import { ProfilePrompt } from './profile';
+import { HOME_AREAS, homeFocus, type HomeFocus } from '@/lib/profile';
+import { goalProgress } from '@/lib/goals';
 import { MonthlyCheckin, NextActionCard, QuarterlyReview } from './strategy';
 import type { StrategyView } from '@/lib/strategy';
 import { holidaysBetween } from '@/lib/holidays';
@@ -70,6 +72,26 @@ import { NewsList } from './mercado';
  */
 
 type CardMode = 'salario' | 'agora' | 'fim' | 'patrimonio';
+
+type BlockId = 'timeline' | 'atencao' | 'acoes' | 'saude' | 'resumo' | 'plano';
+
+/**
+ * A ordem dos blocos, pelo momento que a pessoa contou (lib/profile.ts).
+ *
+ * top e bottom ficam na coluna principal; side vem entre eles no celular e
+ * vira a coluna da direita no computador (right, quando a ordem lá difere).
+ * Sem resposta, o Início fica como sempre foi. A ordem é a mesma que a tela
+ * "Entendemos seu momento" promete.
+ */
+const LAYOUTS: Record<HomeFocus | 'padrao', { top: BlockId[]; side: BlockId[]; right?: BlockId[]; bottom: BlockId[] }> = {
+  padrao: { top: ['timeline'], side: ['atencao', 'acoes', 'saude'], right: ['atencao', 'saude', 'acoes'], bottom: ['resumo'] },
+  // o mês no limite: o que vem aí, e fluxo, dívidas e cartões antes de tudo
+  aperto: { top: ['timeline'], side: ['saude', 'atencao', 'acoes'], bottom: ['resumo'] },
+  // a base de pé: metas e patrimônio primeiro
+  plano: { top: ['plano'], side: ['saude', 'atencao', 'acoes'], bottom: ['timeline', 'resumo'] },
+  // conhecendo o próprio dinheiro: o mês em números e os atalhos para registrar
+  comeco: { top: ['resumo'], side: ['acoes', 'atencao', 'saude'], bottom: ['timeline'] },
+};
 
 export interface InicioProps {
   spaceId: string;
@@ -119,8 +141,10 @@ export function InicioView(props: InicioProps) {
   if (!base.ready) return <InicioSkeleton />;
 
   const empty = !base.entries.length && !base.subscriptions.length && !base.debts.length;
+  const focus = homeFocus(settings?.profile);
+  const layout = LAYOUTS[focus ?? 'padrao'];
 
-  const blocks = {
+  const blocks: Record<BlockId | 'news', React.ReactNode> = {
     timeline: !hiddenBlocks.has('timeline') && !empty && (
       <UpcomingPanel key="timeline" {...props} />
     ),
@@ -128,7 +152,10 @@ export function InicioView(props: InicioProps) {
       <AttentionPanel key="atencao" insights={insights} onGo={onGo} />
     ),
     acoes: !hiddenBlocks.has('acoes') && <QuickActions key="acoes" cardsEnabled={cardsEnabled} onQuick={props.onQuick} onGo={onGo} />,
-    saude: !hiddenBlocks.has('saude') && !empty && <AreasSummary key="saude" checkup={props.checkup} hidden={hidden} onGo={onGo} />,
+    saude: !hiddenBlocks.has('saude') && !empty && (
+      <AreasSummary key="saude" checkup={props.checkup} hidden={hidden} onGo={onGo} first={focus ? HOME_AREAS[focus] : undefined} />
+    ),
+    plano: focus === 'plano' && !hiddenBlocks.has('plano') && <PlanGlance key="plano" {...props} />,
     resumo: !hiddenBlocks.has('resumo') && !empty && <MonthSummaryPanel key="resumo" summary={props.picture.summary} hidden={hidden} onGo={onGo} />,
     news: !hiddenBlocks.has('news') && (settings?.newsEnabled ?? true) && (
       <Panel key="news" className="p-5">
@@ -152,24 +179,97 @@ export function InicioView(props: InicioProps) {
           {!empty && props.strategy.quarterly ? <QuarterlyReview checkup={props.checkup} stage={props.strategy.stage} settings={settings} onGo={onGo} /> : null}
           {empty ? <FirstSteps onQuick={props.onQuick} onGo={onGo} /> : null}
           {!hiddenBlocks.has('perfil') ? <ProfilePrompt settings={settings} /> : null}
+          {/* com um foco declarado, o primeiro bloco dele vem logo abaixo do número principal, como a tela do momento prometeu */}
+          {focus ? layout.top.map((id) => blocks[id]) : null}
           {!empty && !hiddenBlocks.has('cobertura') ? <Coverage {...props} /> : null}
-          {blocks.timeline}
-          <div className="grid gap-4 lg:hidden">
-            {blocks.atencao}
-            {blocks.acoes}
-            {blocks.saude}
-          </div>
-          {blocks.resumo}
+          {focus ? null : layout.top.map((id) => blocks[id])}
+          <div className="grid gap-4 lg:hidden">{layout.side.map((id) => blocks[id])}</div>
+          {layout.bottom.map((id) => blocks[id])}
         </div>
         <div className="hidden gap-4 lg:grid">
-          {blocks.atencao}
-          {blocks.saude}
-          {blocks.acoes}
+          {(layout.right ?? layout.side).map((id) => blocks[id])}
           {blocks.news}
         </div>
         <div className="grid gap-4 lg:hidden">{blocks.news}</div>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------ metas e patrimônio */
+
+const PRIORITY_RANK = { alta: 0, media: 1, baixa: 2 } as const;
+
+/**
+ * Para quem contou que quer construir: quanto já tem (patrimônio líquido, a
+ * mesma conta da tela de Patrimônio) e quanto falta em cada meta ativa, as de
+ * prioridade alta primeiro.
+ */
+function PlanGlance({ base, cash, settings, hidden, onGo }: InicioProps) {
+  const cardsEnabled = settings?.cardsEnabled ?? true;
+  const wealth = React.useMemo(() => wealthNow(ledgerInput(base, cardsEnabled, cash.today), base.assets), [base, cardsEnabled, cash.today]);
+  const goals = base.goals
+    .filter((g) => !g.archivedAt && !g.pausedAt)
+    .map((g) => ({ g, p: goalProgress(g, base.entries, cash.month, cash.today) }))
+    .sort((a, b) => Number(a.p.reached) - Number(b.p.reached) || PRIORITY_RANK[a.g.priority ?? 'media'] - PRIORITY_RANK[b.g.priority ?? 'media']);
+  const shown = goals.slice(0, 3);
+  const money = (v: number) => formatMoney(v, { hidden });
+  const more = goals.length - shown.length;
+
+  return (
+    <Panel className="p-5">
+      <SectionTitle action={<LinkButton onClick={() => onGo({ view: 'metas' })}>Ver metas</LinkButton>}>Metas e patrimônio</SectionTitle>
+      <button
+        type="button"
+        onClick={() => onGo({ view: 'patrimonio' })}
+        className="-mx-2 flex w-[calc(100%+16px)] items-center justify-between gap-3 rounded-field px-2 py-2 text-left hover:bg-surface-2"
+      >
+        <span className="text-[14px] text-ink-2">Patrimônio líquido</span>
+        <span className={cn('tnum text-[18px] font-semibold', wealth.net < 0 ? 'text-out' : 'text-ink')}>{money(wealth.net)}</span>
+      </button>
+      {shown.length ? (
+        <ul className="mt-2 grid gap-3.5 border-t border-line pt-3.5">
+          {shown.map(({ g, p }) => (
+            <li key={g.id}>
+              <div className="flex items-baseline justify-between gap-3 text-[14px]">
+                <span className="truncate text-ink">{g.name}</span>
+                <span className="tnum shrink-0 text-[13px] text-ink-2">
+                  {money(p.current)} de {money(p.target)}
+                </span>
+              </div>
+              <Meter
+                value={p.ratio}
+                label={`${g.name}: ${Math.round(p.ratio * 100)}%`}
+                tone={p.late ? 'warn' : p.reached ? 'in' : 'accent'}
+                height={6}
+                className="mt-1.5"
+              />
+              <p className="mt-1 text-[12px] text-ink-3">
+                {p.reached
+                  ? 'Meta alcançada'
+                  : p.late
+                    ? `Prazo passou · faltam ${money(p.missing)}`
+                    : p.perMonth
+                      ? `Faltam ${money(p.missing)} · ${money(p.perMonth)} por mês até o prazo`
+                      : `Faltam ${money(p.missing)}`}
+              </p>
+            </li>
+          ))}
+          {more > 0 ? (
+            <li className="text-[12px] text-ink-3">
+              E mais {more} {more === 1 ? 'meta' : 'metas'}.
+            </li>
+          ) : null}
+        </ul>
+      ) : (
+        <div className="mt-2 border-t border-line pt-3.5">
+          <p className="text-[14px] leading-relaxed text-ink-2">Nenhuma meta ainda. Crie uma e veja quanto guardar por mês para chegar lá.</p>
+          <Button size="sm" variant="soft" className="mt-3" onClick={() => onGo({ view: 'metas', param: 'novo' })}>
+            <Target size={15} /> Criar meta
+          </Button>
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -270,31 +370,32 @@ function MainCard({ spaceId, base, cash, decide, settings, hidden, onGo }: Inici
             ) : (
               <p>Até o fim do mês: nenhum recebimento previsto nos próximos 60 dias.</p>
             )}
-            <dl className={cn('grid gap-2 rounded-field bg-surface-2 px-3 py-2.5 text-[12px] text-ink-3', decide.guarded !== 0 ? 'grid-cols-2' : 'grid-cols-3')}>
-              <div className="min-w-0">
+            {/* os valores nunca são cortados: quando não cabem lado a lado, descem para a linha de baixo */}
+            <dl className="flex flex-wrap gap-x-6 gap-y-2 rounded-field bg-surface-2 px-3 py-2.5 text-[12px] text-ink-3">
+              <div>
                 <dt>{decide.guarded !== 0 ? 'Saldo total' : 'Saldo'}</dt>
                 <dd>
-                  <Money value={decide.total} hidden={hidden} signed={decide.total < 0} className="block truncate text-[14px] font-semibold text-ink" />
+                  <Money value={decide.total} hidden={hidden} signed={decide.total < 0} className="block whitespace-nowrap text-[14px] font-semibold text-ink" />
                 </dd>
               </div>
               {decide.guarded !== 0 ? (
-                <div className="min-w-0">
+                <div>
                   <dt>Guardado</dt>
                   <dd>
-                    <Money value={decide.guarded} hidden={hidden} className="block truncate text-[14px] font-semibold text-ink" />
+                    <Money value={decide.guarded} hidden={hidden} className="block whitespace-nowrap text-[14px] font-semibold text-ink" />
                   </dd>
                 </div>
               ) : null}
-              <div className="min-w-0">
+              <div>
                 <dt>Comprometido</dt>
                 <dd>
-                  <Money value={decide.committed} hidden={hidden} className="block truncate text-[14px] font-semibold text-ink" />
+                  <Money value={decide.committed} hidden={hidden} className="block whitespace-nowrap text-[14px] font-semibold text-ink" />
                 </dd>
               </div>
-              <div className="min-w-0">
+              <div>
                 <dt>Margem</dt>
                 <dd>
-                  <Money value={decide.buffer.amount} hidden={hidden} className="block truncate text-[14px] font-semibold text-ink" />
+                  <Money value={decide.buffer.amount} hidden={hidden} className="block whitespace-nowrap text-[14px] font-semibold text-ink" />
                 </dd>
               </div>
             </dl>

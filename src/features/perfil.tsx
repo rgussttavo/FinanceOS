@@ -35,6 +35,7 @@ const BLOCKS: { id: string; label: string; detail: string; news?: boolean }[] = 
   { id: 'saude', label: 'Sua vida financeira', detail: 'O estado de cada área e o que merece atenção' },
   { id: 'acoes', label: 'Ações rápidas', detail: 'Atalhos para registrar e importar' },
   { id: 'resumo', label: 'Como está seu mês', detail: 'Quanto entrou, saiu e foi investido' },
+  { id: 'plano', label: 'Metas e patrimônio', detail: 'Aparece no topo quando o seu foco é juntar, investir ou montar reserva' },
   { id: 'news', label: 'Notícias', detail: 'As últimas manchetes de economia', news: true },
 ];
 

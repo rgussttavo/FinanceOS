@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Area, AreaId, AreaStatus, Checkup } from './checkup';
-import { focusNote, suggestionsFor } from './profile';
+import { focusNote, homeFocus, momentSummary, suggestionsFor } from './profile';
 import type { FinancialProfile } from './types';
 
 /**
@@ -99,5 +99,83 @@ describe('sugestões do assistente', () => {
       'Qual a Selic?',
     ]);
     expect(suggestionsFor(undefined, base)).toEqual(base);
+  });
+});
+
+describe('o Início por perfil', () => {
+  it('sem resposta, o Início fica como sempre foi', () => {
+    expect(homeFocus(undefined)).toBeNull();
+    expect(homeFocus({ ...profile({ focus: ['investir'] }), answeredAt: null })).toBeNull();
+    expect(homeFocus(profile({}))).toBeNull();
+  });
+
+  it('conta atrasada ou mês apertado vencem qualquer objetivo', () => {
+    expect(homeFocus(profile({ focus: ['investir'], debts: 'atrasadas' }))).toBe('aperto');
+    expect(homeFocus(profile({ focus: ['objetivo'], situation: 'sem-dinheiro' }))).toBe('aperto');
+    expect(homeFocus(profile({ situation: 'endividado' }))).toBe('aperto');
+  });
+
+  it('o objetivo decide quando não há aperto', () => {
+    expect(homeFocus(profile({ focus: ['dividas'], debts: 'em-dia' }))).toBe('aperto');
+    expect(homeFocus(profile({ focus: ['investir'], situation: 'tranquila' }))).toBe('plano');
+    expect(homeFocus(profile({ focus: ['reserva'] }))).toBe('plano');
+    expect(homeFocus(profile({ focus: ['gastos'], situation: 'organizada' }))).toBe('comeco');
+    expect(homeFocus(profile({ focus: ['organizar'] }))).toBe('comeco');
+  });
+
+  it('sem objetivo, a situação decide', () => {
+    expect(homeFocus(profile({ situation: 'organizada' }))).toBe('plano');
+    expect(homeFocus(profile({ situation: 'nao-sei' }))).toBe('comeco');
+    expect(homeFocus(profile({ income: 'fixa', reserve: 'pouca' }))).toBeNull();
+  });
+});
+
+describe('"Entendemos seu momento"', () => {
+  it('devolve o objetivo numa frase e diz por onde começa', () => {
+    const m = momentSummary(profile({ focus: ['vermelho'], situation: 'apertada', debts: 'em-dia' }))!;
+    expect(m.headline).toBe('Seu principal objetivo é parar de ficar no vermelho.');
+    expect(m.focus).toBe('aperto');
+    expect(m.notes).toEqual(['As dívidas estão em dia: o cuidado é o mês não apertar a ponto de atrasar alguma.']);
+    expect(m.first[0]).toBe('O que entra e sai até o próximo recebimento');
+  });
+
+  it('quer investir com conta atrasada: diz que o fluxo vem antes', () => {
+    const m = momentSummary(profile({ focus: ['investir'], debts: 'atrasadas' }))!;
+    expect(m.focus).toBe('aperto');
+    expect(m.notes).toHaveLength(2);
+    expect(m.notes[0]).toMatch(/começa pelo fluxo/);
+    expect(m.notes[1]).toMatch(/conta atrasada/);
+  });
+
+  it('no máximo duas observações, e nenhuma promete o que o app não faz', () => {
+    const m = momentSummary(profile({ focus: ['objetivo'], situation: 'tranquila', reserve: 'nao', income: 'variavel' }))!;
+    expect(m.focus).toBe('plano');
+    expect(m.notes).toEqual([
+      'Sem reserva, um imprevisto vira dívida. Ela entra no plano como um dos primeiros passos.',
+      'Com renda que varia, registre cada entrada quando cair: a previsão usa só o que está lançado.',
+    ]);
+  });
+
+  it('sem objetivo, a frase vem da situação; sem nada respondido, não há tela', () => {
+    expect(momentSummary(profile({ situation: 'nao-sei' }))?.headline).toBe('Você ainda não sabe dizer como está.');
+    expect(momentSummary(profile({}))).toBeNull();
+    expect(momentSummary(null)).toBeNull();
+  });
+});
+
+describe('o que foi dito sobre dívidas e reserva, contra o cadastro', () => {
+  it('disse que tem dívida e não há nenhuma cadastrada: sugere cadastrar', () => {
+    const note = focusNote(profile({ debts: 'em-dia' }), checkup({ dividas: ['ok', 'nenhuma'] }));
+    expect(note?.mismatch).toMatch(/tem dívidas, mas não há dívida cadastrada/);
+  });
+
+  it('disse que a reserva cobre meses e o diagnóstico não a encontra: explica como fazer aparecer', () => {
+    const note = focusNote(profile({ reserve: 'meses' }), checkup({ reserva: ['unknown', 'sem dados'] }));
+    expect(note?.mismatch).toMatch(/reserva cobre alguns meses/);
+    expect(focusNote(profile({ reserve: 'meses' }), checkup({ reserva: ['ok', '4,2 meses'] }))?.mismatch).toBeNull();
+  });
+
+  it('conta atrasada põe a pergunta das dívidas na frente do assistente', () => {
+    expect(suggestionsFor(profile({ focus: ['investir'], debts: 'atrasadas' }), [])[0]).toBe('Qual dívida devo pagar primeiro?');
   });
 });

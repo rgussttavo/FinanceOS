@@ -14,7 +14,7 @@ import { AccountPanel, useAuthRedirectError, useCloudSync, useSession } from '@/
 import { BRAND } from '@/lib/brand';
 import { dayBalances, type FlowItem } from '@/lib/cashflow';
 import { balancesAt } from '@/lib/ledger';
-import { DEMO_DB, db, putRecord, selectDatabase } from '@/lib/db';
+import { DEMO_DB, db, liveRows, putRecord, selectDatabase } from '@/lib/db';
 import { currentMonthKey, nowInstant } from '@/lib/dates';
 import type { MovFilter, SubId, ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
@@ -30,7 +30,7 @@ import { toggleSettled, useBootstrap, useCategories, useSettings } from '@/lib/s
 import { cloudConfigured } from '@/lib/supabase';
 import { detachCloud } from '@/lib/sync';
 import { applyTheme, useIsLight, useSystemTheme } from '@/lib/theme';
-import type { MonthKey } from '@/lib/types';
+import type { MonthKey, Settings } from '@/lib/types';
 import { AssinaturasView } from './assinaturas';
 import { CalendarioView } from './calendario';
 import { CartoesView } from './cartoes';
@@ -43,7 +43,7 @@ import { InicioView } from './inicio';
 import { MetasView } from './metas';
 import { MovimentosView } from './movimentos';
 import { Onboarding, type OnboardingStep } from './onboarding';
-import { saveProfile } from './profile';
+import { saveProfile, type ProfileDraft } from './profile';
 import { PatrimonioView } from './patrimonio';
 import { PerfilView } from './perfil';
 import type { ViewContext } from './views';
@@ -178,13 +178,23 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   const [importedMonth, setImportedMonth] = React.useState<MonthKey | null>(null);
   const onboardingActive = onboarding !== null && onboarding !== 'off';
 
-  const finishOnboarding = React.useCallback(async () => {
-    setOnboarding('off');
-    navigate({ view: 'inicio' }, { replace: true });
-    if (!settings) return;
-    const name = onboardingName.trim();
-    await putRecord('settings', { ...settings, onboardedAt: nowInstant(), displayName: name || settings.displayName });
-  }, [settings, onboardingName]);
+  const finishOnboarding = React.useCallback(
+    async (draft?: ProfileDraft) => {
+      setOnboarding('off');
+      navigate({ view: 'inicio' }, { replace: true });
+      if (!settings) return;
+      // relê do banco: as respostas das perguntas podem ter sido gravadas há um instante
+      const fresh = (await liveRows<Settings>('settings', settings.spaceId))[0] ?? settings;
+      const name = onboardingName.trim();
+      await putRecord('settings', {
+        ...fresh,
+        onboardedAt: nowInstant(),
+        displayName: name || fresh.displayName,
+        ...(draft ? { profile: { ...draft, answeredAt: nowInstant(), skippedAt: null } } : {}),
+      });
+    },
+    [settings, onboardingName],
+  );
 
   // o assistente e a busca respondem com a mesma régua das telas
   const assistant = React.useMemo<AssistantContext>(
@@ -371,13 +381,14 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           name={onboardingName}
           onName={setOnboardingName}
           onImport={() => go({ view: 'importar' })}
+          signedIn={!!session}
           onSignIn={cloudConfigured() && !session ? goToAuth : undefined}
           onOpenMonth={(m) => {
             void finishOnboarding();
             setMonth(m);
             navigate({ view: 'movimentos' });
           }}
-          onFinish={() => void finishOnboarding()}
+          onFinish={(draft) => void finishOnboarding(draft)}
           onProfile={(draft) => void saveProfile(settings, draft)}
         />
         <Toaster />

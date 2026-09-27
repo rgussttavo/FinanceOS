@@ -2,7 +2,8 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, FileUp, PenLine, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, FileUp, PenLine, ShieldCheck } from 'lucide-react';
+import { reducedMotion } from '@/components/motion';
 import { BrandMark } from '@/components/shell';
 import { Button, Field, Input, Money, SignToggle } from '@/components/ui';
 import type { CashSnapshot } from '@/lib/cashflow';
@@ -12,24 +13,44 @@ import { addMonthsToKey, currentMonthKey, dateInMonth, formatDayShort, formatMon
 import { parseMoney } from '@/lib/money';
 import type { MonthSummary } from '@/lib/occurrences';
 import { setBalance as setAccountBalance } from '@/lib/accounts';
+import {
+  DEBTS_OPTIONS,
+  FOCUS_OPTIONS,
+  INCOME_OPTIONS,
+  RESERVE_OPTIONS,
+  SITUATION_OPTIONS,
+  momentSummary,
+  type ProfileOption,
+} from '@/lib/profile';
 import { createEntry } from '@/lib/store';
 import type { Category, MonthKey } from '@/lib/types';
-import { ProfileForm, emptyDraft, hasAnswer, type ProfileDraft } from './profile';
+import { emptyDraft, hasAnswer, type ProfileDraft } from './profile';
 
 /**
- * O primeiro acesso, em quatro passos.
+ * O primeiro acesso: entender o momento, depois o mês.
  *
- * Nada de tutorial: o valor do FinanceOS é um número — quanto sobra — e o
- * caminho mais curto até ele é pedir o mínimo que o produz. Antes, quatro
- * perguntas de toque sobre o momento da pessoa, todas puláveis: é o que faz o
- * app começar pelo que importa a ela. Depois, o extrato ou dois números
- * digitados. No último passo a pessoa já está olhando para o mês dela.
+ * Nada de tutorial nem de formulário comprido. Primeiro, cinco perguntas de
+ * toque, uma por tela e todas puláveis — é o que faz o app começar pelo que
+ * importa à pessoa. Logo depois, a devolutiva: o que ela contou numa frase e
+ * por onde o Início vai começar. Por fim, o mínimo que produz o número que o
+ * FinanceOS promete — quanto sobra —: o extrato ou dois números digitados.
  */
 
-export type OnboardingStep = 'hello' | 'perfil' | 'start' | 'manual' | 'done';
+export type QuestionStep = 'objetivo' | 'situacao' | 'dividas' | 'reserva' | 'renda';
+export type OnboardingStep = 'hello' | QuestionStep | 'momento' | 'start' | 'manual' | 'done';
 
-const STEP_INDEX: Record<OnboardingStep, number> = { hello: 1, perfil: 2, start: 3, manual: 3, done: 4 };
-const STEPS = 4;
+const QUESTIONS: QuestionStep[] = ['objetivo', 'situacao', 'dividas', 'reserva', 'renda'];
+
+/** três etapas à vista, não dez: o progresso tranquiliza em vez de contar o que falta */
+const PHASES = ['Você', 'Seu momento', 'Seu mês'] as const;
+
+function phaseOf(step: OnboardingStep): { phase: number; fraction: number } {
+  if (step === 'hello') return { phase: 0, fraction: 1 };
+  const q = QUESTIONS.indexOf(step as QuestionStep);
+  if (q >= 0) return { phase: 1, fraction: q / QUESTIONS.length };
+  if (step === 'momento') return { phase: 1, fraction: 1 };
+  return { phase: 2, fraction: step === 'start' ? 1 / 3 : step === 'manual' ? 2 / 3 : 1 };
+}
 
 export function Onboarding({
   step,
@@ -41,6 +62,7 @@ export function Onboarding({
   importedMonth,
   name,
   onName,
+  signedIn,
   onImport,
   onSignIn,
   onOpenMonth,
@@ -57,21 +79,39 @@ export function Onboarding({
   importedMonth: MonthKey | null;
   name: string;
   onName: (name: string) => void;
+  /** entrou com uma conta: os dados também vão para a nuvem */
+  signedIn: boolean;
   onImport: () => void;
   onSignIn?: () => void;
   onOpenMonth: (month: MonthKey) => void;
-  onFinish: () => void;
-  /** grava as respostas do passo "seu momento" */
+  /** encerra o primeiro acesso; com respostas ainda não gravadas, grava junto */
+  onFinish: (draft?: ProfileDraft) => void;
+  /** grava as respostas das cinco perguntas */
   onProfile: (draft: ProfileDraft) => void;
 }) {
-  const index = STEP_INDEX[step];
+  const { phase, fraction } = phaseOf(step);
   const headingRef = React.useRef<HTMLHeadingElement>(null);
+  // as respostas vivem aqui enquanto a pessoa vai e volta entre as perguntas
+  const [draft, setDraft] = React.useState<ProfileDraft>(() => emptyDraft());
+  const question = QUESTIONS.indexOf(step as QuestionStep);
 
   // cada passo novo leva o foco (e o leitor de tela) ao título dele
   React.useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0 });
   }, [step]);
+
+  // recebe as respostas já com a última escolha: o estado ainda não virou quando o toque avança
+  const nextQuestion = (answers: ProfileDraft) => {
+    if (question < QUESTIONS.length - 1) return onStep(QUESTIONS[question + 1]);
+    if (hasAnswer(answers)) {
+      onProfile(answers);
+      onStep('momento');
+    } else {
+      onStep('start');
+    }
+  };
+  const prevQuestion = () => onStep(question > 0 ? QUESTIONS[question - 1] : 'hello');
 
   return (
     <div className="min-h-dvh bg-canvas">
@@ -86,7 +126,8 @@ export function Onboarding({
             {step !== 'done' ? (
               <button
                 type="button"
-                onClick={onFinish}
+                // pular tudo não joga fora o que já foi respondido
+                onClick={() => onFinish(question >= 0 && hasAnswer(draft) ? draft : undefined)}
                 className="h-9 rounded-field px-2 text-[13px] font-medium text-ink-3 hover:text-ink"
               >
                 Pular
@@ -94,33 +135,37 @@ export function Onboarding({
             ) : null}
           </header>
 
-          <ol aria-label={`Passo ${index} de ${STEPS}`} className="mt-4 grid grid-cols-4 gap-1.5">
-            {[1, 2, 3, 4].map((n) => (
-              <li
-                key={n}
-                aria-current={n === index ? 'step' : undefined}
-                className={cn(
-                  'h-1 rounded-full transition-colors duration-[var(--t-slow)]',
-                  n <= index ? 'bg-accent' : 'bg-surface-3',
-                )}
-              />
-            ))}
-          </ol>
+          <ProgressIndicator phase={phase} fraction={fraction} className="mt-4" />
 
           <main key={step} className="flex flex-1 flex-col pt-10 sm:pt-8 motion-safe:animate-[rise-in_var(--t-slow)_var(--ease-out)]">
             {step === 'hello' ? (
-              <Hello headingRef={headingRef} name={name} onName={onName} onNext={() => onStep('perfil')} onSignIn={onSignIn} />
-            ) : step === 'perfil' ? (
-              <Moment
+              <Hello
                 headingRef={headingRef}
-                onNext={(draft) => {
-                  if (draft && hasAnswer(draft)) onProfile(draft);
-                  onStep('start');
-                }}
-                onBack={() => onStep('hello')}
+                name={name}
+                onName={onName}
+                signedIn={signedIn}
+                onNext={() => onStep(QUESTIONS[0])}
+                onSignIn={onSignIn}
               />
+            ) : question >= 0 ? (
+              <ProfileQuestion
+                step={step as QuestionStep}
+                index={question}
+                headingRef={headingRef}
+                draft={draft}
+                onDraft={setDraft}
+                onNext={nextQuestion}
+                onBack={prevQuestion}
+              />
+            ) : step === 'momento' ? (
+              <MomentScreen headingRef={headingRef} draft={draft} onNext={() => onStep('start')} onBack={() => onStep(QUESTIONS[QUESTIONS.length - 1])} />
             ) : step === 'start' ? (
-              <Start headingRef={headingRef} onImport={onImport} onManual={() => onStep('manual')} onBack={() => onStep('perfil')} />
+              <Start
+                headingRef={headingRef}
+                onImport={onImport}
+                onManual={() => onStep('manual')}
+                onBack={() => onStep(hasAnswer(draft) ? 'momento' : QUESTIONS[QUESTIONS.length - 1])}
+              />
             ) : step === 'manual' ? (
               <Manual
                 headingRef={headingRef}
@@ -137,7 +182,7 @@ export function Onboarding({
                 summary={summary}
                 importedMonth={importedMonth}
                 onOpenMonth={onOpenMonth}
-                onFinish={onFinish}
+                onFinish={() => onFinish()}
               />
             )}
           </main>
@@ -149,12 +194,37 @@ export function Onboarding({
 
 type HeadingRef = React.RefObject<HTMLHeadingElement | null>;
 
-function Title({ headingRef, children }: { headingRef: HeadingRef; children: React.ReactNode }) {
+function Title({ headingRef, id, children }: { headingRef: HeadingRef; id?: string; children: React.ReactNode }) {
   return (
     // o foco vem do código, para o leitor de tela anunciar o passo; não precisa de anel
-    <h1 ref={headingRef} tabIndex={-1} style={{ outline: 'none' }} className="font-display text-[34px] leading-[1.08] text-ink sm:text-[38px]">
+    <h1 ref={headingRef} id={id} tabIndex={-1} style={{ outline: 'none' }} className="font-display text-[34px] leading-[1.08] text-ink sm:text-[38px]">
       {children}
     </h1>
+  );
+}
+
+/**
+ * As três etapas do primeiro acesso. A etapa atual enche aos poucos (só
+ * `transform`, sem refazer o layout); as anteriores ficam cheias.
+ */
+export function ProgressIndicator({ phase, fraction, className }: { phase: number; fraction: number; className?: string }) {
+  return (
+    <ol aria-label={`Etapa ${phase + 1} de ${PHASES.length}: ${PHASES[phase]}`} className={cn('grid grid-cols-3 gap-1.5', className)}>
+      {PHASES.map((label, i) => {
+        const fill = i < phase ? 1 : i === phase ? Math.max(0.08, fraction) : 0;
+        return (
+          <li key={label} aria-current={i === phase ? 'step' : undefined} className="grid gap-1.5">
+            <span className="relative block h-1 overflow-hidden rounded-full bg-surface-3">
+              <span
+                className="absolute inset-0 origin-left rounded-full bg-accent transition-transform duration-[var(--t-slow)] ease-[var(--ease-out)] motion-reduce:transition-none"
+                style={{ transform: `scaleX(${fill})` }}
+              />
+            </span>
+            <span className={cn('text-[11px] font-medium', i === phase ? 'text-ink-2' : 'text-ink-3')}>{label}</span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -164,12 +234,14 @@ function Hello({
   headingRef,
   name,
   onName,
+  signedIn,
   onNext,
   onSignIn,
 }: {
   headingRef: HeadingRef;
   name: string;
   onName: (name: string) => void;
+  signedIn: boolean;
   onNext: () => void;
   onSignIn?: () => void;
 }) {
@@ -181,9 +253,9 @@ function Hello({
         onNext();
       }}
     >
-      <Title headingRef={headingRef}>Vamos entender seu mês.</Title>
+      <Title headingRef={headingRef}>Antes de começar, queremos entender onde você está.</Title>
       <p className="mt-3 text-[16px] leading-relaxed text-ink-2">
-        Em menos de um minuto você vê quanto tem, o que ainda vai sair e quanto sobra até o próximo recebimento.
+        Cinco perguntas de toque, uma por vez. Depois, você vê quanto sobra até o próximo recebimento.
       </p>
 
       <div className="mt-8">
@@ -201,12 +273,14 @@ function Hello({
 
       <p className="mt-6 flex items-start gap-2.5 text-[13px] leading-relaxed text-ink-3">
         <ShieldCheck size={17} className="mt-0.5 shrink-0 text-in" aria-hidden />
-        Tudo fica neste aparelho. Não pedimos senha de banco nem cadastro para começar.
+        {signedIn
+          ? 'Seus dados ficam neste aparelho e sincronizam com a sua conta. Nunca pedimos senha de banco.'
+          : 'Tudo fica neste aparelho. Não pedimos senha de banco nem cadastro para começar.'}
       </p>
 
       <div className="mt-auto grid gap-3 pt-10">
         <Button type="submit" variant="primary" size="lg" className="w-full">
-          Continuar <ArrowRight size={17} />
+          Começar <ArrowRight size={17} />
         </Button>
         {onSignIn ? (
           <p className="text-center text-[13px] text-ink-3">
@@ -221,32 +295,188 @@ function Hello({
   );
 }
 
-/* ----------------------------------------------------- 2 · o seu momento */
+/* ------------------------------------------------ 2 · as cinco perguntas */
 
-function Moment({
+type AnyOption = ProfileOption<string>;
+
+const QUESTION_COPY: Record<QuestionStep, { title: string; hint?: string; options: AnyOption[] }> = {
+  objetivo: { title: 'Qual é o seu principal objetivo agora?', options: FOCUS_OPTIONS },
+  situacao: { title: 'Como está sua vida financeira hoje?', options: SITUATION_OPTIONS },
+  dividas: {
+    title: 'Você tem dívidas hoje?',
+    hint: 'Empréstimo, financiamento, cheque especial, acordo ou parcela em atraso.',
+    options: DEBTS_OPTIONS,
+  },
+  reserva: {
+    title: 'Você tem uma reserva para emergências?',
+    hint: 'Dinheiro guardado para imprevistos, fora do que você usa no mês.',
+    options: RESERVE_OPTIONS,
+  },
+  renda: { title: 'Sua renda é fixa ou variável?', options: INCOME_OPTIONS },
+};
+
+function currentAnswer(step: QuestionStep, d: ProfileDraft): string | null {
+  if (step === 'objetivo') return d.focus[0] ?? null;
+  if (step === 'situacao') return d.situation;
+  if (step === 'dividas') return d.debts ?? null;
+  if (step === 'reserva') return d.reserve ?? null;
+  return d.income;
+}
+
+function withAnswer(step: QuestionStep, d: ProfileDraft, value: string): ProfileDraft {
+  if (step === 'objetivo') return { ...d, focus: [value as ProfileDraft['focus'][number]] };
+  if (step === 'situacao') return { ...d, situation: value as ProfileDraft['situation'] };
+  if (step === 'dividas') return { ...d, debts: value as ProfileDraft['debts'] };
+  if (step === 'reserva') return { ...d, reserve: value as ProfileDraft['reserve'] };
+  return { ...d, income: value as ProfileDraft['income'] };
+}
+
+/**
+ * Uma pergunta por tela. O toque escolhe e já avança — com um instante para a
+ * escolha ser vista marcada. Voltar mostra a resposta dada; pular deixa em
+ * branco, sem cobrança.
+ */
+export function ProfileQuestion({
+  step,
+  index,
   headingRef,
+  draft,
+  onDraft,
+  onNext,
+  onBack,
+}: {
+  step: QuestionStep;
+  index: number;
+  headingRef: HeadingRef;
+  draft: ProfileDraft;
+  onDraft: (d: ProfileDraft) => void;
+  onNext: (answers: ProfileDraft) => void;
+  onBack: () => void;
+}) {
+  const copy = QUESTION_COPY[step];
+  const chosen = currentAnswer(step, draft);
+  const advancing = React.useRef(false);
+  const titleId = `onb-q-${step}`;
+
+  const choose = (value: string) => {
+    if (advancing.current) return;
+    advancing.current = true;
+    const next = withAnswer(step, draft, value);
+    onDraft(next);
+    window.setTimeout(() => onNext(next), reducedMotion() ? 0 : 280);
+  };
+
+  return (
+    <div className="flex flex-1 flex-col">
+      <p aria-hidden className="mb-2 text-[13px] font-medium text-ink-3">
+        Pergunta {index + 1} de {QUESTIONS.length}
+      </p>
+      <Title headingRef={headingRef} id={titleId}>
+        <span className="sr-only">
+          Pergunta {index + 1} de {QUESTIONS.length}:{' '}
+        </span>
+        {copy.title}
+      </Title>
+      {copy.hint ? <p className="mt-3 text-[15px] leading-relaxed text-ink-2">{copy.hint}</p> : null}
+
+      <div role="group" aria-labelledby={titleId} className="mt-7 grid gap-2">
+        {copy.options.map((o) => {
+          const active = chosen === o.value;
+          return (
+            <button
+              key={o.value}
+              type="button"
+              aria-pressed={active}
+              onClick={() => choose(o.value)}
+              className={cn(
+                'group flex min-h-[52px] w-full items-center gap-3 rounded-card border px-4 py-3 text-left transition-[background-color,border-color,transform] duration-[var(--t-fast)] active:scale-[0.99]',
+                active ? 'border-accent bg-accent-soft' : 'border-line-strong bg-surface hover:bg-surface-2 sm:bg-surface-2 sm:hover:bg-surface-3',
+              )}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-[15px] font-medium text-ink">{o.label}</span>
+                {o.detail ? <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-3">{o.detail}</span> : null}
+              </span>
+              <span
+                aria-hidden
+                className={cn(
+                  'grid size-6 shrink-0 place-items-center rounded-full border transition-colors duration-[var(--t-fast)]',
+                  active ? 'border-accent bg-accent text-accent-ink' : 'border-line-strong text-transparent',
+                )}
+              >
+                <Check size={14} strokeWidth={2.5} />
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-auto flex items-center justify-between gap-3 pt-10">
+        <BackButton onClick={onBack} className="mx-0" />
+        <button
+          type="button"
+          onClick={() => onNext(draft)}
+          className="inline-flex h-10 items-center gap-1.5 rounded-field px-3 text-[14px] font-medium text-ink-3 hover:text-ink"
+        >
+          {chosen ? 'Continuar' : 'Pular pergunta'} <ArrowRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------- 2b · "Entendemos seu momento" */
+
+function MomentScreen({
+  headingRef,
+  draft,
   onNext,
   onBack,
 }: {
   headingRef: HeadingRef;
-  onNext: (draft: ProfileDraft | null) => void;
+  draft: ProfileDraft;
+  onNext: () => void;
   onBack: () => void;
 }) {
-  const [draft, setDraft] = React.useState<ProfileDraft>(() => emptyDraft());
+  const moment = momentSummary({ ...draft, answeredAt: null });
   return (
     <div className="flex flex-1 flex-col">
-      <Title headingRef={headingRef}>Qual é o seu momento?</Title>
-      <p className="mt-3 text-[16px] leading-relaxed text-ink-2">
-        Quatro perguntas de toque, nenhuma obrigatória. Elas fazem o app começar pelo que importa a você.
+      <Title headingRef={headingRef}>Entendemos seu momento.</Title>
+      {moment ? (
+        <>
+          <p className="mt-4 text-[18px] leading-relaxed text-ink">{moment.headline}</p>
+          {moment.notes.map((n) => (
+            <p key={n} className="mt-3 text-[15px] leading-relaxed text-ink-2">
+              {n}
+            </p>
+          ))}
+          {moment.first.length ? (
+            <section aria-labelledby="onb-first" className="mt-7 rounded-panel border border-line bg-surface px-5 py-4 sm:bg-surface-2">
+              <h2 id="onb-first" className="text-[15px] font-semibold text-ink">
+                Vamos começar por isso.
+              </h2>
+              <p className="mt-0.5 text-[13px] text-ink-3">O seu Início vai mostrar primeiro:</p>
+              <ol className="mt-3 grid gap-2.5">
+                {moment.first.map((item, i) => (
+                  <li key={item} className="flex items-start gap-3 text-[14px] leading-snug text-ink-2">
+                    <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-[12px] font-semibold text-accent">
+                      {i + 1}
+                    </span>
+                    <span className="pt-0.5">{item}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ) : null}
+        </>
+      ) : null}
+      <p className="mt-6 text-[13px] leading-relaxed text-ink-3">
+        É o que você contou, não uma avaliação. Dá para mudar as respostas quando quiser, no diagnóstico.
       </p>
 
-      <div className="mt-8">
-        <ProfileForm value={draft} onChange={setDraft} />
-      </div>
-
       <div className="mt-auto grid gap-3 pt-10">
-        <Button variant="primary" size="lg" className="w-full" onClick={() => onNext(draft)}>
-          {hasAnswer(draft) ? 'Continuar' : 'Responder depois'} <ArrowRight size={17} />
+        <Button variant="primary" size="lg" className="w-full" onClick={onNext}>
+          Montar meu mês <ArrowRight size={17} />
         </Button>
         <BackButton onClick={onBack} />
       </div>
@@ -255,6 +485,7 @@ function Moment({
 }
 
 /* ------------------------------------------------------------ 3 · o começo */
+
 
 function Start({
   headingRef,
@@ -350,7 +581,7 @@ function Option({
   );
 }
 
-/* ------------------------------------------------------ 2b · à mão, o mínimo */
+/* ------------------------------------------------------ 3b · à mão, o mínimo */
 
 function Manual({
   headingRef,
@@ -503,7 +734,7 @@ function MoneyInput({
   );
 }
 
-/* ------------------------------------------------------------ 3 · o mês */
+/* ------------------------------------------------------------ 4 · o mês */
 
 function Ready({
   headingRef,
@@ -665,12 +896,12 @@ function Stat({ label, value, tone, className }: { label: string; value: number;
   );
 }
 
-function BackButton({ onClick }: { onClick: () => void }) {
+function BackButton({ onClick, className }: { onClick: () => void; className?: string }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="mx-auto inline-flex h-10 items-center gap-1.5 rounded-field px-3 text-[14px] font-medium text-ink-3 hover:text-ink"
+      className={cn('mx-auto inline-flex h-10 items-center gap-1.5 rounded-field px-3 text-[14px] font-medium text-ink-3 hover:text-ink', className)}
     >
       <ArrowLeft size={16} /> Voltar
     </button>

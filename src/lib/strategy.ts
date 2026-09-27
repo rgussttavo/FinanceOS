@@ -29,8 +29,8 @@ export type StageId = 'estabilizar' | 'proteger' | 'reduzir' | 'objetivos' | 'pa
 export const STAGES: { id: StageId; label: string; aim: string }[] = [
   { id: 'estabilizar', label: 'Estabilizar', aim: 'fechar o mês sem conta descoberta e sem sair mais do que entra' },
   { id: 'proteger', label: 'Proteger', aim: 'ter pelo menos 1 mês de despesas essenciais guardado' },
-  { id: 'reduzir', label: 'Reduzir dívidas', aim: 'parcelas até 15% da renda e cartão até 30% do limite' },
-  { id: 'objetivos', label: 'Objetivos', aim: 'reserva completa e metas no ritmo' },
+  { id: 'reduzir', label: 'Reduzir dívidas', aim: 'levar as parcelas a até 15% da renda e o cartão a até 30% do limite' },
+  { id: 'objetivos', label: 'Objetivos', aim: 'completar a reserva e manter as metas no ritmo' },
   { id: 'patrimonio', label: 'Patrimônio', aim: 'fazer crescer o que já está de pé' },
 ];
 

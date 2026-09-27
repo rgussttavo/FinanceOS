@@ -185,17 +185,35 @@ Código: `src/lib/goal-plan.ts` (divisão da sobra e cenários),
 Código: `src/lib/profile.ts` (regras) e `src/features/profile.tsx`
 (formulário, convite e "Seu foco"). Testes: `profile.test.ts`.
 
-- **Quatro perguntas de toque**, todas opcionais: o que quer melhorar (várias;
-  a primeira vira o foco), como está a situação hoje, se o dinheiro chega ao
-  fim do mês, se a renda é fixa ou variável.
-- **Onde aparecem:** no primeiro acesso, como passo 2 de 4 ("Qual é o seu
-  momento?"); para quem já usa o app, um convite no Início, que some ao
-  responder ou ao tocar em "Agora não" — o app não volta a perguntar. As
+- **Cinco perguntas de toque**, todas opcionais: o principal objetivo, como
+  está a situação hoje, se tem dívidas (e se alguma está atrasada), se tem
+  reserva e se a renda é fixa ou variável. A pergunta antiga "o dinheiro chega
+  ao fim do mês?" saiu do formulário; quem já tinha respondido continua com a
+  resposta guardada e valendo.
+- **Onde aparecem:** no primeiro acesso, uma por tela, com "Pergunta 2 de 5",
+  voltar (a resposta dada fica marcada) e pular a pergunta; o toque escolhe e
+  já avança. Depois, a tela "Entendemos seu momento": o objetivo numa frase,
+  até duas observações e o que o Início vai mostrar primeiro. Pular o primeiro
+  acesso inteiro guarda o que já foi respondido. Para quem já usa o app, um
+  convite no Início, que some ao responder ou ao tocar em "Agora não". As
   respostas se editam em "Sua vida financeira" › Seu foco.
+- **O Início por perfil** (`homeFocus`). Sem resposta, o Início fica como
+  sempre foi. Com resposta, o primeiro bloco do foco vem logo abaixo do número
+  principal:
+
+  | Foco | Quando | O Início começa por |
+  |---|---|---|
+  | aperto | dívida atrasada; situação apertada, sem dinheiro ou endividado; objetivo vermelho, dívidas ou cartões | o que vem por aí; saúde começando por fluxo, dívidas e cartões; atenção |
+  | plano | objetivo reserva, juntar ou investir; sem objetivo, situação tranquila ou organizada | metas e patrimônio; saúde começando por metas; atenção |
+  | comeco | objetivo gastos ou organizar; sem objetivo, "não sei" | como está o mês; ações rápidas; atenção |
+
+  O sinal de aperto vence o objetivo: quem quer investir com conta atrasada vê
+  o fluxo primeiro, e a tela do momento diz isso.
 - **Declarado, não medido.** O app diz "você informou que…". Quando a
   declaração e os números discordam (situação "tranquila" com o fluxo em
-  alerta; "endividado" sem dívida cadastrada), diz isso com calma e sugere o
-  que pode estar faltando, sem corrigir a pessoa.
+  alerta; "endividado" ou "tenho dívidas" sem dívida cadastrada; "a reserva
+  cobre meses" sem reserva encontrada), diz isso com calma e sugere o que pode
+  estar faltando, sem corrigir a pessoa.
 - **Onde pesa:** "Seu foco" no diagnóstico liga o que a pessoa quer à área
   que mede isso; quem quer investir vê antes a reserva e as dívidas; as
   sugestões do assistente começam pelas do foco; renda variável lembra que
