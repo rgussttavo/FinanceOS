@@ -3,7 +3,7 @@
 import { primaryIdFor } from './accounts';
 import { applyRemote, audit, db, getSyncState, liveRows, putRecord, setSyncState } from './db';
 import { ensureSpace } from './provision';
-import { RECEIPTS_BUCKET, requireSupabase, supabase, type CloudRecord } from './supabase';
+import { RECEIPTS_BUCKET, requireSupabase, supabase, type CloudRecord, signOutIntent } from './supabase';
 import type { Account, Mutation, SyncTable } from './types';
 
 /** a forma minima de todo registro que sincroniza */
@@ -541,6 +541,7 @@ async function queueEverything(spaceId: string): Promise<void> {
  */
 export async function detachCloud(): Promise<void> {
   const client = supabase();
+  signOutIntent.byUser = true;
   if (client) await client.auth.signOut();
   await setSyncState({ userId: null, pulledAt: null });
 }

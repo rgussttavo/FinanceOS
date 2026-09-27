@@ -9,6 +9,13 @@ const nextConfig: NextConfig = {
   devIndicators: false,
 
   /**
+   * Em desenvolvimento, o Next só entrega os scripts para "localhost". Liberar
+   * 127.0.0.1 permite testar o app como visitante novo (outra origem: sem a
+   * sessão nem a base local de quem desenvolve). Não vale em produção.
+   */
+  allowedDevOrigins: ['127.0.0.1'],
+
+  /**
    * Cabeçalhos de segurança, e os do service worker.
    *
    * O worker nunca pode ficar preso num cache do navegador ou da CDN: é ele que
@@ -21,7 +28,8 @@ const nextConfig: NextConfig = {
         source: '/(.*)',
         headers: [
           { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'DENY' },
+          // em desenvolvimento, a página /dev/telas mostra o app em molduras do tamanho de cada aparelho
+          { key: 'X-Frame-Options', value: process.env.NODE_ENV === 'production' ? 'DENY' : 'SAMEORIGIN' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
         ],
       },

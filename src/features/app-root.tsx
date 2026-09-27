@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Cloud, CloudOff, Eye, EyeOff, FlaskConical } from 'lucide-react';
@@ -9,7 +10,7 @@ import { useServiceWorker } from '@/components/pwa';
 import { QuickAddSheet, type QuickAddRequest } from '@/components/quick-add';
 import { BottomNav, Fab, PageHeader, Sidebar, TopBar, greetingFor, navigate, useRoute } from '@/components/shell';
 import { ConfirmHost, IconButton, SkeletonList, Toaster, toast } from '@/components/ui';
-import { AccountPanel, SignInSheet, useAuthRedirectError, useCloudSync, useSession } from '@/features/auth';
+import { AccountPanel, useAuthRedirectError, useCloudSync, useSession } from '@/features/auth';
 import { BRAND } from '@/lib/brand';
 import { dayBalances, type FlowItem } from '@/lib/cashflow';
 import { balancesAt } from '@/lib/ledger';
@@ -87,7 +88,11 @@ const warmViews = () =>
  * de demonstração no topo. Todo o resto é o mesmo app, para o exemplo mostrar
  * exatamente o que a pessoa vai ter.
  */
+
 export function AppRoot({ demo = false }: { demo?: boolean }) {
+  const router = useRouter();
+  /** a tela de entrada: Google primeiro, e-mail e senha, ou continuar sem conta */
+  const goToAuth = React.useCallback(() => router.push('/entrar'), [router]);
   // a base certa é escolhida antes de qualquer leitura, na primeira renderização
   React.useState(() => {
     selectDatabase(demo ? DEMO_DB : 'norte');
@@ -99,7 +104,6 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   const [month, setMonth] = React.useState<MonthKey>(currentMonthKey());
   const [quick, setQuick] = React.useState<QuickAddRequest | null>(null);
   const [openOccurrence, setOpenOccurrence] = React.useState<Occurrence | null>(null);
-  const [signInOpen, setSignInOpen] = React.useState(false);
 
   const { session: realSession, ready: sessionReady } = useSession();
   const session = demo ? null : realSession;
@@ -172,7 +176,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   const [onboarding, setOnboarding] = React.useState<OnboardingStep | 'off' | null>(demo ? 'off' : null);
   const [onboardingName, setOnboardingName] = React.useState('');
   const [importedMonth, setImportedMonth] = React.useState<MonthKey | null>(null);
-  const onboardingActive = onboarding !== null && onboarding !== 'off' && !session;
+  const onboardingActive = onboarding !== null && onboarding !== 'off';
 
   const finishOnboarding = React.useCallback(async () => {
     setOnboarding('off');
@@ -212,6 +216,16 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
     }),
     [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled, decide, checkup, settings, strategy],
   );
+
+  // a sessão que terminou sem a pessoa pedir: avisa, sem apagar nada do aparelho
+  React.useEffect(() => {
+    const onEnded = () =>
+      toast('Sua sessão terminou. Seus dados continuam neste aparelho; entre de novo para voltar a sincronizar.', {
+        action: { label: 'Entrar', onClick: goToAuth },
+      });
+    window.addEventListener('financeos:session-ended', onEnded);
+    return () => window.removeEventListener('financeos:session-ended', onEnded);
+  }, [goToAuth]);
 
   const toggleHidden = React.useCallback(async () => {
     if (!settings) return;
@@ -317,7 +331,14 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   if (onboarding === null && ready && !error && base.ready && settings && sessionReady) {
     const hasContent =
       base.entries.length + base.cards.length + base.subscriptions.length + base.goals.length + base.debts.length + base.assets.length > 0;
-    setOnboarding(!settings.onboardedAt && !session && !hasContent ? 'hello' : 'off');
+    // com conta, só decide depois da primeira sincronização: quem já usa o app em outro aparelho
+    // traz os dados (e o onboardedAt) no pull, e não deve ver o primeiro acesso de novo
+    if (!session || cloud.report !== null) {
+      setOnboarding(!settings.onboardedAt && !hasContent ? 'hello' : 'off');
+      const meta = session?.user.user_metadata as { full_name?: string; name?: string } | undefined;
+      const fromAccount = (meta?.full_name || meta?.name || '').split(' ')[0];
+      if (fromAccount && !onboardingName) setOnboardingName(fromAccount);
+    }
   }
 
   if (!ready) return <BootScreen message={demo ? 'Montando o exemplo…' : 'Abrindo…'} />;
@@ -334,7 +355,6 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   const view: ViewId = hiddenViews.includes(route.view as SubId) ? 'inicio' : route.view;
   const startNew = route.param === 'novo';
 
-  const signInSheet = demo ? null : <SignInSheet open={signInOpen} onClose={() => setSignInOpen(false)} onSignedIn={cloud.sync} />;
 
   // o passo "importar extrato" do primeiro acesso usa a própria tela de importação
   if (onboardingActive && view !== 'importar') {
@@ -351,7 +371,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           name={onboardingName}
           onName={setOnboardingName}
           onImport={() => go({ view: 'importar' })}
-          onSignIn={cloudConfigured() ? () => setSignInOpen(true) : undefined}
+          onSignIn={cloudConfigured() && !session ? goToAuth : undefined}
           onOpenMonth={(m) => {
             void finishOnboarding();
             setMonth(m);
@@ -360,7 +380,6 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           onFinish={() => void finishOnboarding()}
           onProfile={(draft) => void saveProfile(settings, draft)}
         />
-        {signInSheet}
         <Toaster />
         <ConfirmHost />
       </>
@@ -393,7 +412,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       <Cloud size={13} /> {cloud.syncing ? 'Sincronizando…' : cloud.pending ? `${cloud.pending} para subir` : 'Sincronizado'}
     </span>
   ) : (
-    <button type="button" onClick={() => setSignInOpen(true)} className="flex items-center gap-1.5 text-left hover:text-ink">
+    <button type="button" onClick={goToAuth} className="flex items-center gap-1.5 text-left hover:text-ink">
       <CloudOff size={13} /> Só neste aparelho · entrar
     </button>
   );
@@ -530,7 +549,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
                 pending={cloud.pending}
                 syncing={cloud.syncing}
                 onSync={cloud.sync}
-                onSignIn={() => setSignInOpen(true)}
+                onSignIn={goToAuth}
                 onSignOut={async () => {
                   await detachCloud();
                   location.reload();
@@ -579,7 +598,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
                 type="button"
                 onClick={() => {
                   authError.dismiss();
-                  setSignInOpen(true);
+                  goToAuth();
                 }}
                 className="mt-2 text-[13px] font-medium text-accent underline-offset-2 hover:underline"
               >
@@ -633,7 +652,6 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
         hidden={hidden}
         accounts={base.accounts.filter((a) => !a.archived)}
       />
-      {signInSheet}
       <Toaster />
       <ConfirmHost />
     </div>

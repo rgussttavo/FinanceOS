@@ -20,6 +20,12 @@ const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
 export const cloudConfigured = (): boolean => Boolean(URL && ANON);
 
 /**
+ * A saída foi pedida pela pessoa? Sem essa marca, o app não distingue "saí da
+ * conta" de "a sessão expirou" — e só o segundo merece aviso.
+ */
+export const signOutIntent = { byUser: false };
+
+/**
  * O balde do Storage onde os comprovantes ficam.
  *
  * Fica numa constante só porque o nome é escolhido na hora de criar o balde no

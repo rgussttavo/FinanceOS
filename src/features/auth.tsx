@@ -11,7 +11,7 @@ import { db, getSyncState } from '@/lib/db';
 import { migrateLedger } from '@/lib/migrate';
 import { ensureCategories } from '@/lib/provision';
 import { adoptLocalSpace, runSync, type SyncReport } from '@/lib/sync';
-import { cloudConfigured, enabledProviders, supabase } from '@/lib/supabase';
+import { cloudConfigured, enabledProviders, signOutIntent, supabase } from '@/lib/supabase';
 
 /* ----------------------------------------------------------------- sessão */
 
@@ -35,12 +35,18 @@ export function useSession(): { session: Session | null; ready: boolean } {
       await Promise.resolve();
       const { data } = await client.auth.getSession();
       if (!alive) return;
+      had = !!data.session;
       setSession(data.session);
       setReady(true);
     };
     void run();
 
-    const { data: sub } = client.auth.onAuthStateChange((_event, next) => {
+    let had = false;
+    const { data: sub } = client.auth.onAuthStateChange((event, next) => {
+      // saída que ninguém pediu: a sessão expirou ou o token não renovou
+      if (event === 'SIGNED_OUT' && had && !signOutIntent.byUser) window.dispatchEvent(new Event('financeos:session-ended'));
+      if (event === 'SIGNED_OUT') signOutIntent.byUser = false;
+      had = !!next;
       setSession(next);
       setReady(true);
     });
@@ -179,8 +185,15 @@ export function useCloudSync(session: Session | null): {
  * fazer, e a original fica no fim quando não reconheço — esconder o motivo real
  * só transformaria um problema resolvível num mistério.
  */
-function explainAuthError(raw: string): string {
+export function explainAuthError(raw: string): string {
   const message = raw.toLowerCase();
+
+  if (/invalid login credentials|invalid credentials/.test(message)) return 'E-mail ou senha incorretos.';
+  if (/already registered|already been registered|user already exists/.test(message)) return 'Esse e-mail já tem uma conta.';
+  if (/password should be|weak password|password is too/.test(message)) return 'A senha precisa ser mais forte: use pelo menos 8 caracteres.';
+  if (/email not confirmed/.test(message)) return 'Confirme o e-mail antes de entrar: procure a mensagem na sua caixa de entrada.';
+  if (/should be different|same password/.test(message)) return 'A nova senha precisa ser diferente da atual.';
+  if (/auth session missing|session.*expired|refresh token/.test(message)) return 'Sua sessão terminou. Entre de novo.';
 
   if (/email logins are disabled/.test(message)) {
     return 'O login por e-mail está desligado neste projeto. Ligue em Authentication → Providers → Email, no painel do Supabase.';
@@ -189,7 +202,7 @@ function explainAuthError(raw: string): string {
     return 'Este projeto não está aceitando cadastros novos.';
   }
   if (/provider is not enabled|unsupported provider/.test(message)) {
-    return 'Esse jeito de entrar não está ligado no projeto.';
+    return 'Esse jeito de entrar ainda não está disponível. Use e-mail e senha.';
   }
   if (/invalid|expired|otp/.test(message) && /token|code|otp/.test(message)) {
     return 'Código inválido ou já expirado. Peça um novo.';
@@ -201,7 +214,9 @@ function explainAuthError(raw: string): string {
     return 'Não consegui falar com o servidor. Confira a conexão.';
   }
 
-  return raw;
+  // o detalhe técnico fica no console; a pessoa recebe o que dá para fazer
+  console.warn('[auth]', raw);
+  return 'Não conseguimos concluir o login. Tente novamente.';
 }
 
 /**
@@ -236,14 +251,15 @@ export function useAuthRedirectError(): { message: string | null; dismiss: () =>
   return { message, dismiss: () => setMessage(null) };
 }
 
-function explainRedirectError(code: string | null, description: string | null): string {
+export function explainRedirectError(code: string | null, description: string | null): string {
   if (code === 'otp_expired' || /expired/i.test(description ?? '')) {
     return 'Esse link já não vale mais. Links de entrada são de uso único e expiram rápido — peça um novo e abra assim que chegar.';
   }
-  if (code === 'access_denied') {
-    return 'O acesso foi negado. Peça um novo link e abra neste mesmo navegador.';
+  if (code === 'access_denied' || /cancel|denied/i.test(description ?? '')) {
+    return 'A entrada foi cancelada. Quando quiser, é só tentar de novo.';
   }
-  return description?.replace(/\+/g, ' ') ?? 'Não consegui completar a entrada.';
+  if (description) console.warn('[auth]', code, description);
+  return 'Não conseguimos concluir o login. Tente novamente.';
 }
 
 /* -------------------------------------------------------------- entrada */
@@ -457,7 +473,7 @@ export function SignInSheet({
   );
 }
 
-function GoogleMark() {
+export function GoogleMark() {
   return (
     <svg viewBox="0 0 18 18" className="h-4 w-4" aria-hidden>
       <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.91c1.7-1.57 2.69-3.88 2.69-6.62z" />

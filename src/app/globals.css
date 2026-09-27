@@ -262,6 +262,73 @@ body {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Movimentos da história (landing, entrada, onboarding): um vocabulário só.
+   .reveal entra quando aparece na tela (src/components/motion.tsx liga o
+   data-shown); as variantes mudam só o ponto de partida. Tudo em transform e
+   opacity, que o navegador compõe sem refazer o layout.
+   ------------------------------------------------------------------------- */
+.reveal {
+  opacity: 0;
+  transition:
+    opacity 560ms var(--ease-out) var(--reveal-delay, 0ms),
+    transform 640ms var(--ease-out) var(--reveal-delay, 0ms),
+    filter 560ms var(--ease-out) var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+.reveal[data-reveal='up'] {
+  transform: translateY(18px);
+}
+.reveal[data-reveal='scale'] {
+  transform: scale(0.96);
+}
+.reveal[data-reveal='blur'] {
+  filter: blur(8px);
+  transform: translateY(6px);
+}
+.reveal[data-shown] {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+/* a peça que respira de leve enquanto espera o encaixe */
+@keyframes float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -6px, 0);
+  }
+}
+.float {
+  animation: float 6s var(--ease) infinite;
+}
+
+/* a linha que liga uma peça à outra, desenhada da origem ao destino */
+@keyframes connect {
+  from {
+    stroke-dashoffset: var(--len, 200);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal[data-reveal] {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    transition: none;
+  }
+  .float {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
