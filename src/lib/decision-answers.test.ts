@@ -37,7 +37,7 @@ const ledger: LedgerInput = {
 
 const buffer: SafetyBuffer = { amount: 30000, mode: 'auto', suggested: 30000, basis: { monthly: 128500, months: ['2026-06', '2026-07', '2026-08'] } };
 const cash = cashSnapshot(ledger);
-const decide = moneyToDecide(cash, buffer);
+const decide = moneyToDecide(ledger, cash, buffer);
 const occurrences = occurrencesInMonth(ledger.entries, '2026-09', TODAY);
 
 function context(cards = ledger.cards): AssistantContext {
@@ -165,7 +165,7 @@ describe('o assistente responde', () => {
       entries: [entry('in', 180000, '2026-09-19', { description: 'Freela' })],
     };
     const c2 = cashSnapshot(apertado);
-    const d2 = moneyToDecide(c2, { ...buffer, amount: 87000, suggested: 87000 });
+    const d2 = moneyToDecide(apertado, c2, { ...buffer, amount: 87000, suggested: 87000 });
     expect(d2).toMatchObject({ available: 4195, reserved: 4195, spendable: 0 });
     const ctx2 = { ...context([]), cash: c2, decision: { decide: d2, transfers: [], cardsEnabled: true } };
 

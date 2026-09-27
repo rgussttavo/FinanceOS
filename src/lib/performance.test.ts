@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { account, card, entry, paid, subscription } from '@/test/build';
 import { cashSnapshot, virtualOccurrences } from './cashflow';
+import { buildCheckup } from './checkup';
+import { moneyToDecide, safetyBuffer } from './decision';
 import { diagnose } from './diagnostics';
 import { auditAccount, balancesAt, type LedgerInput } from './ledger';
 import { occurrencesInMonth, summarizeMonth } from './occurrences';
@@ -52,7 +54,7 @@ describe('desempenho', () => {
     [10_000, 1500],
     [50_000, 6000],
   ] as const) {
-    it(`${n.toLocaleString('pt-BR')} lançamentos: saldo, retrato do mês, resumo e conferência`, () => {
+    it(`${n.toLocaleString('pt-BR')} lançamentos: saldo, retrato do mês, resumo, conferência e diagnóstico`, () => {
       const input = lifetime(n);
       const saldo = time(() => balancesAt(input, input.today));
       const retrato = time(() => cashSnapshot(input));
@@ -63,12 +65,18 @@ describe('desempenho', () => {
       });
       const extrato = time(() => auditAccount(input, input.accounts[0].id));
       const conferencia = time(() => diagnose(input, []));
+      // o que o Início calcula a cada mudança: os três números e o diagnóstico por áreas
+      const diagnostico = time(() => {
+        const history = [resumo.value];
+        const decide = moneyToDecide(input, retrato.value, safetyBuffer(null, history, [], input.today));
+        return buildCheckup({ ledger: input, cash: retrato.value, decide, history, categories: [], goals: [], assets: [], settings: null });
+      });
 
       // o retrato e o saldo concordam mesmo com 50 mil linhas
       expect(retrato.value.balanceNow).toBe(saldo.value.total);
-      const total = saldo.ms + retrato.ms + resumo.ms + extrato.ms + conferencia.ms;
+      const total = saldo.ms + retrato.ms + resumo.ms + extrato.ms + conferencia.ms + diagnostico.ms;
       console.log(
-        `${n} lançamentos → saldo ${saldo.ms.toFixed(0)} ms · retrato ${retrato.ms.toFixed(0)} ms · resumo ${resumo.ms.toFixed(0)} ms · extrato ${extrato.ms.toFixed(0)} ms · conferência ${conferencia.ms.toFixed(0)} ms`,
+        `${n} lançamentos → saldo ${saldo.ms.toFixed(0)} ms · retrato ${retrato.ms.toFixed(0)} ms · resumo ${resumo.ms.toFixed(0)} ms · extrato ${extrato.ms.toFixed(0)} ms · conferência ${conferencia.ms.toFixed(0)} ms · diagnóstico ${diagnostico.ms.toFixed(0)} ms`,
       );
       expect(total).toBeLessThan(teto);
     }, 60_000);

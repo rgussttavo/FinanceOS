@@ -25,6 +25,7 @@ import {
   Settings,
   Sparkles,
   SunMoon,
+  Stethoscope,
   Tags,
   Target,
   Users,
@@ -71,6 +72,7 @@ export const VIEW_ICONS: Record<ViewId, LucideIcon> = {
   ia: Sparkles,
   ajustes: Settings,
   categorias: Tags,
+  checkup: Stethoscope,
 };
 
 /* ------------------------------------------------------------------ saudação */

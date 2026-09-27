@@ -9,6 +9,7 @@ import type { Route } from './nav';
 import { firstNegativeDay, occurrencesInMonth, summarizeMonth, type DayPoint, type MonthSummary, type Occurrence } from './occurrences';
 import type { Asset, Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscription, Transfer } from './types';
 import type { MoneyToDecide } from './decision';
+import type { Checkup } from './checkup';
 import { answerAvailable, answerSpend, isSpendQuestion, parseSpend } from './decision-answers';
 import { wealthHistory } from './wealth';
 
@@ -65,6 +66,8 @@ export interface AssistantContext {
   accounts?: { name: string; balance: Cents }[];
   /** saldo, comprometido e disponível, com a margem: o mesmo do Início */
   decision?: { decide: MoneyToDecide; transfers: Transfer[]; cardsEnabled: boolean };
+  /** o diagnóstico por áreas: o mesmo da tela "Sua vida financeira" */
+  checkup?: Checkup;
 }
 
 export interface Answer {
@@ -510,7 +513,7 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
       if (!decision || !ctx.cash) return { text: 'Ainda não consigo ver o saldo das contas para responder isso.' };
       const q = parseSpend(normalize(lastQuestion), lastQuestion, decision.cardsEnabled ? ctx.cards : []);
       if (!q) return { text: 'Diga o valor, por exemplo: "posso gastar R$ 300?"' };
-      return answerSpend(q, decision.decide, ctx.cash, { entries: ctx.entries, subscriptions: ctx.subscriptions, transfers: decision.transfers });
+      return answerSpend(q, decision.decide, { entries: ctx.entries, subscriptions: ctx.subscriptions, transfers: decision.transfers });
     },
   },
   {
@@ -620,6 +623,26 @@ const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
             : undefined,
         basis: 'o que já aconteceu nas contas até hoje',
         link: { label: 'Ver as contas', route: { view: 'contas' } },
+      };
+    },
+  },
+  {
+    id: 'checkup',
+    /**
+     * "Como está minha vida financeira?" — o diagnóstico por áreas, sem nota:
+     * o momento em uma frase, o primeiro ponto de atenção com o porquê, e
+     * cada área com o estado dela.
+     */
+    test: (p) => /\b(vida financeira|saude financeira|diagnostico|minhas financas|check ?up|merece (minha )?atencao)\b/.test(p.raw),
+    answer: (ctx) => {
+      const c = ctx.checkup;
+      if (!c) return { text: 'Ainda não consigo montar o diagnóstico.' };
+      const first = c.attention[0];
+      return {
+        text: [c.summary.text, first ? `${first.title}: ${first.why}` : ''].filter(Boolean).join(' '),
+        list: c.areas.map((a) => ({ label: a.title, detail: a.why, value: a.label })),
+        basis: `diagnóstico por áreas · dados com confiança ${c.confidence.level} (${c.confidence.percent}%)`,
+        link: { label: 'Ver o diagnóstico', route: { view: 'checkup' } },
       };
     },
   },
@@ -1227,6 +1250,7 @@ export const SUGGESTIONS = [
   'Como estou?',
   'Quanto posso gastar?',
   'Posso gastar R$ 300?',
+  'Como está minha vida financeira?',
   'Quanto vou gastar com cartão mês que vem?',
   'Quanto tenho em parcelas futuras?',
   'Quanto falta para minha meta?',

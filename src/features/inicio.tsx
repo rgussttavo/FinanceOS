@@ -41,8 +41,10 @@ import type { CashSnapshot, FlowItem } from '@/lib/cashflow';
 import { cn } from '@/lib/cn';
 import { addDaysIso, formatDateFull, formatDayShort, formatMonthLabel } from '@/lib/dates';
 import { availableLines, type MoneyToDecide, type SafetyBuffer } from '@/lib/decision';
+import type { Checkup } from '@/lib/checkup';
+import { AreasSummary } from './checkup';
 import { holidaysBetween } from '@/lib/holidays';
-import { buildInsights, headline, monthHealth, type Insight, type Severity } from '@/lib/insights';
+import { buildInsights, headline, type Insight, type Severity } from '@/lib/insights';
 import { formatMoney, parseMoney } from '@/lib/money';
 import type { Route } from '@/lib/nav';
 import { ledgerInput, type FinanceBase, type MonthPicture } from '@/lib/picture';
@@ -72,6 +74,8 @@ export interface InicioProps {
   cash: CashSnapshot;
   /** saldo, comprometido e disponível para gastar, com a margem: o mesmo do assistente */
   decide: MoneyToDecide;
+  /** o diagnóstico por áreas: no lugar da antiga nota do mês */
+  checkup: Checkup;
   picture: MonthPicture;
   history: MonthSummary[];
   categories: Category[];
@@ -119,7 +123,7 @@ export function InicioView(props: InicioProps) {
       <AttentionPanel key="atencao" insights={insights} onGo={onGo} />
     ),
     acoes: !hiddenBlocks.has('acoes') && <QuickActions key="acoes" cardsEnabled={cardsEnabled} onQuick={props.onQuick} onGo={onGo} />,
-    saude: !hiddenBlocks.has('saude') && !empty && <HealthPanel key="saude" cash={cash} hidden={hidden} />,
+    saude: !hiddenBlocks.has('saude') && !empty && <AreasSummary key="saude" checkup={props.checkup} hidden={hidden} onGo={onGo} />,
     resumo: !hiddenBlocks.has('resumo') && !empty && <MonthSummaryPanel key="resumo" summary={props.picture.summary} hidden={hidden} onGo={onGo} />,
     news: !hiddenBlocks.has('news') && (settings?.newsEnabled ?? true) && (
       <Panel key="news" className="p-5">
@@ -255,13 +259,21 @@ function MainCard({ spaceId, base, cash, decide, settings, hidden, onGo }: Inici
             ) : (
               <p>Até o fim do mês: nenhum recebimento previsto nos próximos 60 dias.</p>
             )}
-            <dl className="grid grid-cols-3 gap-2 rounded-field bg-surface-2 px-3 py-2.5 text-[12px] text-ink-3">
+            <dl className={cn('grid gap-2 rounded-field bg-surface-2 px-3 py-2.5 text-[12px] text-ink-3', decide.guarded !== 0 ? 'grid-cols-2' : 'grid-cols-3')}>
               <div className="min-w-0">
-                <dt>Saldo</dt>
+                <dt>{decide.guarded !== 0 ? 'Saldo total' : 'Saldo'}</dt>
                 <dd>
-                  <Money value={decide.balance} hidden={hidden} signed={decide.balance < 0} className="block truncate text-[14px] font-semibold text-ink" />
+                  <Money value={decide.total} hidden={hidden} signed={decide.total < 0} className="block truncate text-[14px] font-semibold text-ink" />
                 </dd>
               </div>
+              {decide.guarded !== 0 ? (
+                <div className="min-w-0">
+                  <dt>Guardado</dt>
+                  <dd>
+                    <Money value={decide.guarded} hidden={hidden} className="block truncate text-[14px] font-semibold text-ink" />
+                  </dd>
+                </div>
+              ) : null}
               <div className="min-w-0">
                 <dt>Comprometido</dt>
                 <dd>
@@ -679,63 +691,6 @@ function AttentionPanel({ insights, onGo }: { insights: Insight[]; onGo: (route:
           {all ? 'Mostrar menos' : `Ver todos (${insights.length})`}
         </button>
       ) : null}
-    </Panel>
-  );
-}
-
-/* ---------------------------------------------------------------- saúde */
-
-function HealthPanel({ cash, hidden }: { cash: CashSnapshot; hidden: boolean }) {
-  const h = monthHealth(cash);
-  const [why, setWhy] = React.useState(false);
-  const tone = h.status === 'ok' ? 'in' : h.status === 'attention' ? 'warn' : h.status === 'critical' ? 'out' : 'neutral';
-
-  return (
-    <Panel className="p-5">
-      <SectionTitle>Saúde do mês</SectionTitle>
-      {h.score === null ? (
-        <p className="text-[14px] leading-relaxed text-ink-2">
-          <strong className="font-medium text-ink">{h.title}.</strong> {h.explanation}
-        </p>
-      ) : (
-        <>
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="flex items-center gap-2 text-[16px] font-semibold text-ink">
-              {h.status !== 'ok' ? <AlertTriangle size={16} className={tone === 'out' ? 'text-out' : 'text-warn'} aria-hidden /> : null}
-              {h.title}
-            </p>
-            <p className="tnum text-[15px] font-semibold text-ink-2">{h.score}%</p>
-          </div>
-          <Meter value={h.score / 100} tone={tone} label="Saúde do mês" valueText={`${h.score} de 100, ${h.title}`} className="mt-2.5" />
-          <p className="mt-3 text-[14px] leading-relaxed text-ink-2">{hidden ? h.explanation.replace(/R\$\s?[\d.,]+/g, '••••') : h.explanation}</p>
-          {h.factors.length ? (
-            <>
-              <button
-                type="button"
-                onClick={() => setWhy((v) => !v)}
-                aria-expanded={why}
-                className="mt-2 h-8 text-[13px] font-medium text-accent"
-              >
-                {why ? 'Esconder o porquê' : 'Por que esse número?'}
-              </button>
-              {why ? (
-                <ul className="mt-1 grid gap-1.5 rounded-card bg-surface-2 p-3">
-                  {h.factors.map((f) => (
-                    <li key={f.label} className="flex items-baseline justify-between gap-3 text-[13px]">
-                      <span className="text-ink-2">{f.label}</span>
-                      <span className={cn('tnum shrink-0 font-semibold', f.impact < 0 ? 'text-out' : 'text-in')}>
-                        {f.impact > 0 ? '+' : ''}
-                        {f.impact}
-                      </span>
-                    </li>
-                  ))}
-                  <li className="border-t border-line pt-1.5 text-[12px] text-ink-3">Começa em 100 e cada fator soma ou subtrai.</li>
-                </ul>
-              ) : null}
-            </>
-          ) : null}
-        </>
-      )}
     </Panel>
   );
 }

@@ -486,6 +486,13 @@ export interface Settings extends SyncFields {
    * essenciais); 'manual' = o valor que a pessoa escolheu, inclusive zero.
    */
   safetyBuffer?: { mode: 'auto' | 'manual'; amount: Cents };
+
+  /**
+   * Referência da reserva de emergência, em meses de despesas essenciais.
+   * Ausente = 6. É referência, não regra: a pessoa ajusta ao que faz sentido
+   * para a vida dela.
+   */
+  reserveMonths?: number;
 }
 
 /* ------------------------------------------------------------------ sync */

@@ -1,10 +1,11 @@
 import { cardUsage, dueDateOf, invoiceMonthOf } from './cards';
 import { normalize } from './categories';
-import type { CashSnapshot, DayBalance, FlowItem } from './cashflow';
-import { addMonthsToKey, monthKeyOf } from './dates';
+import type { CashSnapshot, DayBalance } from './cashflow';
+import { addDaysIso, addMonthsToKey, monthKeyOf } from './dates';
+import { balancesAt, ledgerAccounts, plannedItems, primaryAccountId, type LedgerInput, type PlannedItem } from './ledger';
 import { formatMoney, splitCents } from './money';
 import type { MonthSummary } from './occurrences';
-import type { Card, Category, Cents, Entry, IsoDate, MonthKey, Settings, Subscription, Transfer } from './types';
+import type { Account, Card, Category, Cents, Entry, IsoDate, MonthKey, Settings, Subscription, Transfer } from './types';
 
 /**
  * Dinheiro para decidir.
@@ -92,18 +93,40 @@ export function safetyBuffer(
 
 /* ----------------------------------------------------- os três números */
 
+/**
+ * As contas cujo dinheiro conta como disponível: todas, menos poupança e
+ * corretora — dinheiro guardado é reserva e investimento, não troco do mês.
+ * A principal sempre conta, mesmo sendo poupança: é por ela que passa o que
+ * não diz de qual conta é.
+ */
+export function spendableAccountIds(accounts: Account[]): Set<string> {
+  const principal = primaryAccountId(accounts);
+  return new Set(
+    ledgerAccounts(accounts)
+      .filter((a) => a.id === principal || (a.kind !== 'savings' && a.kind !== 'broker'))
+      .map((a) => a.id),
+  );
+}
+
+/** o que já tem destino: a conta, a fatura, a parcela, o que vai para a poupança */
+export type Commitment = Pick<PlannedItem, 'id' | 'label' | 'date' | 'amount' | 'overdue' | 'source' | 'internal'>;
+
 export interface MoneyToDecide {
   today: IsoDate;
-  /** saldo nas contas agora */
+  /** saldo somado de todas as contas agora: o mesmo da tela Contas */
+  total: Cents;
+  /** o que está em poupança e corretora (fora a principal): guardado, não entra no disponível */
+  guarded: Cents;
+  /** saldo agora nas contas de uso: o total menos o guardado */
   balance: Cents;
   /** o que já tem destino até `until`, vencidos inclusos */
   committed: Cents;
-  commitments: FlowItem[];
-  /** entrada vencida que ainda não caiu: a projeção conta com ela amanhã */
+  commitments: Commitment[];
+  /** o que entra antes do recebimento: entrada atrasada, dinheiro vindo da poupança */
   expectedIn: Cents;
   /** até quando o disponível olha: o dia do próximo recebimento, ou o dia seguinte ao fim do mês */
   until: IsoDate;
-  income: FlowItem | null;
+  income: Pick<PlannedItem, 'label' | 'date' | 'amount'> | null;
   /** o menor saldo previsto até lá: gastar mais que isso deixa alguma conta descoberta */
   available: Cents;
   /** o dia desse menor saldo; null quando o menor é o de hoje */
@@ -122,6 +145,8 @@ export interface MoneyToDecide {
   reserved: Cents;
   /** depois do recebimento, o menor saldo previsto nos próximos 60 dias */
   later: DayBalance | null;
+  /** o saldo previsto das contas de uso, de amanhã até 60 dias (ou o fim do mês) */
+  ahead: DayBalance[];
   /** a conta parte de um saldo que a pessoa informou? Sem isso, parte de zero */
   grounded: boolean;
 }
@@ -129,29 +154,79 @@ export interface MoneyToDecide {
 const lowestOf = (days: DayBalance[]): DayBalance | null =>
   days.reduce<DayBalance | null>((min, d) => (!min || d.balance < min.balance ? d : min), null);
 
-export function moneyToDecide(cash: CashSnapshot, buffer: SafetyBuffer): MoneyToDecide {
-  const available = cash.safeUntilIncome;
+/**
+ * Os três números, para as contas de uso.
+ *
+ * O saldo de hoje vem do livro-caixa, conta a conta; o previsto, do mesmo
+ * previsto do Calendário, só das contas de uso. Transferência para a poupança
+ * é saída daqui — o dinheiro sai do que dá para gastar —, e transferência
+ * entre duas contas de uso se anula.
+ */
+export function moneyToDecide(input: LedgerInput, cash: CashSnapshot, buffer: SafetyBuffer): MoneyToDecide {
+  const today = input.today;
+  const use = spendableAccountIds(input.accounts);
+  const rows = balancesAt(input, today).accounts;
+  const total = rows.reduce((t, r) => t + r.balance, 0);
+  const balance = rows.filter((r) => use.has(r.account.id)).reduce((t, r) => t + r.balance, 0);
+
+  const tomorrow = addDaysIso(today, 1);
+  const horizon = addDaysIso(today, 60);
+  const end = horizon > cash.monthEnd ? horizon : cash.monthEnd;
+  const raw = plannedItems(input, end, tomorrow).filter((p) => use.has(p.accountId));
+  // transferência com os dois lados nas contas de uso não muda nada aqui
+  const sides = new Map<string, number>();
+  for (const p of raw) if (p.source === 'transfer' && p.internal) sides.set(p.refId, (sides.get(p.refId) ?? 0) + 1);
+  const items = raw.filter((p) => !(p.source === 'transfer' && p.internal && sides.get(p.refId) === 2));
+
+  const byDay = new Map<IsoDate, { inflow: Cents; outflow: Cents }>();
+  for (const p of items) {
+    const day = p.overdue ? tomorrow : p.date;
+    const slot = byDay.get(day) ?? { inflow: 0, outflow: 0 };
+    if (p.kind === 'in') slot.inflow += p.amount;
+    else slot.outflow += p.amount;
+    byDay.set(day, slot);
+  }
+  const ahead: DayBalance[] = [];
+  let running = balance;
+  for (let d = tomorrow; d <= end; d = addDaysIso(d, 1)) {
+    const slot = byDay.get(d) ?? { inflow: 0, outflow: 0 };
+    running += slot.inflow - slot.outflow;
+    ahead.push({ date: d, balance: running, inflow: slot.inflow, outflow: slot.outflow, projected: true });
+  }
+
+  const income =
+    items
+      .filter((p) => p.kind === 'in' && !p.internal && !p.overdue && p.date > today && p.date <= horizon)
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))[0] ?? null;
+  const until = income ? income.date : addDaysIso(cash.monthEnd, 1);
+  const window = ahead.filter((d) => d.date < until);
+  const available = Math.min(balance, ...window.map((d) => d.balance));
+  const tightest = window.reduce<DayBalance | null>((min, d) => (d.balance < balance && (!min || d.balance < min.balance) ? d : min), null);
+
+  const due = items.filter((p) => p.kind !== 'in' && (p.overdue || p.date < until));
+  const expectedIn = items.filter((p) => p.kind === 'in' && p !== income && (p.overdue || p.date < until)).reduce((t, p) => t + p.amount, 0);
   const reserved = available < 0 ? 0 : Math.min(buffer.amount, available);
-  const expectedIn = cash.items
-    .filter((i) => i.kind === 'in' && !i.internal && !i.settled && i.overdue)
-    .reduce((s, i) => s + i.amount, 0);
+
   return {
-    today: cash.today,
-    balance: cash.balanceNow,
-    committed: cash.dueBeforeIncome,
-    commitments: cash.dueBeforeIncomeItems
-      .slice()
+    today,
+    total,
+    guarded: total - balance,
+    balance,
+    committed: due.reduce((t, p) => t + p.amount, 0),
+    commitments: due
+      .map(({ id, label, date, amount, overdue, source, internal }) => ({ id, label, date, amount, overdue, source, internal }))
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.amount - a.amount)),
     expectedIn,
-    until: cash.until,
-    income: cash.nextIncome,
+    until,
+    income: income ? { label: income.label, date: income.date, amount: income.amount } : null,
     available,
-    tightest: cash.tightestUntilIncome,
+    tightest,
     buffer,
     free: available - buffer.amount,
     spendable: available < 0 ? available : available - reserved,
     reserved,
-    later: cash.nextIncome ? lowestOf(cash.ahead.filter((d) => d.date >= cash.until)) : null,
+    later: income ? lowestOf(ahead.filter((d) => d.date >= until)) : null,
+    ahead,
     grounded: cash.hasOpening,
   };
 }
@@ -172,8 +247,9 @@ export interface CalcLine {
  * diz isso, em vez de mostrar uma soma que não fecha.
  */
 export function availableLines(d: MoneyToDecide): CalcLine[] {
-  const lines: CalcLine[] = [{ op: '', label: 'Saldo nas contas agora', amount: d.balance }];
-  if (d.expectedIn > 0) lines.push({ op: '+', label: 'Entrada atrasada que ainda deve cair', amount: d.expectedIn });
+  const lines: CalcLine[] = [{ op: '', label: 'Saldo nas contas agora', amount: d.total }];
+  if (d.guarded !== 0) lines.push({ op: '−', label: 'Guardado em poupança e corretora', amount: d.guarded });
+  if (d.expectedIn > 0) lines.push({ op: '+', label: 'Entradas antes do recebimento', amount: d.expectedIn });
   lines.push({
     op: '−',
     label: d.income ? 'Compromissos até o próximo recebimento' : 'Compromissos até o fim do mês',
@@ -188,7 +264,11 @@ export function availableLines(d: MoneyToDecide): CalcLine[] {
   }
   if (projected !== d.available) {
     lines.push({ op: '=', label: 'Saldo previsto antes do recebimento', amount: projected });
-    lines.push({ op: '=', label: 'Disponível: o saldo de hoje, até a entrada cair', amount: d.available });
+    lines.push({
+      op: '=',
+      label: d.available === d.balance ? 'Disponível: o saldo de hoje, até as entradas caírem' : 'Disponível: o dia mais apertado até lá',
+      amount: d.available,
+    });
   } else {
     lines.push({ op: '=', label: 'Disponível sem deixar conta descoberta', amount: d.available });
   }
@@ -279,7 +359,7 @@ export interface SpendCheck {
   maxFree: Cents | null;
 }
 
-export function checkSpend(decide: MoneyToDecide, cash: CashSnapshot, req: SpendRequest, data?: CardData): SpendCheck {
+export function checkSpend(decide: MoneyToDecide, req: SpendRequest, data?: CardData): SpendCheck {
   const card = req.method === 'card' ? (req.card ?? null) : null;
   const installments = card ? Math.max(1, Math.trunc(req.installments ?? 1)) : 1;
   const amount = Math.max(0, Math.round(req.amount));
@@ -297,11 +377,11 @@ export function checkSpend(decide: MoneyToDecide, cash: CashSnapshot, req: Spend
 
   // quanto do gasto já saiu da conta até um dia
   const cut = (date: IsoDate) => schedule.reduce((t, s) => (s.date <= date ? t + s.amount : t), 0);
-  const lastDay = cash.ahead[cash.ahead.length - 1]?.date ?? decide.today;
+  const lastDay = decide.ahead[decide.ahead.length - 1]?.date ?? decide.today;
   const beyondHorizon = schedule.filter((s) => s.date > lastDay).length;
 
   let tightestAfter = { date: decide.today, balance: decide.balance - cut(decide.today) };
-  for (const d of cash.ahead) {
+  for (const d of decide.ahead) {
     if (d.date >= decide.until) break;
     const balance = d.balance - cut(d.date);
     if (balance < tightestAfter.balance) tightestAfter = { date: d.date, balance };
@@ -310,7 +390,7 @@ export function checkSpend(decide: MoneyToDecide, cash: CashSnapshot, req: Spend
 
   let laterAfter: SpendCheck['laterAfter'] = null;
   if (decide.income) {
-    for (const d of cash.ahead) {
+    for (const d of decide.ahead) {
       if (d.date < decide.until) continue;
       const balance = d.balance - cut(d.date);
       if (!laterAfter || balance < laterAfter.balance) laterAfter = { date: d.date, balance };

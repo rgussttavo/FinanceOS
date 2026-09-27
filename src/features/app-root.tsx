@@ -18,6 +18,7 @@ import { currentMonthKey, nowInstant } from '@/lib/dates';
 import type { MovFilter, SubId, ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
 import type { AssistantContext } from '@/lib/assistant';
+import { buildCheckup } from '@/lib/checkup';
 import { moneyToDecide, safetyBuffer } from '@/lib/decision';
 import { ledgerInput, monthOccurrences, useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
 import { toggleSettled, useBootstrap, useCategories, useSettings } from '@/lib/store';
@@ -29,6 +30,7 @@ import { AssinaturasView } from './assinaturas';
 import { CalendarioView } from './calendario';
 import { CartoesView } from './cartoes';
 import { CategoriasView } from './categorias';
+import { CheckupView } from './checkup';
 import { ContasView } from './contas';
 import { DividasView } from './dividas';
 import { MaisView, PlanejamentoView } from './hubs';
@@ -111,8 +113,23 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   const cash = useCash(base, cardsEnabled);
   // saldo, comprometido e disponível com a margem: um objeto só, para o Início e o assistente
   const decide = React.useMemo(
-    () => moneyToDecide(cash, safetyBuffer(settings, todayHistory, categories, cash.today)),
-    [cash, settings, todayHistory, categories],
+    () => moneyToDecide(ledgerInput(base, cardsEnabled, cash.today), cash, safetyBuffer(settings, todayHistory, categories, cash.today)),
+    [base, cardsEnabled, cash, settings, todayHistory, categories],
+  );
+  // o diagnóstico por áreas: o mesmo para o Início, a tela dele e o assistente
+  const checkup = React.useMemo(
+    () =>
+      buildCheckup({
+        ledger: ledgerInput(base, cardsEnabled, cash.today),
+        cash,
+        decide,
+        history: todayHistory,
+        categories,
+        goals: base.goals,
+        assets: base.assets,
+        settings,
+      }),
+    [base, cardsEnabled, cash, decide, todayHistory, categories, settings],
   );
   // de quanto o mês aberto parte: o saldo das contas na véspera do dia 1
   const monthOpening = React.useMemo(
@@ -165,8 +182,9 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
         .accounts.filter((r) => !r.account.archived || r.balance !== 0)
         .map((r) => ({ name: r.account.name, balance: r.balance })),
       decision: { decide, transfers: base.transfers, cardsEnabled },
+      checkup,
     }),
-    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled, decide],
+    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled, decide, checkup],
   );
 
   const toggleHidden = React.useCallback(async () => {
@@ -362,6 +380,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           base={base}
           cash={cash}
           decide={decide}
+          checkup={checkup}
           picture={todayPicture}
           history={todayHistory}
           categories={categories}
@@ -463,6 +482,9 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       break;
     case 'categorias':
       content = <CategoriasView spaceId={spaceId} categories={categories} />;
+      break;
+    case 'checkup':
+      content = <CheckupView checkup={checkup} settings={settings} hidden={hidden} onGo={go} />;
       break;
     case 'ajustes':
       content = (

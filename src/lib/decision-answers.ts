@@ -1,5 +1,4 @@
 import type { Answer } from './assistant';
-import type { CashSnapshot } from './cashflow';
 import { normalize } from './categories';
 import { addDaysIso, formatDayShort, monthKeyOf } from './dates';
 import { availableLines, checkSpend, spendLines, type CalcLine, type CardData, type MoneyToDecide, type SpendMethod } from './decision';
@@ -75,7 +74,7 @@ export function answerAvailable(d: MoneyToDecide): Answer {
     if (d.committed > 0) {
       const biggest = d.commitments.reduce((a, b) => (b.amount > a.amount ? b : a));
       parts.push(
-        `O saldo de hoje é ${formatMoney(d.balance)}, mas ${formatMoney(d.committed)} já têm destino antes disso; o maior é ${biggest.label}, ${formatMoney(biggest.amount)}.`,
+        `${d.guarded > 0 ? `Nas contas do dia a dia há ${formatMoney(d.balance)} (fora ${formatMoney(d.guarded)} guardados em poupança e corretora)` : `O saldo de hoje é ${formatMoney(d.balance)}`}, mas ${formatMoney(d.committed)} já têm destino antes disso; o maior é ${biggest.label}, ${formatMoney(biggest.amount)}.`,
       );
     }
   }
@@ -171,12 +170,7 @@ export function parseSpend(raw: string, original: string, cards: Card[]): SpendP
   };
 }
 
-export function answerSpend(
-  q: SpendParse,
-  d: MoneyToDecide,
-  cash: CashSnapshot,
-  data: CardData,
-): Answer {
+export function answerSpend(q: SpendParse, d: MoneyToDecide, data: CardData): Answer {
   if (q.method === 'card' && q.noCard) {
     return { text: 'Não há cartão cadastrado. Cadastre o cartão para eu calcular a fatura e o limite, ou pergunte pelo gasto na conta.', link: { label: 'Cadastrar cartão', route: { view: 'cartoes' } } };
   }
@@ -184,7 +178,7 @@ export function answerSpend(
     return { text: `Em qual cartão: ${orList(q.ambiguous.map((c) => c.name || c.institution))}? O cartão muda a fatura em que a compra entra e o vencimento.` };
   }
 
-  const c = checkSpend(d, cash, { amount: q.amount, method: q.method, card: q.card, installments: q.installments }, data);
+  const c = checkSpend(d, { amount: q.amount, method: q.method, card: q.card, installments: q.installments }, data);
   const parts: string[] = [];
   const cardName = c.card ? c.card.name || c.card.institution : '';
   const beforeUntil = c.schedule.filter((s) => s.date < d.until).reduce((t, s) => t + s.amount, 0);
@@ -194,7 +188,7 @@ export function answerSpend(
   } else if (c.verdict === 'short' && c.shortBy === 'cash') {
     parts.push(
       !c.card && c.tightestAfter.date === d.today
-        ? `Não cabe hoje: o saldo nas contas é ${money(d.balance)}, e o gasto deixaria ${money(c.tightestAfter.balance)}.`
+        ? `Não cabe hoje: o saldo ${d.guarded > 0 ? 'nas contas do dia a dia' : 'nas contas'} é ${money(d.balance)}, e o gasto deixaria ${money(c.tightestAfter.balance)}.`
         : `Não cabe sem descobrir uma conta: ${onDay(c.tightestAfter.date, d.today)} o saldo previsto ficaria em ${money(c.tightestAfter.balance)}${c.card ? `, com a fatura do ${cardName}` : ''}.`,
     );
   } else if (c.verdict === 'short' && c.shortBy === 'later' && c.laterAfter) {

@@ -27,7 +27,8 @@ export type SubId =
   | 'busca'
   | 'ia'
   | 'ajustes'
-  | 'categorias';
+  | 'categorias'
+  | 'checkup';
 
 export type ViewId = RootId | SubId;
 
@@ -65,6 +66,7 @@ export const PARENT: Record<SubId, RootId> = {
   ia: 'mais',
   ajustes: 'mais',
   categorias: 'mais',
+  checkup: 'inicio',
 };
 
 export interface ViewMeta {
@@ -95,6 +97,7 @@ export const VIEW_META: Record<ViewId, ViewMeta> = {
   ia: { title: 'Assistente', description: 'Pergunte sobre seu dinheiro' },
   ajustes: { title: 'Ajustes', description: 'Perfil, preferências, privacidade e dados' },
   categorias: { title: 'Categorias', description: 'Nomes e ícones das suas categorias' },
+  checkup: { title: 'Sua vida financeira', description: 'Cada área, o que merece atenção e a confiança dos dados' },
 };
 
 export const isRoot = (view: ViewId): view is RootId => ROOTS.some((r) => r.id === view);

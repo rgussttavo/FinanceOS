@@ -24,7 +24,7 @@ planejar, simular, orientar e acompanhar.
 | Fase | O quê | Estado |
 |---|---|---|
 | 1 | Dinheiro para decidir: saldo, comprometido, disponível, margem, "posso gastar R$ X?" | feita |
-| 2 | Diagnóstico por áreas (sem nota geral), "o que merece atenção", confiança dos dados | a fazer |
+| 2 | Diagnóstico por áreas (sem nota geral), "o que merece atenção", confiança dos dados | feita |
 | 3 | Perguntas vagas no assistente ("por que meu dinheiro some"), resposta em camadas | a fazer |
 | 4 | Metas como plano vivo: prioridade, conflito, previsão pelo ritmo real, cenários | a fazer |
 | 5 | Primeiro acesso com 3 ou 4 perguntas, perfil e objetivos de vida | a fazer |
@@ -33,7 +33,9 @@ planejar, simular, orientar e acompanhar.
 
 Decisões do responsável (27/09/2026): começar pela fase 1; a nota "Saúde do
 mês" (0 a 100) sai e vira situação por área na fase 2; primeiro acesso com
-poucas perguntas, puláveis; margem de segurança sugerida e ajustável.
+poucas perguntas, puláveis; margem de segurança sugerida e ajustável;
+poupança e corretora ficam fora do disponível (são reserva e investimento);
+critérios da fase 2 abaixo.
 
 ## Fase 1 — dinheiro para decidir
 
@@ -45,11 +47,18 @@ exemplo do documento de produto feito à mão.
 
 ```
 saldo          o que existe nas contas agora (o mesmo da tela Contas)
+guardado       o que está em poupança e corretora: reserva e investimento
 comprometido   o que já tem data para sair até o próximo recebimento,
-               vencidos inclusos: contas, faturas, assinaturas, dívidas, aportes
-disponível     o menor saldo previsto até o próximo recebimento
-               (sem recebimento em 60 dias: até o fim do mês)
+               vencidos inclusos: contas, faturas, assinaturas, dívidas,
+               aportes, o que vai para a poupança
+disponível     o menor saldo previsto das contas de uso até o próximo
+               recebimento (sem recebimento em 60 dias: até o fim do mês)
 ```
+
+As contas de uso são todas menos poupança e corretora; a conta principal
+sempre é de uso, mesmo sendo poupança. Transferência para a poupança é saída
+do que dá para gastar; trazer de volta é entrada; transferência entre duas
+contas de uso se anula.
 
 Sem entrada no meio do caminho, `disponível = saldo − comprometido`. Entrada
 atrasada que ainda não caiu não conta hoje: se ela é o que sustenta a
@@ -90,3 +99,32 @@ centavo nas primeiras). Cada dia projetado perde o que já saiu até ele.
 A alternativa oferecida é quanto cabe sem tocar a margem (na conta, também
 sem descobrir o que vem depois do recebimento), ou esperar o recebimento. O
 cartão nunca é sugerido como saída para falta de dinheiro.
+
+## Fase 2 — diagnóstico por áreas
+
+Código: `src/lib/checkup.ts` (motor, critérios em `LIMITS`) e
+`src/features/checkup.tsx` (tela "Sua vida financeira" e o resumo do Início,
+no lugar da antiga nota de 0 a 100). Testes: `checkup.test.ts`.
+
+| Área | Saudável | Atenção | Alerta |
+|---|---|---|---|
+| Fluxo de caixa | nada descoberto e resultado médio ≥ 0 | resultado médio (entradas − saídas, 3 meses completos) negativo | conta descoberta prevista, ou saldo negativo no mês |
+| Reserva | cobre a referência | abaixo da referência | — |
+| Dívidas | parcelas ≤ 15% da renda média | até 30% | acima de 30% |
+| Cartões | uso ≤ 30% do limite | até 70% | acima de 70% |
+| Metas | todas com prazo no ritmo | alguma fora do ritmo ou vencida | — |
+| Patrimônio | só informa a variação de 3 meses, sem julgar | | |
+
+- **Reserva:** contas poupança mais o aplicado em categorias de investimento
+  cujo nome começa com "reserva", dividido pela média das despesas
+  essenciais. Referência de 6 meses, ajustável na própria tela (3, 6, 9, 12).
+- **Ordem da atenção:** alerta antes de atenção; dentro de cada um,
+  estabilidade (fluxo) → proteção (reserva) → risco (dívidas, cartões) →
+  objetivos (metas).
+- **Confiança dos dados:** saldo informado em todas as contas (25), conferido
+  com o banco nos últimos 30 dias (20), gastos recentes com categoria (15),
+  recebimento previsto cadastrado (15), nenhum erro na conferência dos dados
+  (15), algo lançado na última semana (10). Alta a partir de 85%, média a
+  partir de 60%. Cada item em falta diz como resolver.
+- **Sem dados, sem veredito:** sem fluxo para ler, o resumo diz que faltam
+  dados — "nenhuma dívida" não vira "está tudo bem".
