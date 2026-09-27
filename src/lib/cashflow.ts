@@ -362,6 +362,14 @@ export interface CashSnapshot {
   /** o que ainda sai até o próximo recebimento (ou até o fim do mês), vencidos inclusos */
   dueBeforeIncome: Cents;
   dueBeforeIncomeCount: number;
+  /** os itens que formam `dueBeforeIncome`: o dinheiro que já tem destino */
+  dueBeforeIncomeItems: FlowItem[];
+  /** até quando o "disponível" olha: o dia do próximo recebimento, ou o dia seguinte ao fim do mês */
+  until: IsoDate;
+  /** o dia de menor saldo antes do próximo recebimento; null quando o menor é o de hoje */
+  tightestUntilIncome: DayBalance | null;
+  /** cada dia de amanhã até 60 dias à frente (ou o fim do mês, o que vier depois) */
+  ahead: DayBalance[];
   /** vencido e não baixado: não saiu da conta, mas vai sair */
   overdue: Cents;
   overdueCount: number;
@@ -401,6 +409,10 @@ export function cashSnapshot(input: FlowInput): CashSnapshot {
   const ahead = allDays.filter((d) => d.date > today);
   const untilIncome = nextIncome ? ahead.filter((d) => d.date < nextIncome.date) : ahead.filter((d) => d.date <= monthEnd);
   const safeUntilIncome = Math.min(balanceNow, ...untilIncome.map((d) => d.balance));
+  const tightestUntilIncome = untilIncome.reduce<DayBalance | null>(
+    (min, d) => (d.balance < balanceNow && (!min || d.balance < min.balance) ? d : min),
+    null,
+  );
   const restOfMonth = ahead.filter((d) => d.date <= monthEnd);
   const safeUntilMonthEnd = Math.min(balanceNow, ...restOfMonth.map((d) => d.balance));
   const lowest = restOfMonth.reduce<DayBalance | null>((min, d) => (!min || d.balance < min.balance ? d : min), null);
@@ -436,6 +448,10 @@ export function cashSnapshot(input: FlowInput): CashSnapshot {
     negative: negativeStretches(days.filter((d) => d.date >= today)),
     dueBeforeIncome: due.reduce((s, i) => s + i.amount, 0),
     dueBeforeIncomeCount: due.length,
+    dueBeforeIncomeItems: due,
+    until: limit,
+    tightestUntilIncome,
+    ahead,
     overdue: overdueItems.reduce((s, i) => s + i.amount, 0),
     overdueCount: overdueItems.length,
     monthIn,

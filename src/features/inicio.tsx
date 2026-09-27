@@ -39,7 +39,8 @@ import {
 } from '@/components/ui';
 import type { CashSnapshot, FlowItem } from '@/lib/cashflow';
 import { cn } from '@/lib/cn';
-import { addDaysIso, formatDateFull, formatDayShort } from '@/lib/dates';
+import { addDaysIso, formatDateFull, formatDayShort, formatMonthLabel } from '@/lib/dates';
+import { availableLines, type MoneyToDecide, type SafetyBuffer } from '@/lib/decision';
 import { holidaysBetween } from '@/lib/holidays';
 import { buildInsights, headline, monthHealth, type Insight, type Severity } from '@/lib/insights';
 import { formatMoney, parseMoney } from '@/lib/money';
@@ -69,6 +70,8 @@ export interface InicioProps {
   spaceId: string;
   base: FinanceBase;
   cash: CashSnapshot;
+  /** saldo, comprometido e disponível para gastar, com a margem: o mesmo do assistente */
+  decide: MoneyToDecide;
   picture: MonthPicture;
   history: MonthSummary[];
   categories: Category[];
@@ -187,11 +190,12 @@ const HEADLINE_STYLE = {
   neutral: { box: 'bg-surface-2 text-ink-2', icon: Info },
 } as const;
 
-function MainCard({ spaceId, base, cash, settings, hidden, onGo }: InicioProps) {
+function MainCard({ spaceId, base, cash, decide, settings, hidden, onGo }: InicioProps) {
   const [mode, setMode] = React.useState<CardMode>(cash.nextIncome ? 'salario' : 'fim');
   const [adjusting, setAdjusting] = React.useState(false);
+  const [explaining, setExplaining] = React.useState(false);
   const cardsEnabled = settings?.cardsEnabled ?? true;
-  const line = headline(cash);
+  const line = headline(cash, { available: decide.available, free: decide.free, buffer: decide.buffer.amount });
   const Style = HEADLINE_STYLE[line.tone];
 
   const wealth = React.useMemo(
@@ -204,16 +208,14 @@ function MainCard({ spaceId, base, cash, settings, hidden, onGo }: InicioProps) 
 
   const income = cash.nextIncome;
   const view = {
-    salario: {
-      label: income ? 'Disponível até o próximo recebimento' : 'Disponível até o fim do mês',
-      value: income ? cash.safeUntilIncome : cash.safeUntilMonthEnd,
-    },
+    salario: { label: 'Disponível para gastar', value: decide.spendable },
     agora: { label: 'Saldo agora', value: cash.balanceNow },
     fim: { label: 'Saldo previsto no fim do mês', value: cash.endOfMonth },
     patrimonio: { label: 'Patrimônio líquido', value: wealth?.net ?? 0 },
   }[mode];
 
-  const short = mode === 'salario' && view.value < 0;
+  // falta de verdade: alguma conta até o recebimento fica sem cobertura
+  const short = mode === 'salario' && decide.available < 0;
 
   return (
     <Panel className="overflow-hidden p-0">
@@ -243,26 +245,53 @@ function MainCard({ spaceId, base, cash, settings, hidden, onGo }: InicioProps) 
         </p>
 
         {mode === 'salario' ? (
-          <div className="mt-3 grid gap-1 text-[14px] text-ink-2">
+          <div className="mt-3 grid gap-2.5 text-[14px] text-ink-2">
             {income ? (
               <p>
-                Próximo recebimento{' '}
-                <strong className="font-medium text-ink">
-                  {cash.daysToNextIncome === 1 ? 'amanhã' : `em ${cash.daysToNextIncome} dias`}
-                </strong>{' '}
-                · {income.label}, {formatDayShort(income.date)}
+                Até <strong className="font-medium text-ink">{income.label}</strong>, {formatDayShort(income.date)}
+                {' · '}
+                {cash.daysToNextIncome === 1 ? 'amanhã' : `em ${cash.daysToNextIncome} dias`}
               </p>
             ) : (
-              <p>Nenhum recebimento previsto nos próximos 60 dias.</p>
+              <p>Até o fim do mês: nenhum recebimento previsto nos próximos 60 dias.</p>
             )}
+            <dl className="grid grid-cols-3 gap-2 rounded-field bg-surface-2 px-3 py-2.5 text-[12px] text-ink-3">
+              <div className="min-w-0">
+                <dt>Saldo</dt>
+                <dd>
+                  <Money value={decide.balance} hidden={hidden} signed={decide.balance < 0} className="block truncate text-[14px] font-semibold text-ink" />
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt>Comprometido</dt>
+                <dd>
+                  <Money value={decide.committed} hidden={hidden} className="block truncate text-[14px] font-semibold text-ink" />
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt>Margem</dt>
+                <dd>
+                  <Money value={decide.buffer.amount} hidden={hidden} className="block truncate text-[14px] font-semibold text-ink" />
+                </dd>
+              </div>
+            </dl>
             {short ? (
               <p className="text-out">
-                Faltam <Money value={-view.value} hidden={hidden} /> para cobrir as contas até lá.
+                Faltam <Money value={-decide.available} hidden={hidden} /> para cobrir as contas até lá.
+              </p>
+            ) : decide.reserved < decide.buffer.amount ? (
+              <p>
+                Sobram <Money value={decide.available} hidden={hidden} className="font-medium text-ink" /> depois das contas, dentro da margem de{' '}
+                <Money value={decide.buffer.amount} hidden={hidden} />.
               </p>
             ) : null}
-            <p>
-              Saldo previsto no fim do mês: <Money value={cash.endOfMonth} hidden={hidden} className="font-medium text-ink" />
-            </p>
+            <button
+              type="button"
+              onClick={() => setExplaining(true)}
+              className="flex h-8 items-center gap-1 self-start text-left text-[13px] font-medium text-accent"
+            >
+              Como cheguei nisso <ArrowRight size={14} />
+            </button>
           </div>
         ) : mode === 'agora' ? (
           <p className="mt-3 text-[14px] text-ink-2">
@@ -308,8 +337,153 @@ function MainCard({ spaceId, base, cash, settings, hidden, onGo }: InicioProps) 
       </div>
 
       <AdjustBalanceSheet open={adjusting} onClose={() => setAdjusting(false)} spaceId={spaceId} cash={cash} base={base} cardsEnabled={settings?.cardsEnabled ?? true} />
+      <DecideSheet open={explaining} onClose={() => setExplaining(false)} decide={decide} settings={settings} hidden={hidden} onGo={onGo} />
     </Panel>
   );
+}
+
+/**
+ * "Como cheguei nisso": a conta do disponível para gastar, linha a linha, o
+ * que já tem destino e a margem de segurança — com a sugerida explicada e o
+ * valor à escolha da pessoa, inclusive zero.
+ */
+function DecideSheet({
+  open,
+  onClose,
+  decide,
+  settings,
+  hidden,
+  onGo,
+}: {
+  open: boolean;
+  onClose: () => void;
+  decide: MoneyToDecide;
+  settings: Settings | null;
+  hidden: boolean;
+  onGo: (route: Route) => void;
+}) {
+  const [custom, setCustom] = React.useState('');
+  const [error, setError] = React.useState<string | null>(null);
+  const b = decide.buffer;
+  const lines = availableLines(decide);
+
+  async function saveBuffer(next: NonNullable<Settings['safetyBuffer']>, message: string) {
+    if (!settings) return;
+    await putRecord('settings', { ...settings, safetyBuffer: next });
+    toast(message);
+  }
+
+  async function saveCustom() {
+    const parsed = parseMoney(custom.trim());
+    if (parsed === null || parsed < 0) return setError('Digite um valor, por exemplo 300,00.');
+    await saveBuffer({ mode: 'manual', amount: parsed }, `Margem de segurança: ${formatMoney(parsed)}.`);
+    setCustom('');
+    setError(null);
+  }
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Como cheguei nisso"
+      description="O saldo de hoje, menos o que já tem data para sair até o próximo recebimento, menos a margem de segurança."
+    >
+      <div className="grid gap-6">
+        <ul className="overflow-hidden rounded-field border border-line">
+          {lines.map((l, i) => (
+            <li
+              key={i}
+              className={cn(
+                'flex items-center justify-between gap-3 border-line px-3 py-2.5 text-[14px] [&:not(:first-child)]:border-t',
+                l.op === '=' ? 'bg-surface-2 font-semibold text-ink' : 'text-ink-2',
+              )}
+            >
+              <span className="min-w-0">
+                {l.op ? <span className="text-ink-3">{l.op} </span> : null}
+                {l.label}
+                {l.detail ? <span className="block text-[12px] font-normal text-ink-3">{l.detail}</span> : null}
+              </span>
+              <Money value={l.amount} hidden={hidden} signed={l.amount < 0} className="shrink-0" />
+            </li>
+          ))}
+        </ul>
+
+        {decide.commitments.length ? (
+          <section>
+            <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-ink-3">O que já tem destino</h3>
+            <ul className="grid gap-2">
+              {decide.commitments.map((c) => (
+                <li key={c.id} className="flex items-center justify-between gap-3 text-[14px] text-ink-2">
+                  <span className="min-w-0 truncate">
+                    {c.label}
+                    <span className="ml-2 text-[12px] text-ink-3">{c.overdue ? 'vencida' : formatDayShort(c.date)}</span>
+                  </span>
+                  <Money value={c.amount} hidden={hidden} className="shrink-0" />
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        <section className="grid gap-3">
+          <h3 className="text-[12px] font-semibold uppercase tracking-wider text-ink-3">Margem de segurança</h3>
+          <p className="text-[14px] leading-relaxed text-ink-2">{bufferText(b, hidden)}</p>
+          <div className="flex flex-wrap gap-2">
+            {b.mode === 'manual' && b.suggested !== null ? (
+              <Button size="sm" variant="soft" onClick={() => void saveBuffer({ mode: 'auto', amount: 0 }, 'Usando a margem sugerida.')}>
+                Usar a sugerida
+              </Button>
+            ) : null}
+            {b.amount > 0 ? (
+              <Button size="sm" variant="soft" onClick={() => void saveBuffer({ mode: 'manual', amount: 0 }, 'Sem margem de segurança.')}>
+                Sem margem
+              </Button>
+            ) : null}
+            <Button size="sm" variant="soft" onClick={() => onGo({ view: 'categorias' })}>
+              Escolher as essenciais
+            </Button>
+          </div>
+          <form
+            className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveCustom();
+            }}
+          >
+            <Field label="Outro valor" htmlFor="buffer-custom" error={error}>
+              <Input id="buffer-custom" value={custom} onChange={(e) => setCustom(e.target.value)} inputMode="decimal" placeholder="0,00" className="tnum" />
+            </Field>
+            <Button type="submit" variant="primary">
+              Salvar
+            </Button>
+          </form>
+        </section>
+
+        {!decide.grounded ? (
+          <p className="text-[13px] leading-relaxed text-ink-3">
+            O saldo das contas ainda não foi informado: esta conta parte de zero e pode não bater com o banco.
+          </p>
+        ) : null}
+      </div>
+    </Sheet>
+  );
+}
+
+/** a margem, explicada: de onde veio o número */
+function bufferText(b: SafetyBuffer, hidden: boolean): string {
+  const m = (v: Cents) => formatMoney(v, { hidden });
+  if (b.mode === 'manual') {
+    const suggestion = b.suggested !== null && b.suggested !== b.amount ? ` A sugerida seria ${m(b.suggested)}.` : '';
+    return b.amount === 0
+      ? `Sem margem: todo o disponível conta como livre para gastar.${suggestion}`
+      : `Você escolheu ${m(b.amount)}.${suggestion}`;
+  }
+  if (b.basis) {
+    const months = b.basis.months.map((k) => formatMonthLabel(k, { short: true }));
+    const list = months.length > 1 ? `${months.slice(0, -1).join(', ')} e ${months[months.length - 1]}` : months[0];
+    return `${m(b.amount)} é uma semana das suas despesas essenciais, que ficaram em média em ${m(b.basis.monthly)} por mês em ${list}. Essenciais são moradia, contas de casa, mercado, transporte, saúde, educação e impostos, mais o que você marcar em Categorias.`;
+  }
+  return 'Ainda não há um mês completo de despesas essenciais para sugerir uma margem. Você pode escolher um valor.';
 }
 
 /**

@@ -66,7 +66,7 @@ export interface Headline {
  * A frase de cima do Início. Uma só, e a mais importante: risco de ficar no
  * vermelho ganha de saldo apertado, que ganha de "está tudo bem".
  */
-export function headline(s: CashSnapshot): Headline {
+export function headline(s: CashSnapshot, room?: { available: Cents; free: Cents; buffer: Cents }): Headline {
   if (!s.items.length) {
     return { tone: 'neutral', text: 'Assim que você lançar o salário e as contas, eu mostro quanto sobra.' };
   }
@@ -88,6 +88,13 @@ export function headline(s: CashSnapshot): Headline {
   const income = s.monthIn;
   if (low && income > 0 && low.balance < income * 0.1 && low.date !== s.today) {
     return { tone: 'warning', text: `Seu saldo previsto cai para ${money(low.balance)} no dia ${day(low.date)}.` };
+  }
+
+  // com a margem, o número já está em cima: a frase diz o porquê
+  if (s.nextIncome && room) {
+    return room.free < 0 && room.available >= 0
+      ? { tone: 'warning', text: `Até o próximo recebimento, sobram ${money(room.available)} depois das contas: menos que a margem de ${money(room.buffer)}.` }
+      : { tone: 'positive', text: 'Nenhuma conta fica descoberta até o próximo recebimento.' };
   }
 
   if (s.nextIncome) {

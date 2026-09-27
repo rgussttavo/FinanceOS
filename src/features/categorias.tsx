@@ -2,9 +2,10 @@
 
 import * as React from 'react';
 import { Plus } from 'lucide-react';
-import { Button, Field, Input, Panel, Segmented, SectionTitle, Sheet, confirmAction, toast } from '@/components/ui';
+import { Button, Field, Input, Panel, Segmented, SectionTitle, Sheet, Switch, confirmAction, toast } from '@/components/ui';
 import { deleteRecord, putRecord } from '@/lib/db';
 import { nowInstant } from '@/lib/dates';
+import { isEssential } from '@/lib/decision';
 import { uid } from '@/lib/provision';
 import type { Category, FlowKind } from '@/lib/types';
 
@@ -52,6 +53,7 @@ export function CategoriasView({ spaceId, categories }: { spaceId: string; categ
                   {c.icon}
                 </span>
                 <span className="flex-1 text-[15px] text-ink">{c.name}</span>
+                {isEssential(c) ? <span className="text-[12px] text-ink-2">essencial</span> : null}
                 {c.system ? <span className="text-[12px] text-ink-3">padrão</span> : null}
               </button>
             </li>
@@ -85,20 +87,29 @@ function CategorySheet({
 }) {
   const [name, setName] = React.useState('');
   const [icon, setIcon] = React.useState('🏷️');
+  const [essential, setEssential] = React.useState(false);
   const [seen, setSeen] = React.useState<Category | 'new' | null>(null);
   if (editing !== seen) {
     setSeen(editing);
     setName(editing && editing !== 'new' ? editing.name : '');
     setIcon(editing && editing !== 'new' ? editing.icon : '🏷️');
+    setEssential(editing && editing !== 'new' ? isEssential(editing) : false);
   }
 
   const existing = editing && editing !== 'new' ? editing : null;
+  // só gasto pode ser essencial: é a base da margem de segurança
+  const isOut = (existing?.kind ?? kind) === 'out';
 
   async function save() {
     const trimmed = name.trim();
     if (!trimmed) return;
     if (existing) {
-      await putRecord('categories', { ...existing, name: trimmed, icon: icon.trim() || existing.icon });
+      await putRecord('categories', {
+        ...existing,
+        name: trimmed,
+        icon: icon.trim() || existing.icon,
+        ...(isOut ? { essential } : null),
+      });
       toast('Categoria atualizada.');
     } else {
       const at = nowInstant();
@@ -115,6 +126,7 @@ function CategorySheet({
         system: false,
         order: count + 1,
         budget: 0,
+        ...(isOut ? { essential } : null),
       });
       toast('Categoria criada.');
     }
@@ -166,6 +178,15 @@ function CategorySheet({
         <Field label="Nome" htmlFor="cat-name">
           <Input id="cat-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" data-autofocus />
         </Field>
+        {isOut ? (
+          <Switch
+            className="col-span-2"
+            checked={essential}
+            onChange={setEssential}
+            label="Gasto essencial"
+            detail="O que continua existindo num mês de aperto. É a base da margem de segurança do disponível para gastar."
+          />
+        ) : null}
       </form>
     </Sheet>
   );

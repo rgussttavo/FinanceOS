@@ -67,6 +67,12 @@ export interface Category extends SyncFields {
   order: number;
   /** orçamento mensal para a categoria, em centavos; 0 = sem teto */
   budget: Cents;
+  /**
+   * Gasto essencial: o que continua existindo num mês de aperto (moradia,
+   * contas, mercado). Base da margem de segurança. Ausente = o padrão pelo
+   * nome da categoria; a pessoa pode marcar e desmarcar.
+   */
+  essential?: boolean | null;
 }
 
 /* ------------------------------------------------------------------- conta */
@@ -473,6 +479,13 @@ export interface Settings extends SyncFields {
   /* ------- o Início -------
      Blocos que a pessoa escolheu esconder. Ausente = tudo aparece. */
   hiddenBlocks?: string[];
+
+  /**
+   * Margem de segurança: o que fica de fora do "disponível para gastar", para
+   * imprevisto. Ausente ou 'auto' = a sugerida (uma semana das despesas
+   * essenciais); 'manual' = o valor que a pessoa escolheu, inclusive zero.
+   */
+  safetyBuffer?: { mode: 'auto' | 'manual'; amount: Cents };
 }
 
 /* ------------------------------------------------------------------ sync */

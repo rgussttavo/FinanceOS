@@ -18,6 +18,7 @@ import { currentMonthKey, nowInstant } from '@/lib/dates';
 import type { MovFilter, SubId, ViewId } from '@/lib/nav';
 import type { Occurrence } from '@/lib/occurrences';
 import type { AssistantContext } from '@/lib/assistant';
+import { moneyToDecide, safetyBuffer } from '@/lib/decision';
 import { ledgerInput, monthOccurrences, useCash, useFinanceBase, useHistory, useMonthPicture } from '@/lib/picture';
 import { toggleSettled, useBootstrap, useCategories, useSettings } from '@/lib/store';
 import { cloudConfigured } from '@/lib/supabase';
@@ -108,6 +109,11 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
   const todayHistory = useHistory(base, current, 4);
   const cardsEnabled = settings?.cardsEnabled ?? true;
   const cash = useCash(base, cardsEnabled);
+  // saldo, comprometido e disponível com a margem: um objeto só, para o Início e o assistente
+  const decide = React.useMemo(
+    () => moneyToDecide(cash, safetyBuffer(settings, todayHistory, categories, cash.today)),
+    [cash, settings, todayHistory, categories],
+  );
   // de quanto o mês aberto parte: o saldo das contas na véspera do dia 1
   const monthOpening = React.useMemo(
     () => dayBalances(ledgerInput(base, cardsEnabled), `${month}-01`, `${month}-01`).opening,
@@ -158,8 +164,9 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
       accounts: balancesAt(ledgerInput(base, cardsEnabled, cash.today), cash.today)
         .accounts.filter((r) => !r.account.archived || r.balance !== 0)
         .map((r) => ({ name: r.account.name, balance: r.balance })),
+      decision: { decide, transfers: base.transfers, cardsEnabled },
     }),
-    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled],
+    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled, decide],
   );
 
   const toggleHidden = React.useCallback(async () => {
@@ -354,6 +361,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
           spaceId={spaceId}
           base={base}
           cash={cash}
+          decide={decide}
           picture={todayPicture}
           history={todayHistory}
           categories={categories}

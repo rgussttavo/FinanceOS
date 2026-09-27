@@ -7,7 +7,9 @@ import { goalProgress } from './goals';
 import { parseMoney } from './money';
 import type { Route } from './nav';
 import { firstNegativeDay, occurrencesInMonth, summarizeMonth, type DayPoint, type MonthSummary, type Occurrence } from './occurrences';
-import type { Asset, Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscription } from './types';
+import type { Asset, Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscription, Transfer } from './types';
+import type { MoneyToDecide } from './decision';
+import { answerAvailable, answerSpend, isSpendQuestion, parseSpend } from './decision-answers';
 import { wealthHistory } from './wealth';
 
 /**
@@ -61,6 +63,8 @@ export interface AssistantContext {
   cash?: CashSnapshot;
   /** o saldo de cada conta hoje, do livro-caixa: o mesmo número da tela de Contas */
   accounts?: { name: string; balance: Cents }[];
+  /** saldo, comprometido e disponível, com a margem: o mesmo do Início */
+  decision?: { decide: MoneyToDecide; transfers: Transfer[]; cardsEnabled: boolean };
 }
 
 export interface Answer {
@@ -492,6 +496,34 @@ type Named = (ctx: AssistantContext, slots: Slots) => Answer;
 
 /** perguntas que não são "quanto/quais de alguma coisa" e precisam de resposta própria */
 const NAMED: { id: string; test: (p: Parsed) => boolean; answer: Named }[] = [
+  {
+    id: 'posso-gastar',
+    /**
+     * "Posso gastar R$ 300?" — não é só o saldo. Pesa o que já tem destino até
+     * o próximo recebimento, a margem de segurança, a fatura em que a compra
+     * cai, o limite e o que vem depois do recebimento. Vem antes de tudo porque
+     * exige, ao mesmo tempo, um verbo de gasto e um valor.
+     */
+    test: (p) => isSpendQuestion(p.raw, lastQuestion),
+    answer: (ctx) => {
+      const decision = ctx.decision;
+      if (!decision || !ctx.cash) return { text: 'Ainda não consigo ver o saldo das contas para responder isso.' };
+      const q = parseSpend(normalize(lastQuestion), lastQuestion, decision.cardsEnabled ? ctx.cards : []);
+      if (!q) return { text: 'Diga o valor, por exemplo: "posso gastar R$ 300?"' };
+      return answerSpend(q, decision.decide, ctx.cash, { entries: ctx.entries, subscriptions: ctx.subscriptions, transfers: decision.transfers });
+    },
+  },
+  {
+    id: 'disponivel',
+    /** "Quanto posso gastar?": o disponível para gastar, com a conta que chega nele */
+    test: (p) =>
+      !/\b(cartao|limite|fatura)\b/.test(p.raw) &&
+      (/\bquanto (eu )?(posso|consigo|da pra|da para|dava pra) (gastar|torrar|usar)\b/.test(p.raw) ||
+        /\b(quanto|qto) (eu )?(tenho|tem|sobra|resta|fica)( de)? (disponivel|livre|pra gastar|para gastar)\b/.test(p.raw) ||
+        /\b(dinheiro|saldo|valor) disponivel\b/.test(p.raw)),
+    answer: (ctx) =>
+      ctx.decision ? answerAvailable(ctx.decision.decide) : { text: 'Ainda não consigo ver o saldo das contas para responder isso.' },
+  },
   {
     id: 'vermelho',
     /**
@@ -1193,6 +1225,8 @@ export function ask(rawQuestion: string, ctx: AssistantContext): Answer {
 /** as sugestões que aparecem em cima do campo */
 export const SUGGESTIONS = [
   'Como estou?',
+  'Quanto posso gastar?',
+  'Posso gastar R$ 300?',
   'Quanto vou gastar com cartão mês que vem?',
   'Quanto tenho em parcelas futuras?',
   'Quanto falta para minha meta?',
