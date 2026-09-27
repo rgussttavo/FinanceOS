@@ -218,3 +218,27 @@ describe('o arquivo confere consigo mesmo', () => {
     expect(integ.ok).toBe(false);
   });
 });
+
+describe('mais de duas casas decimais (FIN-010)', () => {
+  it('no texto do extrato, a mesma regra em todo valor', () => {
+    expect(parseAmountText('1,005', ',')).toBe(101);
+    expect(parseAmountText('2,675', ',')).toBe(268);
+    expect(parseAmountText('-1,005', ',')).toBe(-101);
+    expect(parseAmountText('1.005', '.')).toBe(101);
+  });
+
+  it('na célula numérica da planilha também', async () => {
+    const XLSX = await import('@e965/xlsx');
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Data', 'Descrição', 'Valor'],
+      ['01/09/2026', 'A', -1.005],
+      ['02/09/2026', 'B', -2.675],
+      ['03/09/2026', 'C', 0.1 + 0.2],
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Extrato');
+    const bytes = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+    const p = await parseStatementFile(new File([bytes], 'extrato.xlsx'));
+    expect(p.rows.map((r) => r.amount)).toEqual([-101, -268, 30]);
+  });
+});

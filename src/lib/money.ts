@@ -85,9 +85,59 @@ export function parseMoney(input: string): Cents | null {
     normalized = cleaned;
   }
 
-  const value = Number(normalized);
-  if (!Number.isFinite(value)) return null;
-  return Math.round(value * 100);
+  return decimalToCents(normalized);
+}
+
+/* ------------------------------------------------------- texto em centavos */
+
+/**
+ * Texto decimal para centavos, nos dígitos (FIN-010).
+ *
+ * Recebe o número já normalizado — ponto como decimal, sem separador de
+ * milhar, sinal opcional na frente: "1234.567", "-2.675". A regra de
+ * arredondamento é uma só no app inteiro: meio para cima, sobre o valor
+ * absoluto (2,675 → 2,68; −1,005 → −1,01).
+ *
+ * A conta é feita nos dígitos, e não multiplicando ponto flutuante por 100:
+ * 1.005 × 100 dá 100,4999…, e o arredondamento caía para 1,00 em uns valores e
+ * subia em outros. Valor maior do que um número do JavaScript guarda sem
+ * perder centavo (R$ 9,9 trilhões) é recusado em vez de gravado errado.
+ */
+export function decimalToCents(text: string): Cents | null {
+  const m = /^\s*(-)?(\d*)(?:\.(\d*))?\s*$/.exec(text);
+  if (!m) return null;
+  const [, sign, intRaw, fracRaw = ''] = m;
+  if (!intRaw && !fracRaw) return null;
+  const int = intRaw.replace(/^0+(?=\d)/, '') || '0';
+  if (int.length > 13) return null;
+  const frac = fracRaw.padEnd(2, '0');
+  let cents = Number(int) * 100 + Number(frac.slice(0, 2));
+  if (frac.length > 2 && frac[2] >= '5') cents += 1;
+  if (cents > Number.MAX_SAFE_INTEGER) return null;
+  return sign && cents !== 0 ? -cents : cents;
+}
+
+/**
+ * Número (de uma célula de planilha, de uma conta) para centavos, pela mesma
+ * regra. Parte do menor texto que representa o número — 2.675, e não
+ * 2.67499999… —, que é o valor que a pessoa escreveu na célula.
+ */
+export function numberToCents(n: number): Cents | null {
+  if (!Number.isFinite(n)) return null;
+  return decimalToCents(plainDecimal(n));
+}
+
+/** 1e-7 → "0.0000001", 1.5e+21 → "1500000000000000000000": sem notação científica */
+function plainDecimal(n: number): string {
+  const s = String(n);
+  const m = /^(-)?(\d+)(?:\.(\d+))?e([+-]\d+)$/i.exec(s);
+  if (!m) return s;
+  const [, sign = '', int, frac = '', exp] = m;
+  const digits = int + frac;
+  const point = int.length + Number(exp);
+  if (point <= 0) return `${sign}0.${'0'.repeat(-point)}${digits}`;
+  if (point >= digits.length) return `${sign}${digits}${'0'.repeat(point - digits.length)}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
 /**

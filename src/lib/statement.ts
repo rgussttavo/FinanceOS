@@ -1,4 +1,5 @@
 import { partsToIso } from './dates';
+import { decimalToCents, numberToCents } from './money';
 import type { Cents, IsoDate } from './types';
 
 /**
@@ -859,7 +860,8 @@ function detectDecimal(values: (Cell | undefined)[]): Decimal {
 
 function toAmount(cell: Cell | undefined, decimal: Decimal): Cents | null {
   if (cell === null || cell === undefined) return null;
-  if (typeof cell === 'number') return Number.isFinite(cell) ? Math.round(cell * 100) : null;
+  // a célula numérica segue a mesma regra do texto: -2,675 era -2,67 aqui e -2,68 no CSV
+  if (typeof cell === 'number') return numberToCents(cell);
   return parseAmountText(cell, decimal);
 }
 
@@ -900,10 +902,10 @@ export function parseAmountText(raw: string, decimal: Decimal = 'auto'): Cents |
       ? digits.replace(/\./g, '').replace(',', '.')
       : digits.replace(/,/g, '');
 
-  const value = Number(normalized);
-  if (!Number.isFinite(value)) return null;
-  const cents = Math.round(value * 100);
-  return negative ? -cents : cents;
+  // nos dígitos, pela regra única de arredondamento do app (FIN-010)
+  const cents = decimalToCents(normalized);
+  if (cents === null) return null;
+  return negative && cents !== 0 ? -cents : cents;
 }
 
 /** sem o arquivo para desempatar: o último separador seguido de 1–2 dígitos é o decimal */

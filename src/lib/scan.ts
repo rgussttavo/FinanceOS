@@ -1,4 +1,5 @@
 import { partsToIso } from './dates';
+import { decimalToCents } from './money';
 import type { Cents, IsoDate } from './types';
 
 /**
@@ -131,7 +132,8 @@ function parsePix(raw: string): ScanResult | null {
   if (!blocks.length) return null;
 
   const rawAmount = tlvValue(blocks, '54');
-  const amount = rawAmount ? Math.round(Number(rawAmount) * 100) : null;
+  // o valor do Pix vem com ponto decimal ("123.45"); para centavos pela regra única
+  const amount = rawAmount ? decimalToCents(rawAmount.trim()) : null;
   const payee = tlvValue(blocks, '59');
 
   return {
