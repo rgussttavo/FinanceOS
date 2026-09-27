@@ -86,7 +86,7 @@ export interface CheckupInput {
   categories: Category[];
   goals: Goal[];
   assets: Asset[];
-  settings: Pick<Settings, 'reserveMonths'> | null;
+  settings: Pick<Settings, 'reserveMonths' | 'profile'> | null;
 }
 
 const money = (v: Cents) => formatMoney(v);
@@ -170,7 +170,10 @@ function reserveArea(input: CheckupInput): Area {
   const basis = essentialAverage(input.history, categories, today);
   const ref = input.settings?.reserveMonths ?? LIMITS.reserveMonths;
   const action = { label: 'Ver metas', route: { view: 'metas' } as Route };
-  const where = 'Conto como reserva as contas poupança e o que foi aplicado em categorias de reserva.';
+  const variable = input.settings?.profile?.answeredAt && (input.settings.profile.income === 'variavel' || input.settings.profile.income === 'mista');
+  const where = `Conto como reserva as contas poupança e o que foi aplicado em categorias de reserva.${
+    variable ? ' Você informou renda variável: nesse caso, uma referência maior costuma fazer sentido.' : ''
+  }`;
 
   if (!basis) {
     return {

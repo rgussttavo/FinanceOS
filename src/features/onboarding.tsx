@@ -14,19 +14,22 @@ import type { MonthSummary } from '@/lib/occurrences';
 import { setBalance as setAccountBalance } from '@/lib/accounts';
 import { createEntry } from '@/lib/store';
 import type { Category, MonthKey } from '@/lib/types';
+import { ProfileForm, emptyDraft, hasAnswer, type ProfileDraft } from './profile';
 
 /**
- * O primeiro acesso, em três passos.
+ * O primeiro acesso, em quatro passos.
  *
  * Nada de tutorial: o valor do FinanceOS é um número — quanto sobra — e o
- * caminho mais curto até ele é pedir o mínimo que o produz. Ou o extrato, que
- * traz o mês inteiro, ou dois números digitados. No terceiro passo a pessoa já
- * está olhando para o mês dela.
+ * caminho mais curto até ele é pedir o mínimo que o produz. Antes, quatro
+ * perguntas de toque sobre o momento da pessoa, todas puláveis: é o que faz o
+ * app começar pelo que importa a ela. Depois, o extrato ou dois números
+ * digitados. No último passo a pessoa já está olhando para o mês dela.
  */
 
-export type OnboardingStep = 'hello' | 'start' | 'manual' | 'done';
+export type OnboardingStep = 'hello' | 'perfil' | 'start' | 'manual' | 'done';
 
-const STEP_INDEX: Record<OnboardingStep, number> = { hello: 1, start: 2, manual: 2, done: 3 };
+const STEP_INDEX: Record<OnboardingStep, number> = { hello: 1, perfil: 2, start: 3, manual: 3, done: 4 };
+const STEPS = 4;
 
 export function Onboarding({
   step,
@@ -42,6 +45,7 @@ export function Onboarding({
   onSignIn,
   onOpenMonth,
   onFinish,
+  onProfile,
 }: {
   step: OnboardingStep;
   onStep: (step: OnboardingStep) => void;
@@ -57,6 +61,8 @@ export function Onboarding({
   onSignIn?: () => void;
   onOpenMonth: (month: MonthKey) => void;
   onFinish: () => void;
+  /** grava as respostas do passo "seu momento" */
+  onProfile: (draft: ProfileDraft) => void;
 }) {
   const index = STEP_INDEX[step];
   const headingRef = React.useRef<HTMLHeadingElement>(null);
@@ -88,8 +94,8 @@ export function Onboarding({
             ) : null}
           </header>
 
-          <ol aria-label={`Passo ${index} de 3`} className="mt-4 grid grid-cols-3 gap-1.5">
-            {[1, 2, 3].map((n) => (
+          <ol aria-label={`Passo ${index} de ${STEPS}`} className="mt-4 grid grid-cols-4 gap-1.5">
+            {[1, 2, 3, 4].map((n) => (
               <li
                 key={n}
                 aria-current={n === index ? 'step' : undefined}
@@ -103,9 +109,18 @@ export function Onboarding({
 
           <main key={step} className="flex flex-1 flex-col pt-10 sm:pt-8 motion-safe:animate-[rise-in_var(--t-slow)_var(--ease-out)]">
             {step === 'hello' ? (
-              <Hello headingRef={headingRef} name={name} onName={onName} onNext={() => onStep('start')} onSignIn={onSignIn} />
+              <Hello headingRef={headingRef} name={name} onName={onName} onNext={() => onStep('perfil')} onSignIn={onSignIn} />
+            ) : step === 'perfil' ? (
+              <Moment
+                headingRef={headingRef}
+                onNext={(draft) => {
+                  if (draft && hasAnswer(draft)) onProfile(draft);
+                  onStep('start');
+                }}
+                onBack={() => onStep('hello')}
+              />
             ) : step === 'start' ? (
-              <Start headingRef={headingRef} onImport={onImport} onManual={() => onStep('manual')} onBack={() => onStep('hello')} />
+              <Start headingRef={headingRef} onImport={onImport} onManual={() => onStep('manual')} onBack={() => onStep('perfil')} />
             ) : step === 'manual' ? (
               <Manual
                 headingRef={headingRef}
@@ -206,7 +221,40 @@ function Hello({
   );
 }
 
-/* ------------------------------------------------------------ 2 · o começo */
+/* ----------------------------------------------------- 2 · o seu momento */
+
+function Moment({
+  headingRef,
+  onNext,
+  onBack,
+}: {
+  headingRef: HeadingRef;
+  onNext: (draft: ProfileDraft | null) => void;
+  onBack: () => void;
+}) {
+  const [draft, setDraft] = React.useState<ProfileDraft>(() => emptyDraft());
+  return (
+    <div className="flex flex-1 flex-col">
+      <Title headingRef={headingRef}>Qual é o seu momento?</Title>
+      <p className="mt-3 text-[16px] leading-relaxed text-ink-2">
+        Quatro perguntas de toque, nenhuma obrigatória. Elas fazem o app começar pelo que importa a você.
+      </p>
+
+      <div className="mt-8">
+        <ProfileForm value={draft} onChange={setDraft} />
+      </div>
+
+      <div className="mt-auto grid gap-3 pt-10">
+        <Button variant="primary" size="lg" className="w-full" onClick={() => onNext(draft)}>
+          {hasAnswer(draft) ? 'Continuar' : 'Responder depois'} <ArrowRight size={17} />
+        </Button>
+        <BackButton onClick={onBack} />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ 3 · o começo */
 
 function Start({
   headingRef,

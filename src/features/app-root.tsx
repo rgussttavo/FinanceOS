@@ -38,6 +38,7 @@ import { InicioView } from './inicio';
 import { MetasView } from './metas';
 import { MovimentosView } from './movimentos';
 import { Onboarding, type OnboardingStep } from './onboarding';
+import { saveProfile } from './profile';
 import { PatrimonioView } from './patrimonio';
 import { PerfilView } from './perfil';
 import type { ViewContext } from './views';
@@ -183,8 +184,9 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
         .map((r) => ({ name: r.account.name, balance: r.balance })),
       decision: { decide, transfers: base.transfers, cardsEnabled },
       checkup,
+      profile: settings?.profile,
     }),
-    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled, decide, checkup],
+    [current, base, todayPicture, todayHistory, categories, cash, cardsEnabled, decide, checkup, settings],
   );
 
   const toggleHidden = React.useCallback(async () => {
@@ -332,6 +334,7 @@ export function AppRoot({ demo = false }: { demo?: boolean }) {
             navigate({ view: 'movimentos' });
           }}
           onFinish={() => void finishOnboarding()}
+          onProfile={(draft) => void saveProfile(settings, draft)}
         />
         {signInSheet}
         <Toaster />

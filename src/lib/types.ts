@@ -499,6 +499,31 @@ export interface Settings extends SyncFields {
    * para a vida dela.
    */
   reserveMonths?: number;
+
+  /** o momento financeiro, nas palavras da pessoa: declarado, não medido */
+  profile?: FinancialProfile;
+}
+
+export type ProfileFocus = 'vermelho' | 'gastos' | 'dividas' | 'cartoes' | 'reserva' | 'objetivo' | 'investir' | 'organizar';
+export type ProfileSituation = 'tranquila' | 'organizada' | 'apertada' | 'sem-dinheiro' | 'endividado' | 'nao-sei';
+export type ProfileMonthEnd = 'quase-sempre' | 'as-vezes' | 'raramente' | 'nunca';
+export type ProfileIncome = 'fixa' | 'variavel' | 'mista';
+
+/**
+ * As respostas do primeiro acesso (ou do convite no Início). Tudo opcional:
+ * o app funciona sem nada disso, e o que foi dito é tratado como declaração
+ * — "você informou que…" —, nunca como fato medido.
+ */
+export interface FinancialProfile {
+  /** o que a pessoa quer melhorar, na ordem em que escolheu */
+  focus: ProfileFocus[];
+  situation: ProfileSituation | null;
+  monthEnd: ProfileMonthEnd | null;
+  income: ProfileIncome | null;
+  /** quando respondeu; null quando só dispensou o convite */
+  answeredAt: IsoInstant | null;
+  /** dispensou o convite: não pergunta de novo */
+  skippedAt?: IsoInstant | null;
 }
 
 /* ------------------------------------------------------------------ sync */

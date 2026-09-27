@@ -43,6 +43,7 @@ import { addDaysIso, formatDateFull, formatDayShort, formatMonthLabel } from '@/
 import { availableLines, type MoneyToDecide, type SafetyBuffer } from '@/lib/decision';
 import type { Checkup } from '@/lib/checkup';
 import { AreasSummary } from './checkup';
+import { ProfilePrompt } from './profile';
 import { holidaysBetween } from '@/lib/holidays';
 import { buildInsights, headline, type Insight, type Severity } from '@/lib/insights';
 import { formatMoney, parseMoney } from '@/lib/money';
@@ -141,6 +142,7 @@ export function InicioView(props: InicioProps) {
         <div className="grid gap-4">
           <MainCard {...props} />
           {empty ? <FirstSteps onQuick={props.onQuick} onGo={onGo} /> : null}
+          {!hiddenBlocks.has('perfil') ? <ProfilePrompt settings={settings} /> : null}
           {!empty && !hiddenBlocks.has('cobertura') ? <Coverage {...props} /> : null}
           {blocks.timeline}
           <div className="grid gap-4 lg:hidden">

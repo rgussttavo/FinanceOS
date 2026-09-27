@@ -240,3 +240,12 @@ describe('o assistente', () => {
     expect(ask('Como estou?', ctx).highlight?.label).toBe('Resultado do mês');
   });
 });
+
+describe('o perfil declarado no diagnóstico', () => {
+  it('renda variável: a reserva lembra que uma referência maior costuma fazer sentido', () => {
+    const profile = { focus: [], situation: null, monthEnd: null, income: 'variavel' as const, answeredAt: '2026-09-18T12:00:00.000Z' };
+    const c = buildCheckup(scenario({}, { settings: { profile } }));
+    expect(c.areas.find((a) => a.id === 'reserva')?.why).toContain('Você informou renda variável');
+    expect(buildCheckup(scenario()).areas.find((a) => a.id === 'reserva')?.why).not.toContain('renda variável');
+  });
+});

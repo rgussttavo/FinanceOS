@@ -10,6 +10,7 @@ import { firstNegativeDay, occurrencesInMonth, summarizeMonth, type DayPoint, ty
 import type { Asset, Card, Category, Cents, Debt, Entry, Goal, MonthKey, Subscription, Transfer } from './types';
 import type { MoneyToDecide } from './decision';
 import type { Checkup } from './checkup';
+import type { FinancialProfile } from './types';
 import { answerAvailable, answerSpend, isSpendQuestion, parseSpend } from './decision-answers';
 import { answerGoalQuestion, answerSaveMore, isGoalQuestion, isSaveMoreQuestion } from './plan-answers';
 import {
@@ -78,6 +79,8 @@ export interface AssistantContext {
   decision?: { decide: MoneyToDecide; transfers: Transfer[]; cardsEnabled: boolean };
   /** o diagnóstico por áreas: o mesmo da tela "Sua vida financeira" */
   checkup?: Checkup;
+  /** o momento declarado pela pessoa: ordena as sugestões */
+  profile?: FinancialProfile;
 }
 
 export interface Answer {

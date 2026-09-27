@@ -4,6 +4,7 @@ import * as React from 'react';
 import { ArrowRight, ArrowUp, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { SUGGESTIONS, ask, greeting, type AssistantContext } from '@/lib/assistant';
+import { suggestionsFor } from '@/lib/profile';
 import { useMarket } from '@/lib/market';
 import type { Route } from '@/lib/nav';
 
@@ -177,7 +178,7 @@ export function IAView({
         />
 
         <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
-          {SUGGESTIONS.map((s) => (
+          {suggestionsFor(context.profile, SUGGESTIONS).map((s) => (
             <button
               key={s}
               type="button"

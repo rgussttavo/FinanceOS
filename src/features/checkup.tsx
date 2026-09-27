@@ -9,6 +9,7 @@ import { cn } from '@/lib/cn';
 import { putRecord } from '@/lib/db';
 import type { Route } from '@/lib/nav';
 import type { Settings } from '@/lib/types';
+import { FocusPanel } from './profile';
 
 /**
  * "Como está sua vida financeira?"
@@ -93,6 +94,8 @@ export function CheckupView({
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">Seu momento financeiro</p>
         <p className="mt-2 text-[17px] leading-snug text-ink">{summary.text}</p>
       </Panel>
+
+      <FocusPanel checkup={checkup} settings={settings} />
 
       {attention.length ? (
         <Panel className="px-5 py-4">

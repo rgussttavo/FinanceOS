@@ -32,7 +32,7 @@ const BLOCKS: { id: string; label: string; detail: string; news?: boolean }[] = 
   { id: 'cobertura', label: 'Seu mês completo', detail: 'O que falta para os números baterem com o banco' },
   { id: 'timeline', label: 'O que vem por aí', detail: 'Entradas e saídas dos próximos dias, com o saldo' },
   { id: 'atencao', label: 'O que merece sua atenção', detail: 'Alertas com a ação para resolver' },
-  { id: 'saude', label: 'Saúde do mês', detail: 'A nota do mês e o que pesa nela' },
+  { id: 'saude', label: 'Sua vida financeira', detail: 'O estado de cada área e o que merece atenção' },
   { id: 'acoes', label: 'Ações rápidas', detail: 'Atalhos para registrar e importar' },
   { id: 'resumo', label: 'Como está seu mês', detail: 'Quanto entrou, saiu e foi investido' },
   { id: 'news', label: 'Notícias', detail: 'As últimas manchetes de economia', news: true },
