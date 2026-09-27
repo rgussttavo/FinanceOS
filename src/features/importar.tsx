@@ -12,6 +12,8 @@ import { addMonthsToKey, formatDayShort, formatMonthLabel } from '@/lib/dates';
 import {
   buildReview,
   commitReview,
+  asAdjustment,
+  asOtherPurchase,
   groupOf,
   invoiceReconciliation,
   type ImportResult,
@@ -644,6 +646,10 @@ function Review({
     void rememberCategory(row.description, categoryId);
   };
 
+  // a resposta da pessoa sobre a cobrança com valor diferente do cadastrado
+  const resolve = (key: string, answer: 'reajuste' | 'outra') =>
+    setRows((list) => list.map((r) => (r.key === key ? (answer === 'outra' ? asOtherPurchase(r) : asAdjustment(r)) : r)));
+
   const pick = (key: string, field: 'counterpartAccountId' | 'payCardId', id: string | null) =>
     setRows((list) => list.map((r) => (r.key === key ? { ...r, [field]: id, include: !!id } : r)));
 
@@ -840,6 +846,7 @@ function Review({
                   accounts={otherAccounts}
                   cards={cardOptions}
                   onPick={(field, id) => pick(r.key, field, id)}
+                  onResolve={(answer) => resolve(r.key, answer)}
                 />
               ))}
             </ul>
@@ -931,6 +938,7 @@ function ReviewLine({
   accounts,
   cards,
   onPick,
+  onResolve,
 }: {
   row: ReviewRow;
   categories: Category[];
@@ -942,6 +950,8 @@ function ReviewLine({
   accounts: { id: string; name: string }[];
   cards: { id: string; name: string; institution: string }[];
   onPick: (field: 'counterpartAccountId' | 'payCardId', id: string | null) => void;
+  /** cobrança com valor diferente do cadastrado: reajuste, ou outra compra da mesma loja */
+  onResolve: (answer: 'reajuste' | 'outra') => void;
 }) {
   const options = categories.filter((c) => c.kind === row.kind);
   const locked = row.status === 'imported';
@@ -992,6 +1002,17 @@ function ReviewLine({
           {formatDayShort(row.date)}
           {note ? <span className={cn(row.status === 'settle' && 'text-in')}> · {note}</span> : null}
         </p>
+
+        {row.needsConfirm ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => onResolve('reajuste')}>
+              É reajuste
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onResolve('outra')}>
+              É outra compra
+            </Button>
+          </div>
+        ) : null}
 
         {isTransfer ? (
           <div className="mt-2">

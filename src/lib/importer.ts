@@ -4,6 +4,7 @@ import { categorize, cleanDescription, normalize, type LearnedRule } from './cat
 import { addDaysIso, addMonthsToKey, clampDayToMonth, diffDays, monthKeyOf, monthKeyParts, nowInstant, partsToIso, todayIso } from './dates';
 import { audit, db, entriesUpTo, liveRows, putRecord, putRecords } from './db';
 import { FALLBACK_ACCOUNT_ID, auditAccount, primaryAccountId, type LedgerInput } from './ledger';
+import { formatMoney } from './money';
 import { occurrencesInMonth, type Occurrence } from './occurrences';
 import { uid } from './provision';
 import { detectInstallment, tidyDescription, type ParsedStatement, type StatementBalance, type StatementRow } from './statement';
@@ -52,7 +53,9 @@ export type Confidence = 'alta' | 'média' | 'baixa';
 /** como a revisão agrupa as linhas para a pessoa */
 export type ReviewGroup = 'review' | 'ready' | 'match' | 'duplicate' | 'card-payment' | 'internal';
 
-export function groupOf(row: Pick<ReviewRow, 'status' | 'confidence' | 'categoryId'>): ReviewGroup {
+export function groupOf(row: Pick<ReviewRow, 'status' | 'confidence' | 'categoryId' | 'needsConfirm'>): ReviewGroup {
+  // cobrança de assinatura com valor diferente do cadastrado: a pessoa confirma
+  if (row.needsConfirm) return 'review';
   switch (row.status) {
     case 'imported':
       return 'duplicate';
@@ -67,6 +70,25 @@ export function groupOf(row: Pick<ReviewRow, 'status' | 'confidence' | 'category
     default:
       return row.confidence === 'baixa' || !row.categoryId ? 'review' : 'ready';
   }
+}
+
+/** "É outra compra": a linha deixa a assinatura e vira gasto normal, na categoria dela */
+export function asOtherPurchase(row: ReviewRow): ReviewRow {
+  return {
+    ...row,
+    status: 'new',
+    include: true,
+    subscriptionId: null,
+    needsConfirm: false,
+    match: null,
+    note: undefined,
+    categoryId: row.ownCategoryId !== undefined ? row.ownCategoryId : row.categoryId,
+  };
+}
+
+/** "É reajuste": continua sendo a cobrança da assinatura, com o valor novo */
+export function asAdjustment(row: ReviewRow): ReviewRow {
+  return { ...row, needsConfirm: false, note: `cobrança real de ${row.match?.description ?? 'assinatura'}, com o valor reajustado` };
 }
 
 export interface ReviewRow {
@@ -104,6 +126,14 @@ export interface ReviewRow {
   subscriptionId?: string | null;
   /** resgate de aplicação: volta para a conta, sai do investido, não é renda */
   withdrawal?: boolean;
+  /**
+   * Ligada a uma assinatura com valor diferente do cadastrado: pode ser
+   * reajuste, pode ser outra compra da mesma loja. Fica marcada como a
+   * cobrança, mas vai para a revisão até a pessoa dizer qual é.
+   */
+  needsConfirm?: boolean;
+  /** a categoria que a linha teria sem a assinatura, para "é outra compra" */
+  ownCategoryId?: string | null;
   /** a transferência já registrada (do outro lado) que esta linha é */
   matchedTransferId?: string | null;
   /** explicação curta do que vai acontecer, quando não é óbvio */
@@ -394,9 +424,17 @@ export async function buildReview(parsed: ParsedStatement, opts: ReviewOptions):
       status = 'subscription';
       match = { entryId: `sub:${sub.id}`, occurrenceKey: '', description: sub.name };
       extra.subscriptionId = sub.id;
+      extra.ownCategoryId = guess.categoryId;
       if (sub.categoryId) guess = { ...guess, categoryId: sub.categoryId, confidence: 0.9 };
       include = true;
-      extra.note = `cobrança real de ${sub.name}: toma o lugar da prevista`;
+      // o preço cadastrado, ou um preço antigo do histórico dela: é a cobrança, sem dúvida
+      const known = amount === sub.amount || (sub.priceHistory ?? []).some((h) => h.amount === amount);
+      if (known) {
+        extra.note = `cobrança real de ${sub.name}: toma o lugar da prevista`;
+      } else {
+        extra.needsConfirm = true;
+        extra.note = `parece a cobrança de ${sub.name}, com valor diferente do cadastrado (${formatMoney(sub.amount)}) — é reajuste ou outra compra?`;
+      }
     } else if (isWithdrawal) {
       status = 'internal';
       kind = 'invest';

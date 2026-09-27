@@ -4,7 +4,7 @@ import { createAccount, ensurePrimaryAccount, loadLedger } from './accounts';
 import { buildSeedCategories } from './categories';
 import { virtualOccurrences } from './cashflow';
 import { putRecord, selectDatabase } from './db';
-import { buildReview, commitReview, type ImportTarget } from './importer';
+import { buildReview, commitReview, groupOf, type ImportTarget } from './importer';
 import { balancesAt, cashNow } from './ledger';
 import { occurrencesInMonth, summarizeMonth } from './occurrences';
 import { parseDelimited, statementIntegrity, type ParsedStatement } from './statement';
@@ -267,5 +267,42 @@ describe('FIN-009: no máximo uma cobrança por assinatura por mês', () => {
       ['Amazon Compra', 'new'],
       ['Amazon Prime', 'subscription'],
     ]);
+  });
+});
+
+describe('FIN-009 complemento: valor diferente do cadastrado pede confirmação', () => {
+  async function linha(valor: string, sub: Partial<Subscription> = {}) {
+    const prime = await putRecord('subscriptions', makeSub({ name: 'Amazon Prime', amount: 1990, billingDay: 12, startedAt: '2026-01-01', ...sub }));
+    const parsed = parseDelimited(csv(`13/09/2026;AMAZON MARKETPLACE LIVRO;-${valor};`));
+    const rows = await buildReview(parsed, { spaceId: SPACE, target: { type: 'account' }, invert: false, categories, subscriptions: [prime] });
+    return rows[0];
+  }
+
+  it('valor igual ao cadastrado: vira a cobrança sozinho', async () => {
+    const r = await linha('19,90');
+    expect(r).toMatchObject({ status: 'subscription', include: true });
+    expect(r.needsConfirm).toBeFalsy();
+    expect(groupOf(r)).toBe('match');
+  });
+
+  it('valor igual a um preço antigo do histórico: também', async () => {
+    const r = await linha('14,90', { priceHistory: [{ amount: 1490, until: '2026-12-31' }] });
+    expect(r.needsConfirm).toBeFalsy();
+  });
+
+  it('valor diferente: fica marcado, mas pede confirmação e vai para a revisão', async () => {
+    const r = await linha('21,90');
+    expect(r).toMatchObject({ status: 'subscription', include: true, needsConfirm: true });
+    const { formatMoney } = await import('./money');
+    expect(r.note).toContain(`valor diferente do cadastrado (${formatMoney(1990)})`);
+    expect(groupOf(r)).toBe('review');
+  });
+
+  it('"é outra compra" desfaz o vínculo e a linha vira gasto normal', async () => {
+    const r = await linha('21,90');
+    const { asOtherPurchase } = await import('./importer');
+    const outra = asOtherPurchase(r);
+    expect(outra).toMatchObject({ status: 'new', include: true, subscriptionId: null, needsConfirm: false, match: null });
+    expect(groupOf(outra)).not.toBe('match');
   });
 });
