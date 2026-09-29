@@ -316,6 +316,113 @@ body {
   }
 }
 
+/*
+ * assemble — a peça que sai do lugar espalhado e encaixa no seu lugar.
+ * O lugar final é o do layout (grid normal); o espalhado é só um transform.
+ * Cada peça tem a sua janela dentro do progresso da seção (--p, escrito por
+ * useScrollVar): começa em --s e leva --l para encaixar.
+ */
+.assemble {
+  --k: clamp(0, (var(--p, 1) - var(--s, 0)) / var(--l, 1), 1);
+  transform: translate3d(calc(var(--dx, 0px) * var(--spread, 1) * (1 - var(--k))), calc(var(--dy, 0px) * var(--spread, 1) * (1 - var(--k))), 0)
+    rotate(calc(var(--r, 0deg) * (1 - var(--k))));
+  opacity: calc(0.62 + 0.38 * var(--k));
+  will-change: transform, opacity;
+}
+
+/* no computador há mais espaço para o espalhado */
+@media (min-width: 1024px) {
+  .assemble {
+    --spread: 1.7;
+  }
+}
+
+/* surge junto com o progresso: o resultado que só aparece quando as peças encaixam */
+.emerge {
+  --k: clamp(0, (var(--p, 1) - var(--s, 0)) / var(--l, 1), 1);
+  opacity: var(--k);
+  transform: scale(calc(0.94 + 0.06 * var(--k)));
+  will-change: transform, opacity;
+}
+
+/* o contrário: o que sai de cena quando as peças encaixam (a pergunta que vira resposta) */
+.submerge {
+  --k: clamp(0, (var(--p, 1) - var(--s, 0)) / var(--l, 1), 1);
+  opacity: calc(1 - var(--k));
+}
+
+/*
+ * connect — a linha entre duas peças, desenhada da origem ao destino.
+ * Só scale: com data-shown (Reveal) ou pela janela do progresso (.by-scroll).
+ */
+.link-x,
+.link-y {
+  transition: transform 520ms var(--ease-out) var(--reveal-delay, 0ms);
+}
+.link-x {
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.link-y {
+  transform: scaleY(0);
+  transform-origin: center top;
+}
+[data-shown] .link-x,
+.link-x[data-on] {
+  transform: scaleX(1);
+}
+[data-shown] .link-y,
+.link-y[data-on] {
+  transform: scaleY(1);
+}
+.link-x.by-scroll,
+.link-y.by-scroll {
+  --k: clamp(0, (var(--p, 1) - var(--s, 0)) / var(--l, 1), 1);
+  transition: none;
+}
+.link-x.by-scroll {
+  transform: scaleX(var(--k));
+}
+.link-y.by-scroll {
+  transform: scaleY(var(--k));
+}
+
+/* stagger — os filhos de um Reveal entram um depois do outro (--reveal-delay de cada um) */
+.reveal-child {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 480ms var(--ease-out) var(--reveal-delay, 0ms),
+    transform 560ms var(--ease-out) var(--reveal-delay, 0ms);
+}
+[data-shown] .reveal-child {
+  opacity: 1;
+  transform: none;
+}
+
+/* a barra de progresso que enche quando aparece (a largura final vem em --w, de 0 a 1) */
+.meter-fill {
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 900ms var(--ease-out) var(--reveal-delay, 0ms);
+}
+[data-shown] .meter-fill {
+  transform: scaleX(var(--w, 1));
+}
+
+/* o passo de uma cena contada em etapas: apagado até a sua vez */
+.step {
+  opacity: 0.22;
+  transform: translate3d(-8px, 0, 0);
+  transition:
+    opacity 420ms var(--ease-out),
+    transform 480ms var(--ease-out);
+}
+.step[data-on] {
+  opacity: 1;
+  transform: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .reveal,
   .reveal[data-reveal] {
@@ -326,6 +433,23 @@ body {
   }
   .float {
     animation: none;
+  }
+  .assemble,
+  .emerge,
+  .step,
+  .reveal-child,
+  .link-x,
+  .link-y {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .submerge {
+    opacity: 0;
+  }
+  .meter-fill {
+    transform: scaleX(var(--w, 1));
+    transition: none;
   }
 }
 

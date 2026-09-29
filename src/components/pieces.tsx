@@ -52,8 +52,9 @@ export function PuzzlePiece({
       </span>
       <span className="min-w-0">
         <span className="block truncate text-[11px] font-medium uppercase tracking-[0.1em] text-ink-3">{label}</span>
-        {value !== undefined ? <span className="tnum block truncate text-[15px] font-semibold text-ink">{value}</span> : null}
-        {detail ? <span className="block truncate text-[12px] text-ink-3">{detail}</span> : null}
+        {/* valor e detalhe quebram linha em vez de cortar: número pela metade não serve */}
+        {value !== undefined ? <span className="tnum block text-[15px] font-semibold leading-snug text-ink">{value}</span> : null}
+        {detail ? <span className="block text-[12px] leading-snug text-ink-3">{detail}</span> : null}
       </span>
     </div>
   );

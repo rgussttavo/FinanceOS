@@ -31,6 +31,8 @@ const SPLASH: [number, number, number][] = [
 ];
 
 export const metadata: Metadata = {
+  // os endereços da prévia social e do canonical saem daqui
+  metadataBase: new URL(`https://${BRAND.domain}`),
   title: {
     default: `${BRAND.name} · ${BRAND.tagline}`,
     template: `%s · ${BRAND.name}`,

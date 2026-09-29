@@ -3,6 +3,7 @@ import { AppRoot } from '@/features/app-root';
 
 export const metadata: Metadata = {
   title: 'Seu mês',
+  robots: { index: false, follow: false },
 };
 
 export default function AppPage() {

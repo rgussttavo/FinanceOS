@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Menu, X } from 'lucide-react';
 import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/cn';
 
@@ -25,7 +26,7 @@ import { cn } from '@/lib/cn';
  * começa no hover, no toque ou no foco: ainda antes do clique, só para quem
  * vai clicar.
  */
-export function AppLink({ href, className, children }: { href: '/app' | '/demo'; className?: string; children: React.ReactNode }) {
+export function AppLink({ href, className, children }: { href: '/app' | '/demo' | '/entrar'; className?: string; children: React.ReactNode }) {
   const router = useRouter();
   const prefetched = React.useRef(false);
   const warm = () => {
@@ -42,16 +43,26 @@ export function AppLink({ href, className, children }: { href: '/app' | '/demo';
 
 /* ------------------------------------------------------------------- topo */
 
-/** as seções da página, na mesma ordem */
+/** as seções da página, na mesma ordem (o trilho lateral) */
 const SECOES = [
   ['problema', 'O problema'],
+  ['mes', 'O mês'],
   ['como-funciona', 'Como funciona'],
-  ['mes', 'Um mês por dentro'],
+  ['inteligencia', 'Inteligência'],
+  ['planejamento', 'Planejamento'],
+  ['comportamento', 'Comportamento'],
+  ['tudo-junto', 'Tudo junto'],
+  ['recursos', 'Recursos'],
+  ['privacidade', 'Privacidade'],
+  ['perguntas', 'Perguntas'],
+] as const;
+
+/** a barra do topo fica curta: quatro destinos e o convite */
+const LINKS = [
+  ['como-funciona', 'Como funciona'],
+  ['recursos', 'Recursos'],
   ['inteligencia', 'Inteligência'],
   ['privacidade', 'Privacidade'],
-  ['funcionalidades', 'Funcionalidades'],
-  ['celular', 'No celular'],
-  ['perguntas', 'Perguntas'],
 ] as const;
 
 /** fora do componente: um array novo a cada render refaria o observador sempre */
@@ -67,37 +78,89 @@ const IDS = SECOES.map(([id]) => id);
 export function TopBar() {
   const desceu = useRolou(24);
   const progresso = useProgresso();
+  const [aberto, setAberto] = React.useState(false);
+
+  // Esc fecha o menu do celular, e o foco volta para o botão
+  const botao = React.useRef<HTMLButtonElement>(null);
+  React.useEffect(() => {
+    if (!aberto) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setAberto(false);
+      botao.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [aberto]);
 
   return (
     <nav
+      aria-label="Principal"
       className={cn(
         'fixed inset-x-0 top-0 z-50 transition-[background-color,border-color,backdrop-filter] duration-[var(--t-base)]',
-        desceu
-          ? 'border-b border-line bg-canvas/80 backdrop-blur-xl'
-          : 'border-b border-transparent',
+        desceu || aberto ? 'border-b border-line bg-canvas/85 backdrop-blur-xl' : 'border-b border-transparent',
       )}
     >
-      <div className="mx-auto flex h-16 max-w-[72rem] items-center justify-between px-5">
-        <Link href="/" className="flex items-center gap-2.5">
+      <div className="mx-auto flex h-16 max-w-[72rem] items-center justify-between gap-4 px-5">
+        <Link href="/" className="flex items-center gap-2.5" aria-label={`${BRAND.name}, início da página`}>
           <Marca />
           <span className="text-[15px] font-semibold tracking-tight text-ink">{BRAND.name}</span>
         </Link>
 
+        <ul className="hidden items-center gap-1 lg:flex">
+          {LINKS.map(([id, nome]) => (
+            <li key={id}>
+              <a
+                href={`#${id}`}
+                className="inline-flex h-10 items-center rounded-field px-3.5 text-[14px] text-ink-2 transition-colors duration-[var(--t-fast)] hover:bg-surface-2 hover:text-ink"
+              >
+                {nome}
+              </a>
+            </li>
+          ))}
+        </ul>
+
         <div className="flex items-center gap-2">
           <AppLink
-            href="/demo"
-            className="hidden h-10 items-center rounded-field px-4 text-[14px] text-ink-2 transition-colors duration-[var(--t-fast)] hover:bg-surface-2 hover:text-ink sm:inline-flex"
-          >
-            Explorar sem cadastro
-          </AppLink>
-          <AppLink
-            href="/app"
-            className="inline-flex h-10 items-center rounded-field bg-accent px-5 text-[14px] font-medium text-accent-ink transition-[filter,transform] duration-[var(--t-fast)] hover:brightness-110 active:scale-[0.98]"
+            href="/entrar"
+            className="inline-flex h-10 items-center rounded-field bg-accent px-4 text-[14px] font-medium text-accent-ink transition-[filter,transform] duration-[var(--t-fast)] hover:brightness-110 active:scale-[0.98] sm:px-5"
           >
             Começar agora
           </AppLink>
+          <button
+            ref={botao}
+            type="button"
+            onClick={() => setAberto((a) => !a)}
+            aria-expanded={aberto}
+            aria-controls="menu-vitrine"
+            aria-label={aberto ? 'Fechar menu' : 'Abrir menu'}
+            className="grid size-10 place-items-center rounded-field text-ink-2 hover:bg-surface-2 hover:text-ink lg:hidden"
+          >
+            {aberto ? <X size={20} /> : <Menu size={20} />}
+          </button>
         </div>
       </div>
+
+      {aberto ? (
+        <ul id="menu-vitrine" className="border-t border-line px-5 pb-4 pt-2 lg:hidden">
+          {LINKS.map(([id, nome]) => (
+            <li key={id}>
+              <a
+                href={`#${id}`}
+                onClick={() => setAberto(false)}
+                className="flex h-12 items-center border-b border-line text-[15px] text-ink last:border-b-0"
+              >
+                {nome}
+              </a>
+            </li>
+          ))}
+          <li className="pt-3">
+            <AppLink href="/demo" className="flex h-11 items-center text-[14px] font-medium text-accent">
+              Explorar com dados de exemplo →
+            </AppLink>
+          </li>
+        </ul>
+      ) : null}
 
       <span
         aria-hidden
@@ -109,7 +172,7 @@ export function TopBar() {
 }
 
 /** o losango de latão: o mesmo do app, para a vitrine e o produto serem um só */
-function Marca() {
+export function Marca() {
   return (
     <span className="grid size-8 place-items-center rounded-[10px] bg-accent-soft ring-1 ring-inset ring-accent/25">
       <svg viewBox="0 0 24 24" className="size-4" aria-hidden>

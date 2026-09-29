@@ -50,45 +50,99 @@ export function useInView<T extends Element>(ref: React.RefObject<T | null>, { o
 }
 
 /**
- * O quanto de uma seção já passou pela tela, de 0 a 1.
+ * Três réguas de rolagem, para três tipos de cena:
  *
- * É o que conduz a montagem do quebra-cabeça: 0 quando o topo da seção chega
- * ao pé da tela, 1 quando o fim dela chega ao topo. Funciona com roda, trackpad
- * e toque — lê a posição, não o evento de roda. Um quadro por vez
- * (requestAnimationFrame), e só enquanto a seção está perto da tela.
+ * - through: a seção atravessando a tela (0 quando o topo aparece embaixo,
+ *   1 quando o fim some em cima);
+ * - pin: a seção alta com um palco fixo (sticky) dentro — 0 quando o palco
+ *   gruda no topo, 1 quando ele vai soltar;
+ * - exit: a seção que já começa na tela, como o topo da página — 0 parada,
+ *   1 quando 60% dela já subiu.
  */
-export function useScrollProgress<T extends HTMLElement>(ref: React.RefObject<T | null>): number {
-  const [progress, setProgress] = React.useState(0);
+export type ScrollMode = 'through' | 'pin' | 'exit';
+
+function progressOf(el: HTMLElement, mode: ScrollMode): number {
+  const rect = el.getBoundingClientRect();
+  const vh = window.innerHeight || 1;
+  const raw =
+    mode === 'pin'
+      ? -rect.top / Math.max(1, rect.height - vh)
+      : mode === 'exit'
+        ? -rect.top / Math.max(1, rect.height * 0.6)
+        : (vh - rect.top) / (rect.height + vh);
+  return Math.min(1, Math.max(0, raw));
+}
+
+/** acompanha a rolagem só enquanto a seção está perto da tela, um quadro por vez */
+function watchScroll(el: HTMLElement, mode: ScrollMode, onProgress: (p: number) => void): () => void {
+  let frame = 0;
+  let near = true;
+  const measure = () => {
+    frame = 0;
+    if (near) onProgress(progressOf(el, mode));
+  };
+  const onScroll = () => {
+    if (!frame) frame = requestAnimationFrame(measure);
+  };
+  const io =
+    typeof IntersectionObserver === 'undefined'
+      ? null
+      : new IntersectionObserver(([entry]) => {
+          near = entry.isIntersecting;
+          // ao sair, fecha na ponta certa: uma rolagem rápida não deixa a cena pela metade
+          onProgress(progressOf(el, mode));
+        }, { rootMargin: '25% 0px 25% 0px' });
+  io?.observe(el);
+  frame = requestAnimationFrame(measure);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  return () => {
+    if (frame) cancelAnimationFrame(frame);
+    io?.disconnect();
+    window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onScroll);
+  };
+}
+
+/**
+ * Escreve o progresso na variável CSS `--p` da seção, sem renderizar nada.
+ *
+ * É o que move as peças do quebra-cabeça: o CSS lê `--p` (e cada peça, a sua
+ * janela dentro dele) e calcula o `transform`. Nenhum estado do React muda a
+ * cada quadro. Com movimento reduzido, a cena fica montada (`--p: 1`).
+ */
+export function useScrollVar<T extends HTMLElement>(ref: React.RefObject<T | null>, mode: ScrollMode = 'through') {
   React.useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    let frame = 0;
+    const write = (p: number) => el.style.setProperty('--p', p.toFixed(4));
     if (reducedMotion()) {
-      // sem movimento, a história aparece montada
-      frame = requestAnimationFrame(() => setProgress(1));
-      return () => cancelAnimationFrame(frame);
+      write(1);
+      return;
     }
-    const measure = () => {
-      frame = 0;
-      const rect = el.getBoundingClientRect();
-      const vh = window.innerHeight || 1;
-      const total = rect.height + vh;
-      const done = vh - rect.top;
-      setProgress(Math.min(1, Math.max(0, done / total)));
-    };
-    const onScroll = () => {
-      if (!frame) frame = requestAnimationFrame(measure);
-    };
-    frame = requestAnimationFrame(measure);
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    return () => {
-      if (frame) cancelAnimationFrame(frame);
-      window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [ref]);
-  return progress;
+    return watchScroll(el, mode, write);
+  }, [ref, mode]);
+}
+
+/**
+ * Em que passo da cena a rolagem está, de 0 a `steps`: para as cenas contadas
+ * em etapas (as contas que entram, os eventos da linha do tempo). O estado só
+ * muda quando o passo muda — não a cada quadro. Com movimento reduzido, a cena
+ * aparece inteira.
+ */
+export function useScrollStep<T extends HTMLElement>(ref: React.RefObject<T | null>, steps: number, mode: ScrollMode = 'pin'): number {
+  const [step, setStep] = React.useState(0);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (reducedMotion()) {
+      const id = requestAnimationFrame(() => setStep(steps));
+      return () => cancelAnimationFrame(id);
+    }
+    // um pouco antes do fim já está tudo na tela: o último passo não exige rolar até a borda
+    return watchScroll(el, mode, (p) => setStep(Math.min(steps, Math.floor(p * 1.12 * (steps + 1)))));
+  }, [ref, steps, mode]);
+  return step;
 }
 
 /** faz o conteúdo surgir quando entra na tela; `index` escalona irmãos (stagger) */
