@@ -228,7 +228,10 @@ export function focusNote(profile: FinancialProfile | null | undefined, checkup:
   } else if (focus) {
     area = find(FOCUS_AREA[focus] as AreaId);
     text = area
-      ? `Você informou que quer ${FOCUS_PHRASE[focus]}. Hoje, ${area.title.toLowerCase()} ${STATE[area.status]}: ${area.label}.`
+      ? area.status === 'unknown'
+        ? // sem dado, o rótulo repetiria o estado ("ainda não tem dados: sem dados")
+          `Você informou que quer ${FOCUS_PHRASE[focus]}. Hoje, ${area.title.toLowerCase()} ${STATE.unknown}.`
+        : `Você informou que quer ${FOCUS_PHRASE[focus]}. Hoje, ${area.title.toLowerCase()} ${STATE[area.status]}: ${area.label}.`
       : `Você informou que quer ${FOCUS_PHRASE[focus]}.`;
   } else {
     text = 'Você respondeu sobre o seu momento, sem escolher um foco.';

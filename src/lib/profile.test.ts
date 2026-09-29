@@ -102,6 +102,13 @@ describe('sugestões do assistente', () => {
   });
 });
 
+describe('foco sem dado para medir', () => {
+  it('diz que a área ainda não tem dados, sem repetir o rótulo', () => {
+    const note = focusNote(profile({ focus: ['gastos'] }), checkup({ fluxo: ['unknown', 'sem dados'] }));
+    expect(note?.text).toBe('Você informou que quer controlar os gastos. Hoje, fluxo de caixa ainda não tem dados.');
+  });
+});
+
 describe('o Início por perfil', () => {
   it('sem resposta, o Início fica como sempre foi', () => {
     expect(homeFocus(undefined)).toBeNull();
